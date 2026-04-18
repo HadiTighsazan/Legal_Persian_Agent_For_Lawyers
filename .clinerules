@@ -5,6 +5,9 @@ DO NOT search for files using `list_dir` or `search_files` unless absolutely nec
 - Database Schema: `docs/references/database-schema.md`
 - API Contracts: `docs/references/api-registry.md`
 - Source Code: `src/`
+- Frontend Tests: Place adjacent to the source files (e.g., Component.test.tsx)
+- Backend Tests: Place inside the respective Django app's tests/ directory (e.g., app_name/tests/test_views.py)
+
 Never read the entire src/ directory or massive files unless specifically requested for the current micro-task.
 
 # 2. Tech Stack
@@ -35,3 +38,4 @@ Always follow these $3$ exact steps for every new feature or component:
 # 6. Reference Documentation Rule
 - If you make ANY changes to database tables, models, or columns, immediately update `docs/references/database-schema.md`.
 - If you create or modify an API endpoint, immediately update `docs/references/api-registry.md`.
+- IMPORTANT: If you modify these reference files, you MUST explicitly highlight these changes in your final report and in wip-context.md so the user can sync them with the Architect AI.
