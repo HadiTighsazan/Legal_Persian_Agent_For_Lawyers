@@ -152,8 +152,8 @@ services:
   # Frontend Development Server
   frontend:
     build:
-      context: ./docker/frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./docker/frontend/Dockerfile
     container_name: docuchat_frontend
     restart: unless-stopped
     volumes:
