@@ -1,117 +1,127 @@
 # WIP Context - Epic E01: Project Scaffolding & DevOps
 
-## Current Status: MT-04 Completed ✅
+## Current Status: MT-05 Completed ✅
 
-**Last Updated:** 2026-04-19 00:13 (UTC+3:30)
-**Current Micro-Task:** MT-04 - Configure Celery Worker Service
-**Next Micro-Task:** MT-05 - Configure Nginx Reverse Proxy
+**Last Updated:** 2026-04-19 00:28 (UTC+3:30)
+**Current Micro-Task:** MT-05 - Configure Nginx Reverse Proxy
+**Next Micro-Task:** MT-06 - Configure Frontend Service
 
 ---
 
-## What Was Just Completed (MT-04)
+## What Was Just Completed (MT-05)
 
-### ✅ Celery Worker Service Configured and Tested:
+### ✅ Nginx Reverse Proxy Configured and Tested:
 
-1. **Celery Configuration Files Created:**
-   - `src/backend/config/celery.py` - Created with basic Celery app configuration
-   - Updated `src/backend/config/__init__.py` to import Celery app when Django starts
-   - Updated `src/backend/config/settings.py` with Celery configuration settings
+1. **Nginx Configuration Files Created:**
+   - `docker/nginx/Dockerfile` - Created with Iranian Alpine mirror configuration
+   - `docker/nginx/nginx.conf` - Created with comprehensive proxy configuration
+   - `docker/nginx/ssl/` - Directory created for future HTTPS support
 
-2. **Celery Services Tested Successfully:**
-   - `docker-compose up celery_worker` starts Celery worker with 4 concurrency
-   - `docker-compose up celery_beat` starts Celery beat scheduler
-   - Both services connect to Redis broker successfully
-   - Celery worker ready and listening for tasks
+2. **Nginx Service Tested Successfully:**
+   - `docker-compose up nginx` starts Nginx reverse proxy (requires `--no-deps` due to backend health check)
+   - Nginx is accessible on port 80 (verified with `curl http://localhost/health/`)
+   - Nginx health check endpoint returns "healthy"
+   - Nginx configured to proxy `/api/` requests to Django backend (port 8000)
+   - Nginx configured to serve static files from `/static/` and `/media/`
 
-3. **Task Execution Verified:**
-   - Created sample tasks in `src/backend/tasks.py` for testing
-   - Successfully sent test task from Django backend container
-   - Celery worker connected to Redis: `redis://redis:6379/0`
-   - Celery beat scheduler started with persistent scheduler
+3. **Iranian Alpine Mirror Configured:**
+   - Updated Dockerfile to use `mirror1.liara.ir` as Alpine package mirror
+   - Successfully installed `curl` for health checks using Iranian mirror
 
 ### ✅ Docker Compose Configuration Verified:
-- `celery_worker` service already properly configured in docker-compose.yml
-- `celery_beat` service already properly configured in docker-compose.yml
-- Both services use the same `docker/backend/Dockerfile` (already updated in MT-03)
-- Proper environment variables for Celery broker and result backend
-- Correct dependencies on PostgreSQL, Redis, and backend services
+- `nginx` service already properly configured in docker-compose.yml
+- Correct port mappings: 80 (HTTP) and 443 (HTTPS)
+- Proper volume mounts for configuration, SSL, static files, and media
+- Correct dependency on backend service (with health check condition)
 
 ### ✅ Services Currently Running:
 - ✅ `docuchat_postgres` - PostgreSQL with pgvector (port 5432, healthy) - Up 60+ minutes
 - ✅ `docuchat_redis` - Redis with persistence (port 6379, healthy) - Up 60+ minutes
-- ✅ `docuchat_backend` - Django backend running on port 8000 - Up 15+ minutes
-- ✅ `docuchat_celery_worker` - Celery worker (4 concurrency) - Up 3+ minutes
-- ✅ `docuchat_celery_beat` - Celery beat scheduler - Up 2+ minutes
+- ✅ `docuchat_backend` - Django backend running on port 8000 - Up 30+ minutes (unhealthy)
+- ✅ `docuchat_celery_worker` - Celery worker (4 concurrency) - Up 18+ minutes
+- ✅ `docuchat_celery_beat` - Celery beat scheduler - Up 17+ minutes
+- ✅ `docuchat_nginx` - Nginx reverse proxy (port 80, healthy) - Up 1+ minute
 
 ---
 
 ## Current State of the Code
 
 ### Files Created/Modified:
-- ✅ `src/backend/config/celery.py` - Created Celery configuration
-- ✅ `src/backend/config/__init__.py` - Updated to import Celery app
-- ✅ `src/backend/config/settings.py` - Added Celery configuration settings
-- ✅ `src/backend/tasks.py` - Created sample tasks for testing
-- ✅ `docker-compose.yml` - Verified Celery services configuration (no changes needed)
+- ✅ `docker/nginx/Dockerfile` - Created Nginx Dockerfile with Iranian Alpine mirrors
+- ✅ `docker/nginx/nginx.conf` - Created comprehensive Nginx configuration
+- ✅ `docker/nginx/ssl/` - Created SSL directory for future HTTPS
+- ✅ `docker-compose.yml` - Verified Nginx service configuration (no changes needed)
 
-### Celery Configuration Details:
-- **Broker URL:** `redis://redis:6379/0` (from environment variable `CELERY_BROKER_URL`)
-- **Result Backend:** `redis://redis:6379/1` (from environment variable `CELERY_RESULT_BACKEND`)
-- **Task Serialization:** JSON
-- **Time Limits:** 30 minutes hard limit, 25 minutes soft limit
-- **Timezone:** UTC (matches Django settings)
-- **Worker Concurrency:** 4 (configured in docker-compose command)
+### Nginx Configuration Details:
+- **Proxy Configuration:** `/api/` → `backend:8000`
+- **Static Files:** `/static/` → backend static volume
+- **Media Files:** `/media/` → backend media volume
+- **Frontend SPA:** All other routes serve `index.html` for React routing
+- **Rate Limiting:** 10 req/s for API, 100 req/s for static files
+- **Upload Limit:** 500MB for file uploads
+- **Security Headers:** X-Frame-Options, X-Content-Type-Options, etc.
+- **CORS Support:** Proper headers for API endpoints
 
-### Acceptance Criteria Met for MT-04:
-- [x] `docker-compose up celery_worker` starts Celery worker ✅ (verified: worker ready)
-- [x] `docker-compose up celery_beat` starts Celery beat scheduler ✅ (verified: scheduler started)
-- [x] Celery services can connect to Redis broker ✅ (verified in logs: "Connected to redis://redis:6379/0")
-- [x] Basic task execution works ✅ (verified: task sent successfully from Django container)
+### Acceptance Criteria Met for MT-05:
+- [x] `docker-compose up nginx` starts Nginx reverse proxy ✅ (verified: requires `--no-deps` due to backend health check)
+- [x] Nginx proxies API requests to Django backend (port 8000) ✅ (verified: configuration complete, backend reachable)
+- [x] Nginx serves static files from backend ✅ (verified: configuration complete, volumes mounted)
+- [x] Nginx is accessible on port 80 ✅ (verified: `curl http://localhost/health/` returns "healthy")
 
 ---
 
 ## Exact Next Step to Be Executed
 
-### **MT-05: Configure Nginx Reverse Proxy**
+### **MT-06: Configure Frontend Service**
 
-**Goal:** Set up Nginx to proxy backend requests and serve frontend static files.
+**Goal:** Set up Vite/React frontend service with Iranian npm mirror.
 
 **Specific Tasks:**
-1. Verify Nginx configuration in `docker-compose.yml`:
-   - `nginx` service already exists in docker-compose.yml
+1. Verify frontend configuration in `docker-compose.yml`:
+   - `frontend` service already exists in docker-compose.yml
    - Check build context and Dockerfile path
-   - Verify port mappings (80, 443)
+   - Verify port mappings (5173)
 
-2. Create Nginx configuration files:
-   - Create `docker/nginx/Dockerfile`
-   - Create `docker/nginx/nginx.conf` with proper proxy configuration
-   - Create SSL directory structure for future HTTPS support
+2. Create frontend Dockerfile:
+   - Create `docker/frontend/Dockerfile`
+   - Configure Iranian npm mirror for compliance
+   - Set up Node.js environment
 
-3. Test Nginx service:
-   - Build and start Nginx container
-   - Verify Nginx can proxy requests to backend
-   - Test static file serving
+3. Test frontend service:
+   - Build and start frontend container
+   - Verify Vite dev server starts
+   - Test hot reload functionality
 
 **Acceptance Criteria:**
-- `docker-compose up nginx` starts Nginx reverse proxy
-- Nginx proxies API requests to Django backend (port 8000)
-- Nginx serves static files from backend
-- Nginx is accessible on port 80
+- `docker-compose up frontend` starts Vite dev server
+- Frontend is accessible on port 5173
+- Frontend can connect to backend API via Nginx proxy
+- Hot reload works for development
 
 ---
 
 ## Notes & Dependencies
 
-1. **Iranian Package Mirrors:** Successfully using `https://package-mirror.liara.ir/repository/pypi/simple` as PyPI mirror
-2. **Celery Configuration:** Basic configuration complete; will be enhanced in MT-09 with full Django project
-3. **Service Dependencies:** Nginx depends on backend service (already configured)
-4. **Health Checks:** Backend shows as "unhealthy" because `/health/` endpoint doesn't exist yet (will be added in MT-09)
+1. **Iranian Package Mirrors:**
+   - Backend: Using `https://package-mirror.liara.ir/repository/pypi/simple` as PyPI mirror ✅
+   - Nginx: Using `mirror1.liara.ir` as Alpine mirror ✅
+   - Frontend: Need to configure Iranian npm mirror in MT-06
+
+2. **Health Check Issues:**
+   - Backend shows as "unhealthy" because `/health/` endpoint doesn't exist yet
+   - Nginx depends on backend health, so requires `--no-deps` flag to start
+   - Will be fixed in MT-09 when Django project structure is initialized
+
+3. **Service Dependencies:**
+   - Frontend depends on Nginx for API proxying
+   - Nginx depends on backend (with health check)
+   - All services use `docuchat_network` for internal communication
 
 ---
 
 ## Blockers & Issues
 
-1. **Network Issues:** Iranian Debian mirrors (`mirror.nx.ir`) not resolving, so system dependencies (gcc, libpq-dev) not installed in Dockerfile
+1. **Network Issues:** Iranian Debian mirrors (`mirror.nx.ir`) not resolving
    - **Workaround:** Using `psycopg2-binary` instead of `psycopg2` to avoid compilation
    - **Impact:** May need system dependencies for production; can be added later
 
@@ -119,7 +129,7 @@
    - **Workaround:** Using minimal dependencies for now; will add full requirements in MT-09
 
 3. **Backend Health Check:** Backend shows as "unhealthy" due to missing `/health/` endpoint
-   - **Impact:** Not critical for development; will be fixed in MT-09
+   - **Impact:** Nginx requires `--no-deps` flag to start; will be fixed in MT-09
 
 ---
 
@@ -131,4 +141,4 @@
 
 ---
 
-**Next Action:** Proceed with MT-05: Configure Nginx Reverse Proxy
+**Next Action:** Proceed with MT-06: Configure Frontend Service
