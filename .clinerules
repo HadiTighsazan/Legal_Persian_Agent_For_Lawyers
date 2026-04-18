@@ -1,0 +1,37 @@
+# 1. Project Directory Map (CRITICAL)
+DO NOT search for files using `list_dir` or `search_files` unless absolutely necessary. Use these exact paths via `read_file` or `write_to_file`:
+- Active Task PRD: `docs/active-task/current-prd.md`
+- Save State / WIP: `docs/active-task/wip-context.md`
+- Database Schema: `docs/references/database-schema.md`
+- API Contracts: `docs/references/api-registry.md`
+- Source Code: `src/`
+Never read the entire src/ directory or massive files unless specifically requested for the current micro-task.
+
+# 2. Tech Stack
+- Frontend: React, Vite, TailwindCSS, shadcn/ui
+- Backend: Django, Django REST Framework, PostgreSQL, pgvector, Celery, Redis
+- AI & Document Processing: LangChain, PyMuPDF, OpenAI API
+- Testing: Vitest, React Testing Library, Pytest
+- DevOps & Deployment: Docker, Nginx, Gunicorn
+
+# 3. Coding Rules
+- Write Clean Code: Keep functions small and modular.
+- Naming Conventions: Use camelCase for variables/functions, PascalCase for classes/components.
+- Error Handling: Always use try/catch blocks and provide meaningful error messages.
+- Strict Typing: Use TypeScript for all Frontend code. Use Python Type Hints (PEP 484) for all Backend code.
+# 4. TDD Flow (Test-Driven Development)
+Always follow these $3$ exact steps for every new feature or component:
+1. RED: Write a failing test first. Stop and verify.
+2. GREEN: Write the minimum code required to make the test pass.
+3. REFACTOR: Clean up the code without changing behavior.
+
+# 5. WIP & State Management (CRITICAL)
+- After completing ANY step or before stopping to ask the user for input, you MUST update `docs/active-task/wip-context.md`.
+- Overwrite the file with: 
+  1. What was just completed.
+  2. The current state of the code.
+  3. The exact next step to be executed.
+
+# 6. Reference Documentation Rule
+- If you make ANY changes to database tables, models, or columns, immediately update `docs/references/database-schema.md`.
+- If you create or modify an API endpoint, immediately update `docs/references/api-registry.md`.
