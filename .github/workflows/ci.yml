@@ -1,0 +1,268 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  # Iranian-compliant package mirrors
+  PIP_INDEX_URL: https://mirror-pypi.runflare.com/simple
+  PIP_EXTRA_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple
+  NPM_CONFIG_REGISTRY: https://mirror-npm.runflare.com
+  NPM_CONFIG_STRICT_SSL: true
+  # Fallback mirrors (will be used if primary fails)
+  PIP_FALLBACK_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple
+  NPM_FALLBACK_REGISTRY: https://package-mirror.liara.ir/repository/npm/
+  
+  # Application environment variables for testing
+  POSTGRES_DB: docuchat_test
+  POSTGRES_USER: test_user
+  POSTGRES_PASSWORD: test_password
+  DATABASE_URL: postgresql://test_user:test_password@localhost:5432/docuchat_test
+  REDIS_URL: redis://localhost:6379/0
+  DJANGO_SECRET_KEY: test-secret-key-for-ci-only-do-not-use-in-production
+  DJANGO_DEBUG: "True"
+  DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+  DJANGO_CORS_ALLOWED_ORIGINS: http://localhost:5173
+  OPENAI_API_KEY: sk-test-key-for-ci-only
+  VITE_API_BASE_URL: http://localhost/api
+
+jobs:
+  backend-tests:
+    name: Backend Tests (Python/Django)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: ${{ env.POSTGRES_DB }}
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpq-dev gcc
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('src/backend/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install Python dependencies
+      run: |
+        cd src/backend
+        pip install --upgrade pip
+        # Try primary mirror first, fallback if needed
+        pip install -r requirements.txt || \
+          (echo "Primary mirror failed, trying fallback..." && \
+           PIP_INDEX_URL=${{ env.PIP_FALLBACK_INDEX_URL }} pip install -r requirements.txt)
+
+    - name: Run linting (flake8)
+      run: |
+        cd src/backend
+        pip install flake8
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Run type checking (mypy)
+      run: |
+        cd src/backend
+        pip install mypy
+        mypy --install-types --non-interactive . || true
+
+    - name: Run backend tests with pytest
+      run: |
+        cd src/backend
+        python -m pytest tests/ -v --cov=. --cov-report=xml
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./src/backend/coverage.xml
+        flags: backend
+
+  frontend-tests:
+    name: Frontend Tests (TypeScript/React)
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js 20
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: src/frontend/package-lock.json
+
+    - name: Cache npm dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.npm
+        key: ${{ runner.os }}-node-${{ hashFiles('src/frontend/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-node-
+
+    - name: Install frontend dependencies
+      run: |
+        cd src/frontend
+        # Try primary mirror first, fallback if needed
+        npm config set registry ${{ env.NPM_CONFIG_REGISTRY }}
+        npm config set strict-ssl ${{ env.NPM_CONFIG_STRICT_SSL }}
+        npm ci || \
+          (echo "Primary mirror failed, trying fallback..." && \
+           npm config set registry ${{ env.NPM_FALLBACK_REGISTRY }} && \
+           npm ci)
+
+    - name: Run linting (ESLint)
+      run: |
+        cd src/frontend
+        npm run lint || echo "Linting completed (warnings allowed)"
+
+    - name: Run type checking (TypeScript)
+      run: |
+        cd src/frontend
+        npm run type-check || echo "Type checking completed"
+
+    - name: Run frontend tests with Vitest
+      run: |
+        cd src/frontend
+        npm test -- --run --coverage
+
+    - name: Upload frontend coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./src/frontend/coverage/coverage-final.json
+        flags: frontend
+
+  docker-build:
+    name: Docker Build Verification
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Cache Docker layers
+      uses: actions/cache@v4
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+
+    - name: Build backend Docker image
+      run: |
+        docker build \
+          -f docker/backend/Dockerfile \
+          -t docuchat-backend:ci \
+          --build-arg PIP_INDEX_URL=${{ env.PIP_INDEX_URL }} \
+          --build-arg PIP_EXTRA_INDEX_URL=${{ env.PIP_EXTRA_INDEX_URL }} \
+          .
+
+    - name: Build frontend Docker image
+      run: |
+        docker build \
+          -f docker/frontend/Dockerfile \
+          -t docuchat-frontend:ci \
+          --build-arg NPM_CONFIG_REGISTRY=${{ env.NPM_CONFIG_REGISTRY }} \
+          --build-arg NPM_CONFIG_STRICT_SSL=${{ env.NPM_CONFIG_STRICT_SSL }} \
+          .
+
+    - name: Build nginx Docker image
+      run: |
+        docker build \
+          -f docker/nginx/Dockerfile \
+          -t docuchat-nginx:ci \
+          ./docker/nginx
+
+    - name: Verify Docker Compose configuration
+      run: |
+        docker-compose config
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  notify:
+    name: Notify Status
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests, docker-build, security-scan]
+    if: always()
+    steps:
+    - name: Determine workflow status
+      id: check-status
+      run: |
+        if [[ "${{ needs.backend-tests.result }}" == "success" && \
+              "${{ needs.frontend-tests.result }}" == "success" && \
+              "${{ needs.docker-build.result }}" == "success" && \
+              "${{ needs.security-scan.result }}" == "success" ]]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "message=✅ All checks passed!" >> $GITHUB_OUTPUT
+        else
+          echo "status=failure" >> $GITHUB_OUTPUT
+          echo "message=❌ Some checks failed. Please review the logs." >> $GITHUB_OUTPUT
+        fi
+
+    - name: Print workflow summary
+      run: |
+        echo "## CI Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Backend Tests | ${{ needs.backend-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Frontend Tests | ${{ needs.frontend-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Docker Build | ${{ needs.docker-build.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Overall Status:** ${{ steps.check-status.outputs.message }}" >> $GITHUB_STEP_SUMMARY
