@@ -1,13 +1,6 @@
 # Nginx Reverse Proxy
 FROM nginx:alpine
 
-# Configure Iranian Alpine mirrors (for compliance with local network restrictions)
-RUN echo "https://mirror1.liara.ir/alpine/v3.23/main" > /etc/apk/repositories && \
-    echo "https://mirror1.liara.ir/alpine/v3.23/community" >> /etc/apk/repositories
-
-# Install curl for health checks
-RUN apk update && apk add --no-cache curl
-
 # Remove default nginx configuration
 RUN rm /etc/nginx/conf.d/default.conf
 
@@ -23,9 +16,9 @@ RUN mkdir -p /static /media /usr/share/nginx/html
 # Expose ports
 EXPOSE 80 443
 
-# Health check
+# Health check using built-in wget instead of curl
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost/health/ || exit 1
+  CMD wget -q --spider http://localhost/health/ || exit 1
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]

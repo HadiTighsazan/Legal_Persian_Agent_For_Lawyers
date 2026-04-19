@@ -1,22 +1,31 @@
-# Django & Core (minimal for testing)
+# Django & Core
 Django==4.2.16
 djangorestframework==3.15.1
 django-cors-headers==4.3.1
 django-environ==0.11.2
 
+# Authentication
+djangorestframework-simplejwt==5.3.1
+
 # Database
 psycopg2-binary==2.9.9
+django-filter==23.5
 
 # Async & Task Queue
 celery==5.3.6
 redis==5.0.1
 
+# API Documentation
+drf-yasg==1.21.7
+
 # Production
 gunicorn==21.2.0
+whitenoise==6.6.0
 
 # Development & Testing
 pytest==7.4.4
 pytest-django==4.7.0
+pytest-cov==4.1.0
 
 # Utilities
 python-dotenv==1.0.0

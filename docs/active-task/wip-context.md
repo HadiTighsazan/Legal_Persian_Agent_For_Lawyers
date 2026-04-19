@@ -1,161 +1,129 @@
 # WIP Context - Epic E01: Project Scaffolding & DevOps
 
-## Current Status: MT-08 Completed ✅
+## Current Status: MT-09 Complete and Verified ✅
 
-**Last Updated:** 2026-04-19 11:11 (UTC+3:30)
-**Current Micro-Task:** MT-08 - CI Skeleton (Completed)
-**Next Micro-Task:** MT-09 - Initialize Django Project Structure
+**Last Updated:** 2026-04-19 13:57 (UTC+3:30)
+**Current Micro-Task:** MT-09 - Initialize Django Project Structure (COMPLETE & VERIFIED)
+**Next Micro-Task:** MT-10 - Initialize Frontend Project Structure
 
 ---
 
-## What Was Just Completed (MT-08)
+## Issues Found and Fixed:
 
-### ✅ CI Skeleton Created and Configured:
+### 🔍 **Problem Identified:**
+The Django project had API endpoints configured in `urls.py` that were trying to include URL configurations from apps that don't have `urls.py` files yet. This caused **500 Internal Server Errors** when accessing `/api/v1/auth/` and other API endpoints.
 
-1. **GitHub Actions Workflow Created:**
-   - **File**: `.github/workflows/ci.yml` created with comprehensive CI pipeline
-   - **Triggers**: Runs on push to main branch and all pull requests
-   - **Iranian Package Mirrors**: Configured with primary and fallback mirrors:
-     - **PyPI**: `https://mirror-pypi.runflare.com/simple` (primary), `https://package-mirror.liara.ir/repository/pypi/simple` (fallback)
-     - **npm**: `https://mirror-npm.runflare.com` (primary), `https://package-mirror.liara.ir/repository/npm/` (fallback)
+### ✅ **Fix Applied:**
+1. **Commented out non-existent API includes** in `src/backend/config/urls.py`:
+   - `path('api/v1/auth/', include('users.urls', namespace='auth'))`
+   - `path('api/v1/documents/', include('documents.urls', namespace='documents'))`
+   - `path('api/v1/conversations/', include('conversations.urls', namespace='conversations'))`
+   - `path('api/v1/tasks/', include('tasks.urls', namespace='tasks'))`
+   - `path('api/v1/api-keys/', include('api_keys.urls', namespace='api_keys'))`
 
-2. **CI Jobs Configured:**
-   - **Backend Tests**: Python/Django tests with PostgreSQL and Redis services
-   - **Frontend Tests**: TypeScript/React tests with Vitest and Testing Library
-   - **Docker Build Verification**: Builds all Docker images (backend, frontend, nginx)
-   - **Security Scanning**: Trivy vulnerability scanning with SARIF output
-   - **Status Notification**: Summary reporting with pass/fail status
-
-3. **Testing Infrastructure Prepared:**
-   - **Backend**: Created `src/backend/tests/` directory with initial test file
-   - **Frontend**: Updated `package.json` with test scripts and dependencies
-   - **ESLint**: Created `.eslintrc.cjs` configuration for TypeScript/React
-   - **Vitest**: Created `vitest.config.ts` and test setup files
-
-4. **Caching Configured:**
-   - **pip dependencies**: Cached based on requirements.txt hash
-   - **npm dependencies**: Cached based on package-lock.json hash
-   - **Docker layers**: Cached for faster builds
-
-### ✅ Files Created/Modified:
-- ✅ `.github/workflows/ci.yml` - Complete CI pipeline with Iranian mirrors
-- ✅ `src/backend/tests/__init__.py` - Tests package initialization
-- ✅ `src/backend/tests/test_health.py` - Initial Django health tests
-- ✅ `src/frontend/package.json` - Updated with test scripts and dependencies
-- ✅ `src/frontend/.eslintrc.cjs` - ESLint configuration
-- ✅ `src/frontend/vitest.config.ts` - Vitest configuration
-- ✅ `src/frontend/src/test/setup.ts` - Test setup file
-- ✅ `src/frontend/src/App.test.tsx` - Initial frontend test file
+2. **Restarted backend container** to apply changes
+3. **Verified all endpoints now return appropriate status codes**
 
 ---
 
 ## Current State of the Code
 
-### CI Pipeline Status:
-```
-✅ .github/workflows/ci.yml: Complete CI pipeline with 5 jobs
-✅ Iranian Mirrors: PyPI and npm mirrors configured with fallbacks
-✅ Backend Tests: Test infrastructure ready (will pass after MT-09)
-✅ Frontend Tests: Test infrastructure ready (will pass after MT-10)
-✅ Docker Build: All 3 Docker images verified to build
-✅ Security Scanning: Trivy vulnerability scanner integrated
-✅ Caching: pip, npm, and Docker layers caching configured
-```
+### ✅ **All Endpoints Working Correctly:**
+- **`/health/`** → `200 OK` with JSON response
+- **`/health/ready/`** → `200 OK` 
+- **`/health/live/`** → `200 OK`
+- **`/admin/`** → `302 Found` (redirects to login - expected)
+- **`/swagger/`** → `200 OK` (Swagger UI)
+- **`/redoc/`** → `200 OK` (ReDoc UI)
+- **`/api/v1/auth/`** → `404 Not Found` (endpoint commented out - expected)
+- **Other API endpoints** → `404 Not Found` (endpoints commented out - expected)
 
-### Key CI Features:
-- **Iranian Compliance**: All package downloads use Iranian-compliant mirrors
-- **Fallback Strategy**: Automatic fallback to secondary mirrors if primary fails
-- **Comprehensive Testing**: Backend, frontend, Docker builds, and security scanning
-- **Code Quality**: ESLint for frontend, flake8/mypy for backend
-- **Coverage Reporting**: Codecov integration for both backend and frontend
-- **GitHub Integration**: Results uploaded to Security tab and PR status checks
+### ✅ **Services Status:**
+- **Backend**: Running and healthy (Docker health check passes)
+- **PostgreSQL**: Running and healthy
+- **Redis**: Running and healthy  
+- **Celery Worker**: Running and connected to Redis
+- **Celery Beat**: Running and scheduling tasks
+- **Frontend**: Running and healthy (Vite dev server)
 
-### Environment Variables for CI:
-- **Test Database**: `POSTGRES_DB=docuchat_test`, `POSTGRES_USER=test_user`
-- **Test Redis**: `REDIS_URL=redis://localhost:6379/0`
-- **Test Django**: `DJANGO_SECRET_KEY=test-secret-key-for-ci-only...`
-- **Test Frontend**: `VITE_API_BASE_URL=http://localhost/api`
-
-### Acceptance Criteria Status for MT-08:
-- [x] CI workflow runs on push to main and PRs ✅ **VERIFIED**: Triggers configured
-- [x] Uses Iranian-compliant package mirrors ✅ **VERIFIED**: Primary and fallback mirrors configured
-- [x] Tests backend and frontend code ✅ **VERIFIED**: Test infrastructure created
-- [x] Verifies Docker images can be built ✅ **VERIFIED**: Docker build job included
-- [x] Includes caching for faster builds ✅ **VERIFIED**: pip, npm, and Docker caching
-- [x] Provides clear pass/fail status ✅ **VERIFIED**: Notification job with summary
+### ✅ **Django Project Structure Complete:**
+- All 7 core tables implemented as Django models
+- Custom User model configured (`AUTH_USER_MODEL = 'users.User'`)
+- Django REST Framework with JWT authentication
+- CORS headers configured for frontend
+- Swagger/OpenAPI documentation
+- Celery integration with Redis
+- Logging configuration with automatic directory creation
+- Environment-based configuration with `django-environ`
+- Health endpoints for Docker/Kubernetes
 
 ---
 
-## Exact Next Step to Be Executed
+## Debugging Results:
 
-### **MT-09: Initialize Django Project Structure**
+### **Before Fix:**
+- `GET /api/v1/auth/` → `500 Internal Server Error` (ImportError: No module named 'users.urls')
+- Django was crashing when trying to import non-existent URL configurations
 
-**Goal:** Create minimal Django project with proper settings, celery config, and health endpoint.
-
-**Specific Tasks:**
-1. Create Django apps structure according to database schema
-2. Configure Django settings for development and production
-3. Set up Django REST Framework with JWT authentication
-4. Create health endpoint (`/health/`) for Docker health checks
-5. Configure Celery integration
-6. Set up database models (skeleton) for 7 core tables
-7. Create initial migrations
-
-**Acceptance Criteria:**
-- Django project starts successfully
-- Health endpoint returns 200 OK
-- Database models created for all 7 core tables
-- Celery worker can connect to Redis
-- JWT authentication configured
-- Settings properly use environment variables
+### **After Fix:**
+- `GET /api/v1/auth/` → `404 Not Found` (appropriate for non-existent endpoint)
+- All other endpoints work correctly
+- No more 500 errors
 
 ---
 
-## Notes & Dependencies
+## Acceptance Criteria Status for MT-09:
 
-1. **Current Test Status:**
-   - **Backend Tests**: Will fail until Django project is initialized (MT-09)
-   - **Frontend Tests**: Will fail until React project is initialized (MT-10)
-   - **Docker Builds**: Should pass immediately
-   - **Security Scanning**: Should pass immediately
-
-2. **Package Mirror Performance:**
-   - **npm Mirrors**: Still slow but with fallback strategy
-   - **Workaround**: CI uses caching to minimize download time
-   - **Long-term**: Will be optimized in MT-10 production builds
-
-3. **Service Dependencies for MT-09:**
-   - Requires PostgreSQL with pgvector extension (already configured)
-   - Requires Redis for Celery (already configured)
-   - Backend health check will be fixed by implementing `/health/` endpoint
+- [x] **Django project starts successfully** ✅ **VERIFIED**: All containers running, backend healthy
+- [x] **Health endpoint returns 200 OK** ✅ **VERIFIED**: `/health/` returns JSON with status "ok"
+- [x] **Database models created for all 7 core tables** ✅ **VERIFIED**: All models implemented
+- [x] **Celery worker can connect to Redis** ✅ **VERIFIED**: Worker connected and ready
+- [x] **JWT authentication configured** ✅ **VERIFIED**: DRF and SimpleJWT configured in settings
+- [x] **Settings properly use environment variables** ✅ **VERIFIED**: `django-environ` integrated
 
 ---
 
-## Blockers & Issues
+## What MT-09 Actually Includes:
 
-1. **TypeScript Errors in Config Files:**
-   - **Issue**: `vitest/config` module not found (types missing)
-   - **Impact**: Development IDE shows errors but CI will work
-   - **Resolution**: Dependencies will be installed by CI, types resolved
+According to the implementation plan, MT-09 is: **"Create minimal Django project with settings, celery config"**
 
-2. **Backend Tests Depend on MT-09:**
-   - **Issue**: Current tests will fail until Django project is properly initialized
-   - **Impact**: CI backend tests will fail until MT-09 is complete
-   - **Workaround**: Tests are written but marked to pass basic checks
+### ✅ **What's Complete:**
+1. **Minimal Django project** with working health endpoints
+2. **Settings** configured for production/development
+3. **Celery config** with Redis broker
+4. **Database models** for all 7 core tables
+5. **Docker integration** with health checks
+6. **API documentation** with Swagger/OpenAPI
 
-3. **Frontend Tests Depend on MT-10:**
-   - **Issue**: Frontend project structure needs to be initialized
-   - **Impact**: CI frontend tests will fail until MT-10 is complete
-   - **Workaround**: Basic test infrastructure is in place
-
----
-
-## Reference Documentation Status
-- `docs/references/database-schema.md`: Unchanged (will be referenced in MT-09)
-- `docs/references/api-registry.md`: Unchanged (will be referenced in MT-09)
-- `docs/active-task/E01-prd.md`: Reference for current epic
-- `docs/active-task/Implementation-Plan-E01.md`: Implementation plan reference
+### ⏳ **What's Not Included (for later tasks):**
+1. **Actual API endpoints** - These will be implemented in later tasks when business logic is added
+2. **URL configurations for apps** - Will be created when apps have views to expose
+3. **Authentication endpoints** - JWT is configured but endpoints not implemented yet
+4. **Business logic** - Only data models, no views or serializers
 
 ---
 
-**Next Action:** Proceed with MT-09: Initialize Django Project Structure - Create Django apps, models, and health endpoint
+## Next Steps:
+
+### **Immediate:**
+1. **Proceed to MT-10**: Initialize Frontend Project Structure (Vite + React with TailwindCSS)
+2. **Verify frontend-backend integration**: Frontend should be able to call backend API
+
+### **Future (MT-11):**
+1. **Implement actual API endpoints** for authentication, documents, conversations, etc.
+2. **Create URL configurations** for each app
+3. **Add views and serializers** for business logic
+4. **Test full stack integration**
+
+---
+
+## Notes:
+
+1. **The 500 errors were expected** since we had URL includes for apps without URL configurations
+2. **Commenting them out is the correct approach** for a "minimal" project as specified in MT-09
+3. **API endpoints will be added incrementally** as we implement business logic in later tasks
+4. **The project structure is solid** and ready for frontend development (MT-10)
+
+---
+
+**Next Action:** Proceed to MT-10: Initialize Frontend Project Structure
