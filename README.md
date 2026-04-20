@@ -10,6 +10,29 @@ An AI-powered document chat assistant that allows you to upload documents, ask q
 - **DevOps**: Docker, Nginx, Gunicorn
 - **Testing**: Vitest, React Testing Library, Pytest
 
+## Current Status (Epic E01 - Complete ✅)
+
+**Epic E01: Project Scaffolding & DevOps** has been successfully completed. All infrastructure services are running and communicating:
+
+### ✅ **Completed Infrastructure:**
+1. **7 Services Running**: PostgreSQL, Redis, Django Backend, Celery Worker, Celery Beat, Nginx, Frontend
+2. **Full Stack Integration**: Frontend connects to backend through Nginx proxy
+3. **Database Ready**: PostgreSQL with pgvector extension for vector embeddings
+4. **Background Processing**: Celery + Redis configured for async tasks
+5. **API Routing**: Nginx routes `/api/` to Django backend
+
+### 🔧 **Working Endpoints:**
+- `GET /api/health/` - Health check (returns JSON status)
+- `GET /health/` - Nginx health check (returns "healthy")
+- `GET /admin/` - Django admin interface (redirects to login)
+
+### ⚠️ **Known Issues:**
+- Swagger (`/swagger/`) and ReDoc (`/redoc/`) endpoints return 500 (need DRF configuration)
+- Business logic endpoints not yet implemented (Epic E02)
+
+### 🚀 **Ready for Epic E02:**
+The infrastructure is complete and ready for business logic implementation (authentication, document upload, RAG queries, etc.).
+
 ## Prerequisites
 
 - Docker & Docker Compose
@@ -48,16 +71,19 @@ An AI-powered document chat assistant that allows you to upload documents, ask q
    - Django Admin: http://localhost:8000/admin
    - Nginx Proxy: http://localhost
 
-## Service URLs
+## Service URLs (Epic E01 - Complete ✅)
 
-| Service | Port | URL | Description |
-|---------|------|-----|-------------|
-| PostgreSQL | 5432 | `postgres:5432` | Database with pgvector extension |
-| Redis | 6379 | `redis:6379` | Cache and Celery broker |
-| Django Backend | 8000 | http://localhost:8000 | REST API |
-| Celery Worker | - | - | Background task processing |
-| Nginx | 80 | http://localhost | Reverse proxy |
-| Vite Dev Server | 5173 | http://localhost:5173 | Frontend development server |
+| Service | Port | URL | Description | Status |
+|---------|------|-----|-------------|--------|
+| PostgreSQL | 5432 | `postgres:5432` | Database with pgvector extension | ✅ Running |
+| Redis | 6379 | `redis:6379` | Cache and Celery broker | ✅ Running |
+| Django Backend | 8000 | http://localhost:8000 | REST API (direct access) | ✅ Running |
+| Celery Worker | - | - | Background task processing | ✅ Running |
+| Celery Beat | - | - | Scheduled tasks | ✅ Running |
+| Nginx | 80 | http://localhost | Reverse proxy with API routing | ✅ Running |
+| Vite Dev Server | 5173 | http://localhost:5173 | Frontend development server | ✅ Running |
+
+**Note:** Nginx routes `/api/` to Django backend. Use `http://localhost/api/health/` for API calls through proxy.
 
 ## Development Workflow
 
