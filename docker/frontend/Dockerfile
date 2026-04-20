@@ -14,10 +14,11 @@ WORKDIR /app
 # Copy package files from src/frontend
 COPY src/frontend/package*.json ./
 
-# Install dependencies with increased timeout and Iranian mirror
-RUN npm config set fetch-retry-mintimeout 20000 && \
-    npm config set fetch-retry-maxtimeout 120000 && \
-    npm install --verbose
+# Remove lockfile to avoid registry conflicts, set reliable mirror and install
+RUN rm -f package-lock.json && \
+    npm config set registry https://mirror2.chabokan.net/npm && \
+    npm install --no-audit --no-fund
+
 
 # Copy source code
 COPY src/frontend/ .
