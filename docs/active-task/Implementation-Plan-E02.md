@@ -172,6 +172,23 @@ djangorestframework-simplejwt==5.3.0
 3. **Backward Compatibility**: Ensure existing health endpoint still works
 4. **Performance**: Consider token blacklisting strategy for logout (currently stateless)
 
+### ⚠️ CRITICAL: Network & Package Installation Guidelines
+Due to network restrictions, you MUST NEVER skip package installations, create manual placeholder files, or use other workarounds when a network timeout occurs. You MUST use the following internal mirrors for all package installations. If an installation fails, try the next mirror in the priority list until it succeeds.
+
+**1. Python / pip Packages:**
+Whenever you need to install a Python package, use the `-i` flag with these mirrors strictly in this order:
+* Priority 1: `https://mirror2.chabokan.net/pypi/simple`
+* Priority 2: `https://mirror.iranserver.com/pypi/simple`
+* Priority 3: `https://mirror-pypi.runflare.com/simple`
+*(Example: `python -m pip install <package_name> -i https://mirror2.chabokan.net/pypi/simple`)*
+
+**2. Node.js / npm Packages:**
+Whenever you need to install frontend dependencies, you MUST bypass audit/fund and use these mirrors strictly in this order:
+* Priority 1: `https://mirror2.chabokan.net/npm`
+* Priority 2: `https://mirror-npm.runflare.com`
+* Priority 3: `https://mirror.iranserver.com/npm`
+*(Example: `npm install <package_name> --registry=https://mirror2.chabokan.net/npm --no-audit --no-fund`)*
+
 ## Success Metrics
 - All 6 API endpoints implemented and tested
 - JWT tokens work with 15min access / 7d refresh expiry
