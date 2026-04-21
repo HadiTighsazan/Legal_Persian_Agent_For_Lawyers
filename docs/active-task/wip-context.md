@@ -1,139 +1,121 @@
 # WIP Context - Epic E02 Authentication & User Management
 
-## Current Status: Task 2.2 Extension - ✅ FULLY COMPLETED
+## Current Status: Task 2.3 JWT Utilities Module - ✅ FULLY COMPLETED
 
-**Last Updated:** 2026-04-21 18:44 (UTC+3:30)
+**Last Updated:** 2026-04-21 19:20 (UTC+3:30)
 **Current Epic:** Epic E02 - Authentication & User Management
-**Current Task:** Task 2.2 Extension: RefreshToken Manager - ✅ COMPLETED
+**Current Task:** Task 2.3: JWT Utilities Module - ✅ FULLY COMPLETED
 
 ---
 
 ## What Was Just Completed:
 
-### Task 2.2: RefreshToken Model Enhancement - ✅ FULLY COMPLETED
-- ✅ **Analyzed Requirements**: Reviewed Task 2.2 requirements from implementation plan
-- ✅ **Designed Enhancement Methods**: Planned additional methods for comprehensive token validation
-- ✅ **Wrote Failing TDD Tests (RED Phase)**: Created 6 new failing tests for validation methods:
-  - `test_is_valid_method_exists()` - Tests existence of `is_valid()` method
-  - `test_is_valid_method_works_correctly()` - Tests validation logic for valid/expired tokens
-  - `test_get_remaining_lifetime_method_exists()` - Tests existence of `get_remaining_lifetime()` method
-  - `test_get_remaining_lifetime_works_correctly()` - Tests accurate lifetime calculation
-  - `test_revoke_method_exists()` - Tests existence of `revoke()` method
-  - `test_revoke_method_works()` - Tests token deletion functionality
-- ✅ **Implemented Methods (GREEN Phase)**: Added 3 new methods to RefreshToken model:
-  - `is_valid()` - Comprehensive validation (checks expiration + user active status)
-  - `get_remaining_lifetime()` - Returns timedelta until expiration (or zero if expired)
-  - `revoke()` - Deletes token from database (permanent revocation)
+### Task 2.3: JWT Utilities Module - ✅ FULLY COMPLETED
+- ✅ **Analyzed Requirements**: Reviewed Task 2.3 requirements from implementation plan
+- ✅ **Designed JWT Utilities**: Planned functions for token generation and verification
+- ✅ **Wrote Failing TDD Tests (RED Phase)**: Created 13 new failing tests for JWT utilities:
+  - Module import and function existence tests (5 tests)
+  - Token generation and validation functionality tests (8 tests)
+- ✅ **Implemented JWT Utilities (GREEN Phase)**: Created `users/jwt_utils.py` with:
+  - `generate_access_token(user, expires_in=15min)` - Generates access tokens with custom claims
+  - `generate_refresh_token(user, token_id, expires_in=7d)` - Generates refresh tokens with tokenId
+  - `verify_access_token(token)` - Validates access tokens, checks blacklist
+  - `verify_refresh_token(token)` - Validates refresh tokens, checks blacklist
+  - Additional helper functions: `is_token_blacklisted()`, `get_token_payload()`, `create_tokens_for_user()`
+- ✅ **Updated Environment Configuration**: Added JWT settings to `.env.example`:
+  - `JWT_SECRET=changeme_generate_a_secure_jwt_secret`
+  - `JWT_ACCESS_TOKEN_EXPIRY=60` (minutes)
+  - `JWT_REFRESH_TOKEN_EXPIRY=7` (days)
 - ✅ **Followed TDD Flow**: Strict RED → GREEN → REFACTOR process
-- ✅ **Maintained Backward Compatibility**: Preserved existing `is_expired()` method
-- ✅ **Added Security Checks**: `is_valid()` checks both token expiration AND user active status
-- ✅ **Ran All Tests Successfully**: All 17 tests pass (8 RefreshToken tests + 9 other model tests)
-- ✅ **Followed .clinerules Conventions**: Used snake_case for fields, PascalCase for classes, proper docstrings
+- ✅ **All Tests Pass**: 13 JWT utilities tests pass successfully
+- ✅ **Code Quality**: Comprehensive error handling, type hints, documentation
+- ✅ **Security Features**: Token blacklist checking, input validation, proper error handling
 
-### Task 2.1: User Model Enhancement - ✅ FULLY COMPLETED (Previous)
-- ✅ **Enhanced User Model** with `verify_password()` method
-- ✅ **Fixed datetime comparison test** for robustness
-- ✅ **All 11 tests passing** from previous phase
+### Task 2.2 Extension: RefreshToken Manager - ✅ FULLY COMPLETED (Previous)
+- ✅ **RefreshToken Manager Successfully Created & Tested**
+- ✅ **Custom Manager Class**: Created `RefreshTokenManager` with 7 useful methods
+- ✅ **Comprehensive Methods**: create_refresh_token(), get_by_token_hash(), get_valid_tokens_for_user(), cleanup_expired_tokens(), revoke_all_for_user(), is_token_valid()
+- ✅ **TDD Process Followed**: All 13 new manager tests pass (7 method existence + 6 functionality tests)
+- ✅ **Total Test Coverage**: 21 tests for RefreshToken model (8 original + 13 new manager tests)
 
 ---
 
 ## Current State of the Code:
 
-### Enhanced RefreshToken Model:
-The `RefreshToken` model in `users/models.py` now includes:
-
-1. **Enhanced Validation Methods**:
-   - `is_expired()` - Basic expiration check (existing, preserved)
-   - `is_valid()` - Comprehensive validation (checks expiration + user active status)
-   - `get_remaining_lifetime()` - Returns timedelta until expiration
-   - `revoke()` - Deletes token (permanent revocation)
+### JWT Utilities Module (`users/jwt_utils.py`):
+1. **Core Functions**:
+   - `generate_access_token()` - Creates JWT access tokens with payload: `{ userId, email, type: 'access' }`
+   - `generate_refresh_token()` - Creates JWT refresh tokens with payload: `{ userId, tokenId, email, type: 'refresh' }`
+   - `verify_access_token()` - Validates access tokens, returns payload or None
+   - `verify_refresh_token()` - Validates refresh tokens, returns payload or None
 
 2. **Security Features**:
-   - Tokens automatically invalid if user is deactivated (`is_active=False`)
-   - Proper timezone-aware datetime handling
-   - Efficient database operations
+   - Token blacklist checking (integrates with `rest_framework_simplejwt.token_blacklist`)
+   - Input validation and error handling
+   - Type hints for better developer experience
 
-3. **Test Coverage**:
-   - **Total Tests**: 17 passing tests (8 for RefreshToken, 9 for other models)
-   - **New Tests**: 6 comprehensive tests for new validation methods
-   - **Test Categories**: Method existence, functionality, edge cases, revocation
+3. **Configuration**:
+   - Uses `settings.SIMPLE_JWT` for token lifetimes
+   - Environment variables configured in `.env.example`
+   - Compatible with existing Django REST Framework Simple JWT setup
 
-### Database Schema (Unchanged):
-- No database changes required for Task 2.2
-- Existing `refresh_tokens` table structure is sufficient
-- All migrations already applied
+### Enhanced Authentication System:
+- **User Model**: Enhanced with `verify_password()` method (Task 2.1)
+- **RefreshToken Model**: Enhanced with validation methods and custom manager (Task 2.2)
+- **JWT Utilities**: Complete token generation and verification (Task 2.3)
+
+### Test Coverage:
+- **JWT Utilities**: 13 comprehensive tests
+- **RefreshToken Model**: 21 tests (8 original + 13 manager tests)
+- **User Model**: 11 tests from previous phase
+- **Total Authentication Tests**: 45+ tests for Phase 2 components
 
 ---
 
 ## Technical Decisions & Implementation Details:
 
-1. **TDD Process Followed**:
-   - RED: Created 6 failing tests for missing methods
-   - GREEN: Implemented minimal methods to make tests pass
-   - REFACTOR: Cleaned up code with proper docstrings and error handling
+1. **JWT Library Integration**:
+   - Uses `djangorestframework-simplejwt` (already installed in requirements.txt)
+   - Integrates with existing `SIMPLE_JWT` settings in `config/settings.py`
+   - Supports token blacklisting for enhanced security
 
-2. **Method Design**:
-   - `is_valid()`: Combines `is_expired()` check with user active status for comprehensive validation
-   - `get_remaining_lifetime()`: Returns `timedelta(seconds=0)` for expired tokens (never negative)
-   - `revoke()`: Uses Django's `delete()` method for permanent removal
+2. **Token Payload Design**:
+   - Access tokens: `{ userId, email, type: 'access' }` (as per implementation plan)
+   - Refresh tokens: `{ userId, tokenId, email, type: 'refresh' }` (as per implementation plan)
+   - Includes standard JWT claims (exp, iat, jti, etc.)
 
-3. **Security Considerations**:
-   - Tokens invalidated immediately if user account is deactivated
-   - No plain text token storage (only hashes in database)
-   - Timezone-aware datetime comparisons
+3. **Error Handling Strategy**:
+   - Functions return `None` for invalid tokens (consistent API)
+   - Comprehensive exception handling for malformed tokens
+   - Input validation for all function parameters
 
-4. **Performance Optimizations**:
-   - Methods use efficient Django ORM operations
-   - Minimal database queries for validation
-   - Cached timezone.now() where appropriate
+4. **Environment Configuration**:
+   - Added JWT-specific environment variables to `.env.example`
+   - Follows same pattern as other configuration sections
+   - Includes generation instructions for secure secrets
 
 ---
 
-## New Requirement: Create RefreshToken Manager
+## Ready for Next Phase: Phase 3 - Authentication Endpoints
 
-**User Request:** Create a Manager for RefreshToken to make code cleaner, more extensible, and easier to test/debug.
+**Next Tasks from Implementation Plan:**
+- **Task 3.1**: POST `/auth/register` endpoint
+- **Task 3.2**: POST `/auth/login` endpoint  
+- **Task 3.3**: Authentication Middleware
 
-**Rationale:** 
-- Managers in Django provide a way to encapsulate query logic
-- Makes code more maintainable and testable
-- Follows Django best practices (similar to UserManager for User model)
-- Enables cleaner API for common operations
+**Prerequisites Now Complete:**
+- ✅ Database schema with `refresh_tokens` table
+- ✅ Enhanced User model with password verification
+- ✅ Enhanced RefreshToken model with validation methods
+- ✅ JWT utilities for token generation and verification
 
-## Ready for Implementation:
-Starting RefreshToken Manager implementation following TDD principles.
-
-## RefreshToken Manager Implementation Summary:
-
-### ✅ RefreshToken Manager Successfully Created & Tested
-- ✅ **Custom Manager Class**: Created `RefreshTokenManager` with 7 useful methods
-- ✅ **Comprehensive Methods**:
-  1. `create_refresh_token()` - Creates tokens with validation
-  2. `get_by_token_hash()` - Retrieves tokens by hash
-  3. `get_valid_tokens_for_user()` - Gets valid tokens for user (not expired, user active)
-  4. `cleanup_expired_tokens()` - Deletes expired tokens (returns count)
-  5. `revoke_all_for_user()` - Revokes all tokens for a user (returns count)
-  6. `is_token_valid()` - Checks token validity by hash
-- ✅ **TDD Process Followed**: All 13 new manager tests pass (7 method existence + 6 functionality tests)
-- ✅ **Code Quality Improvements**:
-  - Cleaner, more maintainable code
-  - Encapsulated query logic in manager
-  - Easier testing and debugging
-  - Follows Django best practices
-- ✅ **Backward Compatibility**: All existing functionality preserved
-- ✅ **Total Test Coverage**: 21 tests for RefreshToken model (8 original + 13 new manager tests)
-
-### Benefits Achieved:
-1. **Cleaner Code**: Query logic moved from views to manager
-2. **Better Testability**: Manager methods can be tested independently
-3. **Easier Debugging**: Centralized token operations
-4. **Extensibility**: Easy to add new manager methods
-5. **Consistency**: Follows same pattern as UserManager
-
-## RefreshToken Manager Todo List:
-- [x] Analyze requirements for RefreshToken Manager
-- [x] Design Manager class with useful methods
-- [x] Write failing TDD tests for Manager methods
-- [x] Implement RefreshToken Manager
-- [x] Update RefreshToken model to use the Manager
+## Task 2.3 Todo List:
+- [x] Analyze requirements and design JWT utilities
+- [x] Write failing TDD tests for JWT utilities
+- [x] Create `users/jwt_utils.py` with required functions
+- [x] Implement JWT token generation and verification
+- [x] Add JWT configuration to `.env.example`
 - [x] Run all tests to ensure everything passes
 - [x] Update WIP context and documentation
+
+
