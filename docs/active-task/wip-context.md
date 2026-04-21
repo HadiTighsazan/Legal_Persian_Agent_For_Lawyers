@@ -1,85 +1,92 @@
 # WIP Context - Epic E02 Authentication & User Management
 
-## Current Status: Task 1.1 Completed
+## Current Status: Task 1.2 Completed
 
-**Last Updated:** 2026-04-21 11:12 (UTC+3:30)
+**Last Updated:** 2026-04-21 11:54 (UTC+3:30)
 **Current Epic:** Epic E02 - Authentication & User Management
-**Current Task:** Task 1.1: Create Migration for `refresh_tokens` Table - ✅ COMPLETED
+**Current Task:** Task 1.2: Update `users` Table (if needed) - ✅ COMPLETED
 
 ---
 
 ## What Was Just Completed:
 
-### Task 1.1: Create Migration for `refresh_tokens` Table
-- ✅ Analyzed requirements from PRD and implementation plan
-- ✅ Checked existing database schema (`users` table already exists with additional fields `is_active`, `is_staff`)
-- ✅ Examined current users app structure (Django app with User and APIKey models)
-- ✅ Created `RefreshToken` model in `src/backend/users/models.py` with:
-  - `id` (UUID, primary key)
-  - `user` (ForeignKey to User, CASCADE delete)
-  - `token_hash` (CharField, unique, max_length=255)
-  - `expires_at` (DateTimeField, not null)
-  - `created_at` (DateTimeField, default=timezone.now)
-  - `is_expired()` method for expiration checking
-- ✅ Regenerated migration `0001_initial.py` to include:
-  - User model (with existing fields + `is_active`, `is_staff`)
-  - APIKey model (with foreign key to User)
-  - RefreshToken model (new)
-  - All necessary indexes
-- ✅ Applied migration successfully to PostgreSQL database
-- ✅ Updated `docs/references/database-schema.md` with `refresh_tokens` table documentation
+### Task 1.2: Update `users` Table (if needed)
+- ✅ Analyzed PRD requirements for `users` table
+- ✅ Checked current database schema via PostgreSQL
+- ✅ Verified `email` UNIQUE constraint is enforced (constraint: `users_email_key`)
+- ✅ Compared PRD requirements with actual schema:
+  - `id` (UUID, PK) ✓
+  - `email` (VARCHAR, UNIQUE, NOT NULL) ✓
+  - `password` (VARCHAR, NOT NULL) ✓ (PRD specified `password_hash`, but Django's `AbstractBaseUser` uses `password` column - functionally equivalent as both store hashed passwords)
+  - `full_name` (VARCHAR) ✓
+  - `created_at` (TIMESTAMP) ✓
+  - `updated_at` (TIMESTAMP) ✓
+- ✅ Additional fields beyond PRD are preserved:
+  - `is_active` (BOOLEAN, DEFAULT TRUE)
+  - `is_staff` (BOOLEAN, DEFAULT FALSE)
+  - `last_login` (TIMESTAMP, from `AbstractBaseUser`)
+  - `is_superuser` (BOOLEAN, from `PermissionsMixin`)
+- ✅ Updated `docs/references/database-schema.md` to reflect actual schema (changed `password_hash` → `password` with note about Django `AbstractBaseUser`)
+- ✅ No database schema changes needed - existing schema is correct and functional
 
 ---
 
 ## Current State of the Code:
 
 ### Database Schema:
-1. **users** table: Already exists with all required fields + `is_active`, `is_staff`
-2. **refresh_tokens** table: Created with correct schema:
+1. **users** table: Correctly configured with all required fields:
+   - `id` (UUID, PK)
+   - `email` (VARCHAR(255), UNIQUE, NOT NULL) ✓
+   - `password` (VARCHAR(255), NOT NULL) - Django's password field (stores hashed passwords)
+   - `full_name` (VARCHAR(255), NULL)
+   - `is_active` (BOOLEAN, DEFAULT TRUE)
+   - `is_staff` (BOOLEAN, DEFAULT FALSE)
+   - `created_at` (TIMESTAMP, DEFAULT NOW())
+   - `updated_at` (TIMESTAMP, DEFAULT NOW())
+   - Additional Django auth fields: `last_login`, `is_superuser`
+
+2. **refresh_tokens** table: Created in Task 1.1 ✓
    - `id` (UUID, PK)
    - `user_id` (UUID, FK → users.id, CASCADE delete)
    - `token_hash` (VARCHAR(255), UNIQUE, NOT NULL)
    - `expires_at` (TIMESTAMP, NOT NULL)
    - `created_at` (TIMESTAMP, DEFAULT NOW())
-   - Indexes on `user_id`, `token_hash`, and `expires_at`
 
 ### Models:
-- `User` model in `src/backend/users/models.py` (already existed)
-- `APIKey` model in `src/backend/users/models.py` (already existed, now with proper foreign key)
-- `RefreshToken` model in `src/backend/users/models.py` (newly added)
-
-### Migrations:
-- `src/backend/users/migrations/0001_initial.py` - Regenerated to include all three models
-- Migration successfully applied to database
+- `User` model in `src/backend/users/models.py` - uses Django's `AbstractBaseUser` and `PermissionsMixin`
+- `APIKey` model in `src/backend/users/models.py` - with proper foreign key to User
+- `RefreshToken` model in `src/backend/users/models.py` - newly added in Task 1.1
 
 ### Documentation:
-- `docs/references/database-schema.md` updated with `refresh_tokens` table (Table 8)
+- `docs/references/database-schema.md` updated with correct `users` table schema
+- Note: Changed `password_hash` → `password` to reflect actual Django implementation
 
 ---
 
 ## Exact Next Step to Be Executed:
 
-**Task 1.2: Update `users` Table (if needed)**
-- Verify existing `users` table matches PRD + additional fields
-- Ensure `email` has UNIQUE constraint (already verified)
-- Add any missing fields from PRD (all appear present)
+**Task 1.3: Run Migrations**
+- Apply any pending migrations (none expected after verification)
+- Test foreign key constraints
 - Acceptance Criteria:
-  - `users` table has all required fields from PRD
-  - `email` UNIQUE constraint is enforced
-  - Additional fields (`is_active`, `is_staff`) are preserved
+  - All migrations applied successfully
+  - Foreign key constraints work correctly
+  - Database is ready for authentication implementation
 
-**Note:** Based on current analysis, the `users` table already has all PRD-required fields plus additional fields. Task 1.2 will be a verification step rather than a modification step.
+**Note:** Since we verified the schema is correct and migrations were already applied in Task 1.1, Task 1.3 will be a verification step to ensure everything is working.
 
 ---
 
 ## Technical Decisions & Notes:
-1. **Migration Strategy**: Deleted and regenerated initial migration to resolve foreign key conflict in APIKey model
-2. **Database**: Using PostgreSQL with pgvector extension (already running in Docker)
-3. **Field Preservation**: Kept existing `is_active` and `is_staff` fields in User model as they don't conflict with PRD requirements
-4. **Indexes**: Added appropriate indexes for performance (user_id, token_hash, expires_at)
-5. **CASCADE Delete**: All foreign keys use CASCADE delete for data integrity
+1. **Password Field Name**: PRD specified `password_hash` but Django's `AbstractBaseUser` uses `password` column. We're keeping Django's convention for compatibility with Django authentication system.
+2. **Schema Verification**: Confirmed via direct PostgreSQL queries that:
+   - `email` column has UNIQUE constraint (`users_email_key`)
+   - All required columns exist with correct data types
+   - Foreign key constraints are in place
+3. **Documentation Accuracy**: Updated database schema documentation to match actual implementation rather than PRD specification for the password column name.
+4. **Backward Compatibility**: No changes to existing schema needed - all functionality preserved.
 
 ---
 
 ## Ready for User Confirmation:
-Task 1.1 is complete. Please confirm before proceeding to Task 1.2.
+Task 1.2 is complete. The `users` table schema has been verified and documented correctly. Please confirm before proceeding to Task 1.3.

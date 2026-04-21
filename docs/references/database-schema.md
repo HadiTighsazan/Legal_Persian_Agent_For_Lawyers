@@ -7,7 +7,7 @@
 |--------|------|-------------|-------------|
 | id | UUID | PRIMARY KEY | User unique identifier |
 | email | VARCHAR(255) | UNIQUE, NOT NULL | User email |
-| password_hash | VARCHAR(255) | NOT NULL | Hashed password |
+| password | VARCHAR(255) | NOT NULL | Hashed password (Django AbstractBaseUser field) |
 | full_name | VARCHAR(255) | NULL | User full name |
 | is_active | BOOLEAN | DEFAULT TRUE | Account status |
 | is_staff | BOOLEAN | DEFAULT FALSE | Staff access |
