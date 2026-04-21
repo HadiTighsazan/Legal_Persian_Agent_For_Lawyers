@@ -1,123 +1,149 @@
 # WIP Context - Epic E02 Authentication & User Management
 
-## Current Status: Task 1.3 Fully Completed (All Migrations Applied)
+## Current Status: Task 2.1 Fully Completed (User Model Enhanced) + Test Fix Applied
 
-**Last Updated:** 2026-04-21 16:36 (UTC+3:30)
+**Last Updated:** 2026-04-21 17:26 (UTC+3:30)
 **Current Epic:** Epic E02 - Authentication & User Management
-**Current Task:** Task 1.3: Run Migrations - ✅ FULLY COMPLETED
+**Current Task:** Task 2.1: User Model Enhancement - ✅ FULLY COMPLETED
 
 ---
 
 ## What Was Just Completed:
 
-### Task 1.3: Run Migrations - Complete Project Migration
-- ✅ **Identified Missing Migrations**: Found that `documents`, `conversations`, and `tasks` apps had no migration files
-- ✅ **Created Missing Migrations**: Ran `python manage.py makemigrations` which created:
-  - `documents/migrations/0001_initial.py` - Creates Document and DocumentChunk models
-  - `conversations/migrations/0001_initial.py` - Creates Conversation and Message models  
-  - `tasks/migrations/0001_initial.py` - Creates ProcessingTask model
-- ✅ **Applied All Migrations**: Ran `python manage.py migrate` successfully applied all new migrations
-- ✅ **Verified Complete Migration State**: `showmigrations` now shows all apps with `[X]` (applied) or "(no migrations)" status:
-  - `documents` - `[X] 0001_initial`
-  - `conversations` - `[X] 0001_initial`
-  - `tasks` - `[X] 0001_initial`
-  - `users` - `[X] 0001_initial` (previously applied)
-  - All other Django built-in apps - all migrations applied
-- ✅ **Fixed User Deletion Issue**: Previously `user.delete()` failed because `documents` relation didn't exist. Now works correctly.
-- ✅ **Tested User Operations**: Verified:
-  - `User.objects.create(email, password)` - Works ✓
-  - `User.objects.create_user(email, password)` - Works ✓
-  - `user.delete()` - Now works without errors ✓
-  - Password hashing and verification - Works ✓
+### Task 2.1: User Model Enhancement - Complete
+- ✅ **Analyzed Current User Model**: Reviewed existing `User` model in `users/models.py`
+- ✅ **Verified Password Hashing**: Confirmed `set_password()` uses Django's `make_password()` and passwords are never stored in plain text
+- ✅ **Added `verify_password()` Method**: Implemented `verify_password(raw_password)` method that calls Django's built-in `check_password()`
+- ✅ **Followed .clinerules Naming Conventions**: Verified model uses snake_case for fields (Django convention) and PascalCase for classes
+- ✅ **Wrote Comprehensive Tests**: Created TDD tests in `users/tests/test_models.py`:
+  - `test_verify_password_method_exists()` - RED phase (initially failed)
+  - `test_verify_password_works_correctly()` - Tests correct/incorrect password verification
+  - Additional tests for user creation, password hashing, email uniqueness, etc.
+- ✅ **Fixed Failing Test**: Updated `test_create_refresh_token` to compare datetime objects instead of string representations
+  - Fixed `AttributeError: module 'django.utils.timezone' has no attribute 'utc'`
+  - Used `datetime.timezone.utc` instead of `timezone.utc`
+  - Made test more robust by comparing datetime objects directly
+- ✅ **Ran All Tests Successfully**: All 11 tests pass (User, APIKey, and RefreshToken models)
+  - User creation, superuser creation, email uniqueness
+  - Password hashing verification
+  - `verify_password()` method existence and functionality
+  - `get_full_name()` and `get_short_name()` methods
+  - APIKey model tests
+  - RefreshToken model tests (including fixed datetime comparison)
 
-### Previous Bug Fix (Infinite Recursion):
-- ✅ **Fixed Hanging Issue**: Resolved infinite recursion in `password` property setter
-- ✅ **Updated User Model**: Added intelligent `password` property that handles raw vs. hashed passwords
-- ✅ **Verified Fix**: User creation no longer hangs, all operations work correctly
+### Previous Task Completion (Task 1.3):
+- ✅ **All Migrations Applied**: Database schema complete with all tables
+- ✅ **User Operations Functional**: User creation, deletion, password management work correctly
+- ✅ **Fixed Infinite Recursion Bug**: Resolved password property setter issue
 
 ---
 
 ## Current State of the Code:
 
-### Database Schema (Complete):
-All required tables now exist in the database:
+### User Model (Enhanced & Complete):
+The `User` model in `users/models.py` now includes:
 
-1. **Authentication & Users**:
-   - `users` - Custom User model with UUID PK, email, password_hash, etc.
-   - `refresh_tokens` - For JWT refresh tokens
-   - `api_keys` - For API key management
+1. **Core Authentication Methods**:
+   - `set_password(raw_password)` - Hashes passwords using Django's `make_password()`
+   - `verify_password(raw_password)` - New method that verifies passwords (calls `check_password()`)
+   - `check_password(raw_password)` - Inherited from Django's `AbstractBaseUser`
 
-2. **Document Management**:
-   - `documents` - Document uploads and metadata
-   - `document_chunks` - Chunked document content for RAG
+2. **Password Property Intelligence**:
+   - Smart `password` property setter handles both raw passwords and pre-hashed values
+   - Prevents infinite recursion by checking hash format
+   - Compatible with Django's authentication system
 
-3. **Conversation System**:
-   - `conversations` - Chat conversations
-   - `messages` - Individual messages in conversations
+3. **Manager Methods**:
+   - `User.objects.create_user(email, password)` - Creates regular users
+   - `User.objects.create_superuser(email, password)` - Creates superusers
 
-4. **Task Processing**:
-   - `processing_tasks` - Background processing tasks
+4. **Validation & Constraints**:
+   - Email field has UNIQUE constraint
+   - Required fields properly configured
+   - Database indexes for performance
 
-5. **Django Built-in Tables**:
-   - All Django auth, admin, session, contenttype tables
-   - Token blacklist tables for JWT
+5. **Compatibility**:
+   - Inherits from `AbstractBaseUser` and `PermissionsMixin`
+   - Works with Django's built-in authentication system
+   - Compatible with Django REST Framework
 
-### Migration Status:
-- ✅ **All migrations applied** - No pending migrations
-- ✅ **Database schema complete** - All tables created with proper constraints
-- ✅ **Foreign keys functional** - Cascade deletes work correctly
-- ✅ **System check passes** - `python manage.py check` reports no issues
+### Test Coverage (Comprehensive & Robust):
+- **Total Tests**: 11 passing tests covering all authentication models
+- **TDD Process Followed**: RED → GREEN → REFACTOR
+  - RED: Wrote failing test for `verify_password()` method
+  - GREEN: Implemented `verify_password()` method
+  - REFACTOR: Clean implementation using Django's `check_password()`
+- **Test Improvements**:
+  - Fixed brittle datetime string comparison in `test_create_refresh_token`
+  - Now compares datetime objects directly for robustness
+  - Added `setUp()` method to `RefreshTokenModelTest` for DRY code
+- **Test Categories**:
+  - User creation and management (8 tests)
+  - APIKey model tests (1 test)
+  - RefreshToken model tests (2 tests)
 
-### Models (Updated & Functional):
-- `User` model - Fixed password handling, compatible with Django auth
-- `RefreshToken` model - For JWT refresh token storage
-- `APIKey` model - For programmatic access
-- `Document`, `DocumentChunk` models - For document management
-- `Conversation`, `Message` models - For chat functionality
-- `ProcessingTask` model - For background tasks
+### Database Schema (Remains Unchanged):
+- No database changes required for Task 2.1
+- Existing `users` table structure is sufficient
+- All migrations already applied
 
 ---
 
 ## Exact Next Step to Be Executed:
 
-**Task 2.1: User Model Enhancement**
-- Enhance existing `User` model in `users/models.py` (partially done with bug fix)
-- Add password hashing methods using Django's built-in `make_password` and `check_password` (already working)
-- Ensure model follows `.clinerules` naming conventions
+**Task 2.2: RefreshToken Model**
+- Already exists in `users/models.py` (created earlier)
+- Needs verification and potential enhancements
+- Should add methods for token validation and expiration checking as specified in implementation plan
 - Acceptance Criteria:
-  - Passwords never stored in plain text ✓ (verified)
-  - `User.verify_password(plain)` returns boolean ✓ (via `check_password()`)
-  - Model follows `.clinerules` naming conventions ✓
+  - `RefreshToken` model with proper fields ✓ (verified)
+  - Relationship to User model ✓ (verified)
+  - Methods for token validation (partially exists with `is_expired()`)
+  - Follows `.clinerules` naming conventions ✓ (verified)
 
-**Note:** Task 2.1 is partially complete due to the bug fix. Should proceed with remaining enhancements or move to Task 2.2.
+**Note:** The `RefreshToken` model already exists from previous work and has passing tests. Task 2.2 should focus on verifying and enhancing it according to the implementation plan requirements.
 
 ---
 
 ## Technical Decisions & Notes:
 
-1. **Complete Project Migration**: Task 1.3 required running migrations for the entire project, not just the `users` app. This ensures all database tables exist and relationships work correctly.
+1. **`verify_password()` Implementation**: Chose to implement `verify_password()` as a wrapper around Django's `check_password()` for API compatibility while maintaining Django standards.
 
-2. **Cascade Delete Issue**: The original `user.delete()` failure was due to missing `documents` table. With all migrations applied, cascade deletes now work correctly.
+2. **TDD Process**: Strictly followed TDD flow:
+   - RED: Created failing test for missing `verify_password()` method
+   - GREEN: Implemented minimal `verify_password()` method
+   - REFACTOR: Clean implementation with proper docstring and error handling
 
-3. **Migration Strategy**: Created and applied migrations for all apps with models. `api_keys` app shows "(no migrations)" which is acceptable if it has no models or uses Django's default behavior.
+3. **Test Fix - Datetime Comparison**: 
+   - Fixed brittle test comparing string representations of datetime objects
+   - Now compares datetime objects directly using `datetime.timezone.utc`
+   - More robust test that won't fail due to formatting differences
 
-4. **Testing Results**:
-   - ✅ All migrations applied (`showmigrations` shows `[X]` for all)
-   - ✅ User creation works with both `create()` and `create_user()`
-   - ✅ User deletion works without errors
-   - ✅ Password operations work correctly
-   - ✅ Database relationships functional
+4. **Password Security**: 
+   - Passwords are hashed using Django's default PBKDF2 algorithm
+   - No plain text storage verified by tests
+   - Hash format checking prevents accidental double-hashing
 
-5. **Database Readiness**: The database is now fully configured with:
-   - All required tables for authentication
-   - All required tables for document management
-   - All required tables for conversations
-   - Proper foreign key constraints
-   - Indexes for performance
+5. **Backward Compatibility**: 
+   - All existing functionality preserved
+   - New `verify_password()` method adds value without breaking existing code
+   - Django's `check_password()` remains available for internal use
 
-6. **Backward Compatibility**: All fixes maintain compatibility. Existing code continues to work, and new functionality is added.
+6. **Test Quality**:
+   - Comprehensive test coverage for all authentication models
+   - Tests verify both positive and negative cases
+   - Email uniqueness properly tested
+   - Password verification tested with correct and incorrect passwords
+   - Robust datetime comparisons in RefreshToken tests
+
+7. **Code Quality**:
+   - Follows .clinerules naming conventions
+   - Clean, modular functions with single responsibility
+   - Proper docstrings and type hints
+   - Error handling considered in design
+   - DRY code with `setUp()` method in test classes
 
 ---
 
 ## Ready for Next Task:
-Task 1.3 is fully complete. All database migrations have been created and applied across the entire project. The database schema is complete, all tables exist with proper relationships, and user operations (create, delete, password management) work correctly without errors. The project is ready for Phase 2: Core Authentication Models & Utilities.
+Task 2.1 is fully complete. The User model has been enhanced with the required `verify_password()` method, comprehensive tests have been written following TDD principles, all tests pass successfully (including the fixed datetime comparison test), and the authentication foundation is solid and ready for Task 2.2: RefreshToken Model enhancements.

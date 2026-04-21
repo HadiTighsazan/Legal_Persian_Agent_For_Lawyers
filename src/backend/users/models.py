@@ -93,6 +93,18 @@ class User(AbstractBaseUser, PermissionsMixin):
     def get_short_name(self):
         """Return the user's email."""
         return self.email
+    
+    def verify_password(self, raw_password):
+        """
+        Verify if the given raw password matches the user's hashed password.
+        
+        Args:
+            raw_password (str): The raw password to verify
+            
+        Returns:
+            bool: True if password matches, False otherwise
+        """
+        return self.check_password(raw_password)
 
 
 class APIKey(models.Model):
