@@ -65,13 +65,26 @@ class User(AbstractBaseUser, PermissionsMixin):
     
     @property
     def password(self):
-        """Return the password hash."""
+        """Return the password hash. Required by AbstractBaseUser."""
         return self.password_hash
     
     @password.setter
-    def password(self, raw_password):
-        """Set the password hash."""
-        self.set_password(raw_password)
+    def password(self, value):
+        """
+        Password setter that handles both raw passwords and already hashed passwords.
+        This avoids infinite recursion with set_password().
+        """
+        # If value looks like a raw password (not a hash), use set_password
+        if value and not value.startswith(('pbkdf2_sha256$', 'bcrypt$', 'argon2')):
+            self.set_password(value)
+        else:
+            # Already hashed, set directly
+            self.password_hash = value
+    
+    def set_password(self, raw_password):
+        """Set password hash directly to avoid recursion."""
+        from django.contrib.auth.hashers import make_password
+        self.password_hash = make_password(raw_password)
     
     def get_full_name(self):
         """Return the user's full name."""
