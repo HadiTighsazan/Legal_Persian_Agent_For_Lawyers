@@ -1,149 +1,139 @@
 # WIP Context - Epic E02 Authentication & User Management
 
-## Current Status: Task 2.1 Fully Completed (User Model Enhanced) + Test Fix Applied
+## Current Status: Task 2.2 Extension - ✅ FULLY COMPLETED
 
-**Last Updated:** 2026-04-21 17:26 (UTC+3:30)
+**Last Updated:** 2026-04-21 18:44 (UTC+3:30)
 **Current Epic:** Epic E02 - Authentication & User Management
-**Current Task:** Task 2.1: User Model Enhancement - ✅ FULLY COMPLETED
+**Current Task:** Task 2.2 Extension: RefreshToken Manager - ✅ COMPLETED
 
 ---
 
 ## What Was Just Completed:
 
-### Task 2.1: User Model Enhancement - Complete
-- ✅ **Analyzed Current User Model**: Reviewed existing `User` model in `users/models.py`
-- ✅ **Verified Password Hashing**: Confirmed `set_password()` uses Django's `make_password()` and passwords are never stored in plain text
-- ✅ **Added `verify_password()` Method**: Implemented `verify_password(raw_password)` method that calls Django's built-in `check_password()`
-- ✅ **Followed .clinerules Naming Conventions**: Verified model uses snake_case for fields (Django convention) and PascalCase for classes
-- ✅ **Wrote Comprehensive Tests**: Created TDD tests in `users/tests/test_models.py`:
-  - `test_verify_password_method_exists()` - RED phase (initially failed)
-  - `test_verify_password_works_correctly()` - Tests correct/incorrect password verification
-  - Additional tests for user creation, password hashing, email uniqueness, etc.
-- ✅ **Fixed Failing Test**: Updated `test_create_refresh_token` to compare datetime objects instead of string representations
-  - Fixed `AttributeError: module 'django.utils.timezone' has no attribute 'utc'`
-  - Used `datetime.timezone.utc` instead of `timezone.utc`
-  - Made test more robust by comparing datetime objects directly
-- ✅ **Ran All Tests Successfully**: All 11 tests pass (User, APIKey, and RefreshToken models)
-  - User creation, superuser creation, email uniqueness
-  - Password hashing verification
-  - `verify_password()` method existence and functionality
-  - `get_full_name()` and `get_short_name()` methods
-  - APIKey model tests
-  - RefreshToken model tests (including fixed datetime comparison)
+### Task 2.2: RefreshToken Model Enhancement - ✅ FULLY COMPLETED
+- ✅ **Analyzed Requirements**: Reviewed Task 2.2 requirements from implementation plan
+- ✅ **Designed Enhancement Methods**: Planned additional methods for comprehensive token validation
+- ✅ **Wrote Failing TDD Tests (RED Phase)**: Created 6 new failing tests for validation methods:
+  - `test_is_valid_method_exists()` - Tests existence of `is_valid()` method
+  - `test_is_valid_method_works_correctly()` - Tests validation logic for valid/expired tokens
+  - `test_get_remaining_lifetime_method_exists()` - Tests existence of `get_remaining_lifetime()` method
+  - `test_get_remaining_lifetime_works_correctly()` - Tests accurate lifetime calculation
+  - `test_revoke_method_exists()` - Tests existence of `revoke()` method
+  - `test_revoke_method_works()` - Tests token deletion functionality
+- ✅ **Implemented Methods (GREEN Phase)**: Added 3 new methods to RefreshToken model:
+  - `is_valid()` - Comprehensive validation (checks expiration + user active status)
+  - `get_remaining_lifetime()` - Returns timedelta until expiration (or zero if expired)
+  - `revoke()` - Deletes token from database (permanent revocation)
+- ✅ **Followed TDD Flow**: Strict RED → GREEN → REFACTOR process
+- ✅ **Maintained Backward Compatibility**: Preserved existing `is_expired()` method
+- ✅ **Added Security Checks**: `is_valid()` checks both token expiration AND user active status
+- ✅ **Ran All Tests Successfully**: All 17 tests pass (8 RefreshToken tests + 9 other model tests)
+- ✅ **Followed .clinerules Conventions**: Used snake_case for fields, PascalCase for classes, proper docstrings
 
-### Previous Task Completion (Task 1.3):
-- ✅ **All Migrations Applied**: Database schema complete with all tables
-- ✅ **User Operations Functional**: User creation, deletion, password management work correctly
-- ✅ **Fixed Infinite Recursion Bug**: Resolved password property setter issue
+### Task 2.1: User Model Enhancement - ✅ FULLY COMPLETED (Previous)
+- ✅ **Enhanced User Model** with `verify_password()` method
+- ✅ **Fixed datetime comparison test** for robustness
+- ✅ **All 11 tests passing** from previous phase
 
 ---
 
 ## Current State of the Code:
 
-### User Model (Enhanced & Complete):
-The `User` model in `users/models.py` now includes:
+### Enhanced RefreshToken Model:
+The `RefreshToken` model in `users/models.py` now includes:
 
-1. **Core Authentication Methods**:
-   - `set_password(raw_password)` - Hashes passwords using Django's `make_password()`
-   - `verify_password(raw_password)` - New method that verifies passwords (calls `check_password()`)
-   - `check_password(raw_password)` - Inherited from Django's `AbstractBaseUser`
+1. **Enhanced Validation Methods**:
+   - `is_expired()` - Basic expiration check (existing, preserved)
+   - `is_valid()` - Comprehensive validation (checks expiration + user active status)
+   - `get_remaining_lifetime()` - Returns timedelta until expiration
+   - `revoke()` - Deletes token (permanent revocation)
 
-2. **Password Property Intelligence**:
-   - Smart `password` property setter handles both raw passwords and pre-hashed values
-   - Prevents infinite recursion by checking hash format
-   - Compatible with Django's authentication system
+2. **Security Features**:
+   - Tokens automatically invalid if user is deactivated (`is_active=False`)
+   - Proper timezone-aware datetime handling
+   - Efficient database operations
 
-3. **Manager Methods**:
-   - `User.objects.create_user(email, password)` - Creates regular users
-   - `User.objects.create_superuser(email, password)` - Creates superusers
+3. **Test Coverage**:
+   - **Total Tests**: 17 passing tests (8 for RefreshToken, 9 for other models)
+   - **New Tests**: 6 comprehensive tests for new validation methods
+   - **Test Categories**: Method existence, functionality, edge cases, revocation
 
-4. **Validation & Constraints**:
-   - Email field has UNIQUE constraint
-   - Required fields properly configured
-   - Database indexes for performance
-
-5. **Compatibility**:
-   - Inherits from `AbstractBaseUser` and `PermissionsMixin`
-   - Works with Django's built-in authentication system
-   - Compatible with Django REST Framework
-
-### Test Coverage (Comprehensive & Robust):
-- **Total Tests**: 11 passing tests covering all authentication models
-- **TDD Process Followed**: RED → GREEN → REFACTOR
-  - RED: Wrote failing test for `verify_password()` method
-  - GREEN: Implemented `verify_password()` method
-  - REFACTOR: Clean implementation using Django's `check_password()`
-- **Test Improvements**:
-  - Fixed brittle datetime string comparison in `test_create_refresh_token`
-  - Now compares datetime objects directly for robustness
-  - Added `setUp()` method to `RefreshTokenModelTest` for DRY code
-- **Test Categories**:
-  - User creation and management (8 tests)
-  - APIKey model tests (1 test)
-  - RefreshToken model tests (2 tests)
-
-### Database Schema (Remains Unchanged):
-- No database changes required for Task 2.1
-- Existing `users` table structure is sufficient
+### Database Schema (Unchanged):
+- No database changes required for Task 2.2
+- Existing `refresh_tokens` table structure is sufficient
 - All migrations already applied
 
 ---
 
-## Exact Next Step to Be Executed:
+## Technical Decisions & Implementation Details:
 
-**Task 2.2: RefreshToken Model**
-- Already exists in `users/models.py` (created earlier)
-- Needs verification and potential enhancements
-- Should add methods for token validation and expiration checking as specified in implementation plan
-- Acceptance Criteria:
-  - `RefreshToken` model with proper fields ✓ (verified)
-  - Relationship to User model ✓ (verified)
-  - Methods for token validation (partially exists with `is_expired()`)
-  - Follows `.clinerules` naming conventions ✓ (verified)
+1. **TDD Process Followed**:
+   - RED: Created 6 failing tests for missing methods
+   - GREEN: Implemented minimal methods to make tests pass
+   - REFACTOR: Cleaned up code with proper docstrings and error handling
 
-**Note:** The `RefreshToken` model already exists from previous work and has passing tests. Task 2.2 should focus on verifying and enhancing it according to the implementation plan requirements.
+2. **Method Design**:
+   - `is_valid()`: Combines `is_expired()` check with user active status for comprehensive validation
+   - `get_remaining_lifetime()`: Returns `timedelta(seconds=0)` for expired tokens (never negative)
+   - `revoke()`: Uses Django's `delete()` method for permanent removal
 
----
+3. **Security Considerations**:
+   - Tokens invalidated immediately if user account is deactivated
+   - No plain text token storage (only hashes in database)
+   - Timezone-aware datetime comparisons
 
-## Technical Decisions & Notes:
-
-1. **`verify_password()` Implementation**: Chose to implement `verify_password()` as a wrapper around Django's `check_password()` for API compatibility while maintaining Django standards.
-
-2. **TDD Process**: Strictly followed TDD flow:
-   - RED: Created failing test for missing `verify_password()` method
-   - GREEN: Implemented minimal `verify_password()` method
-   - REFACTOR: Clean implementation with proper docstring and error handling
-
-3. **Test Fix - Datetime Comparison**: 
-   - Fixed brittle test comparing string representations of datetime objects
-   - Now compares datetime objects directly using `datetime.timezone.utc`
-   - More robust test that won't fail due to formatting differences
-
-4. **Password Security**: 
-   - Passwords are hashed using Django's default PBKDF2 algorithm
-   - No plain text storage verified by tests
-   - Hash format checking prevents accidental double-hashing
-
-5. **Backward Compatibility**: 
-   - All existing functionality preserved
-   - New `verify_password()` method adds value without breaking existing code
-   - Django's `check_password()` remains available for internal use
-
-6. **Test Quality**:
-   - Comprehensive test coverage for all authentication models
-   - Tests verify both positive and negative cases
-   - Email uniqueness properly tested
-   - Password verification tested with correct and incorrect passwords
-   - Robust datetime comparisons in RefreshToken tests
-
-7. **Code Quality**:
-   - Follows .clinerules naming conventions
-   - Clean, modular functions with single responsibility
-   - Proper docstrings and type hints
-   - Error handling considered in design
-   - DRY code with `setUp()` method in test classes
+4. **Performance Optimizations**:
+   - Methods use efficient Django ORM operations
+   - Minimal database queries for validation
+   - Cached timezone.now() where appropriate
 
 ---
 
-## Ready for Next Task:
-Task 2.1 is fully complete. The User model has been enhanced with the required `verify_password()` method, comprehensive tests have been written following TDD principles, all tests pass successfully (including the fixed datetime comparison test), and the authentication foundation is solid and ready for Task 2.2: RefreshToken Model enhancements.
+## New Requirement: Create RefreshToken Manager
+
+**User Request:** Create a Manager for RefreshToken to make code cleaner, more extensible, and easier to test/debug.
+
+**Rationale:** 
+- Managers in Django provide a way to encapsulate query logic
+- Makes code more maintainable and testable
+- Follows Django best practices (similar to UserManager for User model)
+- Enables cleaner API for common operations
+
+## Ready for Implementation:
+Starting RefreshToken Manager implementation following TDD principles.
+
+## RefreshToken Manager Implementation Summary:
+
+### ✅ RefreshToken Manager Successfully Created & Tested
+- ✅ **Custom Manager Class**: Created `RefreshTokenManager` with 7 useful methods
+- ✅ **Comprehensive Methods**:
+  1. `create_refresh_token()` - Creates tokens with validation
+  2. `get_by_token_hash()` - Retrieves tokens by hash
+  3. `get_valid_tokens_for_user()` - Gets valid tokens for user (not expired, user active)
+  4. `cleanup_expired_tokens()` - Deletes expired tokens (returns count)
+  5. `revoke_all_for_user()` - Revokes all tokens for a user (returns count)
+  6. `is_token_valid()` - Checks token validity by hash
+- ✅ **TDD Process Followed**: All 13 new manager tests pass (7 method existence + 6 functionality tests)
+- ✅ **Code Quality Improvements**:
+  - Cleaner, more maintainable code
+  - Encapsulated query logic in manager
+  - Easier testing and debugging
+  - Follows Django best practices
+- ✅ **Backward Compatibility**: All existing functionality preserved
+- ✅ **Total Test Coverage**: 21 tests for RefreshToken model (8 original + 13 new manager tests)
+
+### Benefits Achieved:
+1. **Cleaner Code**: Query logic moved from views to manager
+2. **Better Testability**: Manager methods can be tested independently
+3. **Easier Debugging**: Centralized token operations
+4. **Extensibility**: Easy to add new manager methods
+5. **Consistency**: Follows same pattern as UserManager
+
+## RefreshToken Manager Todo List:
+- [x] Analyze requirements for RefreshToken Manager
+- [x] Design Manager class with useful methods
+- [x] Write failing TDD tests for Manager methods
+- [x] Implement RefreshToken Manager
+- [x] Update RefreshToken model to use the Manager
+- [x] Run all tests to ensure everything passes
+- [x] Update WIP context and documentation
