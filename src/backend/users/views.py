@@ -156,3 +156,142 @@ def register_view(request: Request) -> Response:
             {"error": "Internal server error"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def login_view(request: Request) -> Response:
+    """
+    Authenticate a user and return JWT tokens.
+    
+    Endpoint: POST /auth/login
+    
+    Request body:
+    {
+        "email": "user@example.com",
+        "password": "securepassword123"
+    }
+    
+    Response (200 OK):
+    {
+        "user": {
+            "id": "uuid",
+            "email": "user@example.com",
+            "full_name": "John Doe",
+            "created_at": "2024-01-01T00:00:00Z",
+            "is_active": true
+        },
+        "accessToken": "jwt_token_here",
+        "refreshToken": "jwt_refresh_token_here"
+    }
+    
+    Error responses:
+    - 400 Bad Request: Invalid input (missing fields, invalid email, invalid JSON)
+    - 401 Unauthorized: Invalid credentials (wrong email or password)
+    - 401 Unauthorized: User account is inactive
+    """
+    try:
+        # Handle JSON parsing errors
+        try:
+            data = request.data
+        except Exception as json_error:
+            return Response(
+                {"error": "Invalid JSON format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate required fields
+        email = data.get('email')
+        password = data.get('password')
+        
+        if not email:
+            return Response(
+                {"error": "Email is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        if not password:
+            return Response(
+                {"error": "Password is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate email format
+        from django.core.validators import validate_email
+        from django.core.exceptions import ValidationError
+        
+        try:
+            validate_email(email)
+        except ValidationError:
+            return Response(
+                {"error": "Invalid email format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Find user by email
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response(
+                {"error": "Invalid credentials"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Check if user is active
+        if not user.is_active:
+            return Response(
+                {"error": "Account is inactive"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Verify password
+        if not user.verify_password(password):
+            return Response(
+                {"error": "Invalid credentials"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Generate token ID for refresh token
+        token_id = uuid.uuid4()
+        
+        # Generate tokens
+        tokens = create_tokens_for_user(user, token_id)
+        
+        # Store refresh token hash in database
+        token_hash = get_token_hash(tokens['refresh_token'])
+        expires_at = timezone.now() + timedelta(days=7)  # 7 days expiry
+        
+        RefreshToken.objects.create_refresh_token(
+            user=user,
+            token_hash=token_hash,
+            expires_at=expires_at
+        )
+        
+        # Prepare response
+        user_data = {
+            'id': str(user.id),
+            'email': user.email,
+            'full_name': user.full_name,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
+            'is_active': user.is_active
+        }
+        
+        return Response(
+            {
+                'user': user_data,
+                'accessToken': tokens['access_token'],
+                'refreshToken': tokens['refresh_token']
+            },
+            status=status.HTTP_200_OK
+        )
+        
+    except Exception as e:
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Login error: {str(e)}")
+        
+        return Response(
+            {"error": "Internal server error"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

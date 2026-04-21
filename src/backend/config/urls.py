@@ -50,7 +50,7 @@ urlpatterns = [
     path('redoc/', schema_view.with_ui('redoc', cache_timeout=0), name='schema-redoc'),
     
     # API v1 endpoints will be added in later tasks
-    path('auth/', include('users.urls', namespace='auth')),
+    path('auth/', include('users.urls')),
     # path('api/v1/documents/', include('documents.urls', namespace='documents')),
     # path('api/v1/conversations/', include('conversations.urls', namespace='conversations')),
     # path('api/v1/tasks/', include('tasks.urls', namespace='tasks')),

@@ -254,3 +254,250 @@ class RegistrationViewTests(TestCase):
         # Basic JWT format check (should have 3 parts separated by dots)
         self.assertEqual(len(access_token.split('.')), 3)
         self.assertEqual(len(refresh_token.split('.')), 3)
+
+
+class LoginViewTests(TestCase):
+    """Test cases for the login endpoint."""
+    
+    def setUp(self):
+        """Set up test client, URLs, and test user."""
+        self.client = APIClient()
+        self.login_url = '/auth/login/'
+        
+        # Create a test user for login tests
+        self.test_user = User.objects.create_user(
+            email='test@example.com',
+            password='SecurePass123!',
+            full_name='Test User'
+        )
+        
+    def test_login_endpoint_exists(self):
+        """Test that the login endpoint exists and accepts POST requests."""
+        response = self.client.post(self.login_url, {})
+        # Should not return 404 (endpoint exists)
+        self.assertNotEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        
+    def test_login_requires_post_method(self):
+        """Test that login only accepts POST method."""
+        response = self.client.get(self.login_url)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        
+        response = self.client.put(self.login_url)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        
+        response = self.client.delete(self.login_url)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        
+    def test_login_with_valid_credentials_returns_200(self):
+        """Test login with valid credentials returns 200 OK."""
+        data = {
+            'email': 'test@example.com',
+            'password': 'SecurePass123!'
+        }
+        response = self.client.post(
+            self.login_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        # This test should fail initially (RED phase)
+        # Expected: 200 OK, but endpoint doesn't exist yet
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+    def test_login_requires_email(self):
+        """Test that email is required for login."""
+        data = {
+            'password': 'SecurePass123!'
+        }
+        response = self.client.post(
+            self.login_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', response.json())
+        
+    def test_login_requires_password(self):
+        """Test that password is required for login."""
+        data = {
+            'email': 'test@example.com'
+        }
+        response = self.client.post(
+            self.login_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', response.json())
+        
+    def test_login_with_invalid_email_returns_401(self):
+        """Test login with non-existent email returns 401 Unauthorized."""
+        data = {
+            'email': 'nonexistent@example.com',
+            'password': 'SecurePass123!'
+        }
+        response = self.client.post(
+            self.login_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertIn('error', response.json())
+        
+    def test_login_with_wrong_password_returns_401(self):
+        """Test login with wrong password returns 401 Unauthorized."""
+        data = {
+            'email': 'test@example.com',
+            'password': 'WrongPassword123!'
+        }
+        response = self.client.post(
+            self.login_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertIn('error', response.json())
+        
+    def test_login_returns_user_data(self):
+        """Test that login returns user data in response."""
+        data = {
+            'email': 'test@example.com',
+            'password': 'SecurePass123!'
+        }
+        response = self.client.post(
+            self.login_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        # Check user data structure
+        self.assertIn('user', response_data)
+        user_data = response_data['user']
+        
+        self.assertEqual(user_data['email'], 'test@example.com')
+        self.assertEqual(user_data['full_name'], 'Test User')
+        self.assertIn('id', user_data)
+        self.assertIn('created_at', user_data)
+        self.assertIn('is_active', user_data)
+        
+    def test_login_returns_tokens(self):
+        """Test that login returns access and refresh tokens."""
+        data = {
+            'email': 'test@example.com',
+            'password': 'SecurePass123!'
+        }
+        response = self.client.post(
+            self.login_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        # Check tokens
+        self.assertIn('accessToken', response_data)
+        self.assertIn('refreshToken', response_data)
+        
+        access_token = response_data['accessToken']
+        refresh_token = response_data['refreshToken']
+        
+        self.assertIsInstance(access_token, str)
+        self.assertIsInstance(refresh_token, str)
+        self.assertTrue(len(access_token) > 0)
+        self.assertTrue(len(refresh_token) > 0)
+        
+    def test_login_creates_refresh_token_in_database(self):
+        """Test that login creates a refresh token in database."""
+        data = {
+            'email': 'test@example.com',
+            'password': 'SecurePass123!'
+        }
+        response = self.client.post(
+            self.login_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify refresh token was created
+        refresh_tokens = RefreshToken.objects.filter(user=self.test_user)
+        self.assertEqual(refresh_tokens.count(), 1)
+        
+        # Verify token is not expired
+        refresh_token = refresh_tokens.first()
+        self.assertGreater(refresh_token.expires_at, timezone.now())
+        
+    def test_login_with_inactive_user_returns_401(self):
+        """Test login with inactive user returns 401 Unauthorized."""
+        # Create an inactive user
+        inactive_user = User.objects.create_user(
+            email='inactive@example.com',
+            password='SecurePass123!',
+            full_name='Inactive User'
+        )
+        inactive_user.is_active = False
+        inactive_user.save()
+        
+        data = {
+            'email': 'inactive@example.com',
+            'password': 'SecurePass123!'
+        }
+        response = self.client.post(
+            self.login_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        
+    def test_login_tokens_are_valid_jwt(self):
+        """Test that returned tokens are valid JWT tokens."""
+        data = {
+            'email': 'test@example.com',
+            'password': 'SecurePass123!'
+        }
+        response = self.client.post(
+            self.login_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        access_token = response_data['accessToken']
+        refresh_token = response_data['refreshToken']
+        
+        # Basic JWT format check (should have 3 parts separated by dots)
+        self.assertEqual(len(access_token.split('.')), 3)
+        self.assertEqual(len(refresh_token.split('.')), 3)
+        
+    def test_login_with_invalid_json_returns_400(self):
+        """Test login with invalid JSON returns 400 Bad Request."""
+        response = self.client.post(
+            self.login_url,
+            data='invalid json',
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        
+    def test_login_with_empty_request_returns_400(self):
+        """Test login with empty request body returns 400 Bad Request."""
+        response = self.client.post(
+            self.login_url,
+            data=json.dumps({}),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', response.json())

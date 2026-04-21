@@ -86,12 +86,8 @@
 
 ---
 
-## Planned Endpoints (Epic E02+)
-
-### Authentication
-
 #### POST /auth/login
-**Description:** Login and get JWT token  
+**Description:** Login and get JWT tokens  
 **Auth Required:** No  
 **Request Body:**
 ```json
@@ -103,15 +99,30 @@
 **Response:** `200 OK`
 ```json
 {
-  "access": "jwt_access_token",
-  "refresh": "jwt_refresh_token",
   "user": {
     "id": "uuid",
     "email": "user@example.com",
-    "full_name": "John Doe"
-  }
+    "full_name": "John Doe",
+    "created_at": "2026-04-18T10:00:00Z",
+    "is_active": true
+  },
+  "accessToken": "jwt_access_token",
+  "refreshToken": "jwt_refresh_token"
 }
 ```
+**Error Responses:**
+- `400 Bad Request`: Missing/invalid fields, invalid email format, invalid JSON
+- `401 Unauthorized`: Invalid credentials (wrong email or password)
+- `401 Unauthorized`: User account is inactive
+- `500 Internal Server Error`: Unexpected server error
+
+---
+
+## Planned Endpoints (Epic E02+)
+
+### Authentication
+
+#### POST /auth/refresh
 
 ---
 
