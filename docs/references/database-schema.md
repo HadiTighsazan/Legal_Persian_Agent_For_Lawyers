@@ -140,6 +140,22 @@
 
 ---
 
+### 8. refresh_tokens
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | UUID | PRIMARY KEY | Refresh token unique identifier |
+| user_id | UUID | FOREIGN KEY (users.id) ON DELETE CASCADE | Token owner |
+| token_hash | VARCHAR(255) | UNIQUE, NOT NULL | Hashed refresh token |
+| expires_at | TIMESTAMP | NOT NULL | Expiration timestamp |
+| created_at | TIMESTAMP | DEFAULT NOW() | Creation timestamp |
+
+**Indexes:**
+- `idx_refresh_tokens_user_id` on `user_id`
+- `idx_refresh_tokens_token_hash` on `token_hash`
+- `idx_refresh_tokens_expires_at` on `expires_at`
+
+---
+
 ## PostgreSQL Extensions Required
 ```sql
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

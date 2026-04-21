@@ -19,6 +19,7 @@
 ## Implementation Plan (Sequential)
 
 ### **Phase 1: Database Schema Updates** ✅
+
 **Task 1.1: Create Migration for `refresh_tokens` Table**
 - Create Django migration for `refresh_tokens` table with fields:
   - `id` (UUID, PK)
