@@ -243,3 +243,17 @@ def create_tokens_for_user(user: User, token_id: uuid.UUID) -> Dict[str, str]:
         'access_token': access_token,
         'refresh_token': refresh_token
     }
+
+
+def get_token_hash(token: str) -> str:
+    """
+    Generate a hash for a JWT token for storage in the database.
+    
+    Args:
+        token: JWT token string
+    
+    Returns:
+        str: SHA256 hash of the token
+    """
+    import hashlib
+    return hashlib.sha256(token.encode()).hexdigest()

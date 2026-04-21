@@ -50,9 +50,9 @@
 
 ---
 
-## Planned Endpoints (Epic E02+)
+## Current Implementation Status (Epic E02)
 
-### Authentication
+### ✅ Implemented Endpoints
 
 #### POST /auth/register
 **Description:** Register new user account  
@@ -68,14 +68,27 @@
 **Response:** `201 Created`
 ```json
 {
-  "id": "uuid",
-  "email": "user@example.com",
-  "full_name": "John Doe",
-  "created_at": "2026-04-18T10:00:00Z"
+  "user": {
+    "id": "uuid",
+    "email": "user@example.com",
+    "full_name": "John Doe",
+    "created_at": "2026-04-18T10:00:00Z",
+    "is_active": true
+  },
+  "accessToken": "jwt_access_token",
+  "refreshToken": "jwt_refresh_token"
 }
 ```
+**Error Responses:**
+- `400 Bad Request`: Missing/invalid fields, weak password (< 8 chars)
+- `409 Conflict`: Email already exists
+- `500 Internal Server Error`: Unexpected server error
 
 ---
+
+## Planned Endpoints (Epic E02+)
+
+### Authentication
 
 #### POST /auth/login
 **Description:** Login and get JWT token  

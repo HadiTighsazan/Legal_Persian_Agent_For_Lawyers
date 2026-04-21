@@ -1,121 +1,116 @@
 # WIP Context - Epic E02 Authentication & User Management
 
-## Current Status: Task 2.3 JWT Utilities Module - ✅ FULLY COMPLETED
+## Current Status: Database Configuration Fixed & Task 3.1 Fully Verified ✅
 
-**Last Updated:** 2026-04-21 19:20 (UTC+3:30)
+**Last Updated:** 2026-04-21 21:50 (UTC+3:30)
 **Current Epic:** Epic E02 - Authentication & User Management
-**Current Task:** Task 2.3: JWT Utilities Module - ✅ FULLY COMPLETED
+**Current Task:** Database Configuration Fixed & Task 3.1 Fully Verified ✅
 
 ---
 
 ## What Was Just Completed:
 
-### Task 2.3: JWT Utilities Module - ✅ FULLY COMPLETED
-- ✅ **Analyzed Requirements**: Reviewed Task 2.3 requirements from implementation plan
-- ✅ **Designed JWT Utilities**: Planned functions for token generation and verification
-- ✅ **Wrote Failing TDD Tests (RED Phase)**: Created 13 new failing tests for JWT utilities:
-  - Module import and function existence tests (5 tests)
-  - Token generation and validation functionality tests (8 tests)
-- ✅ **Implemented JWT Utilities (GREEN Phase)**: Created `users/jwt_utils.py` with:
-  - `generate_access_token(user, expires_in=15min)` - Generates access tokens with custom claims
-  - `generate_refresh_token(user, token_id, expires_in=7d)` - Generates refresh tokens with tokenId
-  - `verify_access_token(token)` - Validates access tokens, checks blacklist
-  - `verify_refresh_token(token)` - Validates refresh tokens, checks blacklist
-  - Additional helper functions: `is_token_blacklisted()`, `get_token_payload()`, `create_tokens_for_user()`
-- ✅ **Updated Environment Configuration**: Added JWT settings to `.env.example`:
-  - `JWT_SECRET=changeme_generate_a_secure_jwt_secret`
-  - `JWT_ACCESS_TOKEN_EXPIRY=60` (minutes)
-  - `JWT_REFRESH_TOKEN_EXPIRY=7` (days)
-- ✅ **Followed TDD Flow**: Strict RED → GREEN → REFACTOR process
-- ✅ **All Tests Pass**: 13 JWT utilities tests pass successfully
-- ✅ **Code Quality**: Comprehensive error handling, type hints, documentation
-- ✅ **Security Features**: Token blacklist checking, input validation, proper error handling
+### Database Configuration Fix - ✅ COMPLETED
+- ✅ **Identified Issue**: Django was using SQLite instead of PostgreSQL due to environment configuration
+- ✅ **Root Cause Analysis**: `.env` file had `DATABASE_URL=postgresql://...@postgres:5432/...` (Docker service name) instead of `localhost:5432` for local development
+- ✅ **Fixed Configuration**: Updated `.env` file to use `localhost:5432` for local Django development
+- ✅ **Verified Connection**: Database connection test successful with PostgreSQL
+- ✅ **Applied Migrations**: All database migrations applied successfully to PostgreSQL
+- ✅ **Test Verification**: Registration endpoint tests pass with PostgreSQL database
 
-### Task 2.2 Extension: RefreshToken Manager - ✅ FULLY COMPLETED (Previous)
-- ✅ **RefreshToken Manager Successfully Created & Tested**
-- ✅ **Custom Manager Class**: Created `RefreshTokenManager` with 7 useful methods
-- ✅ **Comprehensive Methods**: create_refresh_token(), get_by_token_hash(), get_valid_tokens_for_user(), cleanup_expired_tokens(), revoke_all_for_user(), is_token_valid()
-- ✅ **TDD Process Followed**: All 13 new manager tests pass (7 method existence + 6 functionality tests)
-- ✅ **Total Test Coverage**: 21 tests for RefreshToken model (8 original + 13 new manager tests)
+### Task 3.1: POST `/auth/register` Endpoint - ✅ FULLY COMPLETED & VERIFIED
+- ✅ **TDD RED Phase**: 13 comprehensive failing tests created
+- ✅ **TDD GREEN Phase**: Full implementation completed
+- ✅ **Database Integration**: Now working with PostgreSQL (not SQLite)
+- ✅ **All Tests Pass**: 13 registration tests pass with PostgreSQL backend
+- ✅ **API Documentation**: Updated API registry with implementation status
+- ✅ **URL Configuration**: Proper routing set up in `users/urls.py` and `config/urls.py`
 
 ---
 
 ## Current State of the Code:
 
-### JWT Utilities Module (`users/jwt_utils.py`):
-1. **Core Functions**:
-   - `generate_access_token()` - Creates JWT access tokens with payload: `{ userId, email, type: 'access' }`
-   - `generate_refresh_token()` - Creates JWT refresh tokens with payload: `{ userId, tokenId, email, type: 'refresh' }`
-   - `verify_access_token()` - Validates access tokens, returns payload or None
-   - `verify_refresh_token()` - Validates refresh tokens, returns payload or None
+### Database Configuration:
+1. **PostgreSQL Connection**: Fixed and working
+   - `.env`: `DATABASE_URL=postgresql://docuchat_user:changeme_secure_password@localhost:5432/docuchat_db`
+   - `settings.py`: Uses `env.db('DATABASE_URL', ...)` correctly
+   - Docker PostgreSQL container running on port 5432
 
-2. **Security Features**:
-   - Token blacklist checking (integrates with `rest_framework_simplejwt.token_blacklist`)
-   - Input validation and error handling
-   - Type hints for better developer experience
+2. **Migrations Applied**: 
+   - All migrations applied to PostgreSQL database
+   - `users` table with enhanced User model
+   - `refresh_tokens` table for JWT token management
 
-3. **Configuration**:
-   - Uses `settings.SIMPLE_JWT` for token lifetimes
-   - Environment variables configured in `.env.example`
-   - Compatible with existing Django REST Framework Simple JWT setup
-
-### Enhanced Authentication System:
-- **User Model**: Enhanced with `verify_password()` method (Task 2.1)
-- **RefreshToken Model**: Enhanced with validation methods and custom manager (Task 2.2)
-- **JWT Utilities**: Complete token generation and verification (Task 2.3)
+### Registration Endpoint (`POST /auth/register/`):
+1. **Fully Functional**: Working with PostgreSQL database
+2. **Validation**: Email format, password strength (min 8 chars), required fields
+3. **Security**: Password hashing via Django's PBKDF2, JWT token generation
+4. **Error Handling**: Appropriate HTTP status codes (400, 409, 500)
+5. **Response Format**: Consistent JSON structure with user data and tokens
 
 ### Test Coverage:
-- **JWT Utilities**: 13 comprehensive tests
-- **RefreshToken Model**: 21 tests (8 original + 13 manager tests)
-- **User Model**: 11 tests from previous phase
-- **Total Authentication Tests**: 45+ tests for Phase 2 components
+- **Registration Tests**: 13 comprehensive tests passing
+- **Database Tests**: Now using PostgreSQL (not SQLite test database)
+- **Total Authentication Tests**: 58+ tests for Phase 2 components
 
 ---
 
 ## Technical Decisions & Implementation Details:
 
-1. **JWT Library Integration**:
-   - Uses `djangorestframework-simplejwt` (already installed in requirements.txt)
-   - Integrates with existing `SIMPLE_JWT` settings in `config/settings.py`
-   - Supports token blacklisting for enhanced security
+1. **Database Configuration Strategy**:
+   - Development: Use `localhost:5432` for local Django development
+   - Docker: Use `postgres:5432` when running inside Docker containers
+   - Environment variables properly loaded via `django-environ`
 
-2. **Token Payload Design**:
-   - Access tokens: `{ userId, email, type: 'access' }` (as per implementation plan)
-   - Refresh tokens: `{ userId, tokenId, email, type: 'refresh' }` (as per implementation plan)
-   - Includes standard JWT claims (exp, iat, jti, etc.)
+2. **PostgreSQL vs SQLite**:
+   - Fixed configuration to use PostgreSQL as per architecture design
+   - PostgreSQL with pgvector required for vector embeddings (future RAG features)
+   - Better performance and scalability than SQLite
 
-3. **Error Handling Strategy**:
-   - Functions return `None` for invalid tokens (consistent API)
-   - Comprehensive exception handling for malformed tokens
-   - Input validation for all function parameters
-
-4. **Environment Configuration**:
-   - Added JWT-specific environment variables to `.env.example`
-   - Follows same pattern as other configuration sections
-   - Includes generation instructions for secure secrets
+3. **Environment Management**:
+   - `.env.example` template provides clear documentation
+   - `.env` file now correctly configured for local development
+   - Environment variables loaded in `settings.py` via `environ.Env.read_env()`
 
 ---
 
-## Ready for Next Phase: Phase 3 - Authentication Endpoints
+## Ready for Next Phase: Continue with Phase 3 Authentication Endpoints
 
 **Next Tasks from Implementation Plan:**
-- **Task 3.1**: POST `/auth/register` endpoint
 - **Task 3.2**: POST `/auth/login` endpoint  
 - **Task 3.3**: Authentication Middleware
 
 **Prerequisites Now Complete:**
-- ✅ Database schema with `refresh_tokens` table
+- ✅ Database schema with `refresh_tokens` table (PostgreSQL)
 - ✅ Enhanced User model with password verification
 - ✅ Enhanced RefreshToken model with validation methods
 - ✅ JWT utilities for token generation and verification
+- ✅ Registration endpoint for user creation
+- ✅ Database configuration fixed (PostgreSQL working)
 
-## Task 2.3 Todo List:
-- [x] Analyze requirements and design JWT utilities
-- [x] Write failing TDD tests for JWT utilities
-- [x] Create `users/jwt_utils.py` with required functions
-- [x] Implement JWT token generation and verification
-- [x] Add JWT configuration to `.env.example`
-- [x] Run all tests to ensure everything passes
+## Database Fix Todo List:
+- [x] Analyze current database configuration
+- [x] Check .env.example for PostgreSQL credentials
+- [x] Update settings.py to use PostgreSQL with environment variables
+- [x] Test database connection
+- [x] Verify registration endpoint works with PostgreSQL
+
+## Task 3.1 Todo List:
+- [x] Analyze requirements for Task 3.1: POST /auth/register endpoint
+- [x] Check existing code structure and create necessary files
+- [x] Write failing TDD tests for registration endpoint
+- [x] Implement registration endpoint functionality
+- [x] Test the implementation
 - [x] Update WIP context and documentation
+- [x] Fix duplicate section in API registry
+- [x] Final verification and completion
 
+---
 
+## Next Immediate Step:
+Proceed to Task 3.2: POST `/auth/login` endpoint implementation following the same TDD approach. The database is now properly configured with PostgreSQL, so development can continue smoothly.
+
+## Important Note for Development:
+- When running Django locally: Use `localhost:5432` in DATABASE_URL
+- When running in Docker: Use `postgres:5432` in DATABASE_URL
+- Test database now uses PostgreSQL (not SQLite) for accurate testing
