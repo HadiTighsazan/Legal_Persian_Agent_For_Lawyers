@@ -970,3 +970,107 @@ class LogoutViewTests(TestCase):
         self.assertEqual(refresh_response.status_code, status.HTTP_401_UNAUTHORIZED)
         refresh_response_data = refresh_response.json()
         self.assertIn('error', refresh_response_data)
+
+
+class ProfileViewTests(TestCase):
+    """Test cases for the GET /users/me endpoint."""
+    
+    def setUp(self):
+        """Set up test client, URLs, and test user."""
+        self.client = APIClient()
+        self.profile_url = '/users/me/'
+        
+        # Create test user
+        self.user = User.objects.create_user(
+            email='profiletest@example.com',
+            password='SecurePass123!',
+            full_name='Profile Test User'
+        )
+        
+        # Get tokens for authentication by logging in
+        login_data = {
+            'email': 'profiletest@example.com',
+            'password': 'SecurePass123!'
+        }
+        login_response = self.client.post('/auth/login/', login_data, format='json')
+        self.access_token = login_response.data['accessToken']
+    
+    def test_profile_endpoint_exists(self):
+        """Test that the profile endpoint exists (not 404)."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        response = self.client.get(self.profile_url)
+        # Should not return 404 - endpoint exists
+        self.assertNotEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+    
+    def test_profile_requires_authentication(self):
+        """Test that unauthenticated requests return 401 Unauthorized."""
+        # Clear any authentication credentials
+        self.client.credentials()
+        response = self.client.get(self.profile_url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+    
+    def test_profile_returns_correct_user_data(self):
+        """Test that authenticated user gets their own data."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        response = self.client.get(self.profile_url)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        
+        # Check all required fields are present
+        self.assertIn('id', data)
+        self.assertIn('email', data)
+        self.assertIn('full_name', data)
+        self.assertIn('is_active', data)
+        self.assertIn('created_at', data)
+        
+        # Check values match test user
+        self.assertEqual(data['email'], 'profiletest@example.com')
+        self.assertEqual(data['full_name'], 'Profile Test User')
+        self.assertTrue(data['is_active'])
+    
+    def test_profile_response_format(self):
+        """Test that response format matches API specification."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        response = self.client.get(self.profile_url)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        
+        # Verify response structure
+        expected_keys = ['id', 'email', 'full_name', 'is_active', 'created_at']
+        for key in expected_keys:
+            self.assertIn(key, data)
+        
+        # Verify data types
+        self.assertIsInstance(data['id'], str)
+        self.assertIsInstance(data['email'], str)
+        self.assertIsInstance(data['full_name'], str)
+        self.assertIsInstance(data['is_active'], bool)
+        self.assertIsInstance(data['created_at'], str)
+        
+        # Verify UUID format for id
+        try:
+            uuid.UUID(data['id'])
+        except ValueError:
+            self.fail(f"id '{data['id']}' is not a valid UUID")
+    
+    def test_profile_requires_get_method(self):
+        """Test that profile endpoint only accepts GET method."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        
+        # Test POST method (should return 405)
+        response = self.client.post(self.profile_url, {})
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        
+        # Test PUT method (should return 405)
+        response = self.client.put(self.profile_url, {})
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        
+        # Test DELETE method (should return 405)
+        response = self.client.delete(self.profile_url)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        
+        # Test PATCH method (should return 405 - PATCH /users/me is separate endpoint)
+        response = self.client.patch(self.profile_url, {})
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)

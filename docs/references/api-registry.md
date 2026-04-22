@@ -583,8 +583,12 @@
 ## User Profile
 
 #### GET /users/me
-**Description:** Get current user profile  
-**Auth Required:** Yes  
+**Description:** Get current user profile
+**Status:** ✅ Implemented
+**Auth Required:** Yes
+**Implementation Date:** 2026-04-22
+**Test Coverage:** 5 unit tests
+
 **Response:** `200 OK`
 ```json
 {
@@ -592,14 +596,32 @@
   "email": "user@example.com",
   "full_name": "John Doe",
   "is_active": true,
-  "created_at": "2026-04-18T10:00:00Z",
-  "stats": {
-    "documents_count": 15,
-    "conversations_count": 42,
-    "total_storage_bytes": 524288000
-  }
+  "created_at": "2026-04-22T10:30:00Z"
 }
 ```
+
+**Error Responses:**
+- `401 Unauthorized`: No valid authentication token provided
+- `401 Unauthorized`: Token expired or invalid
+
+**Example Usage:**
+```bash
+# Get user profile with valid token
+curl -X GET http://localhost:8000/users/me/ \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+# Response (unauthorized)
+curl -X GET http://localhost:8000/users/me/
+# Returns: {"error": {"message": "Authentication credentials were not provided.", "code": "authentication_failed"}}
+```
+
+**Implementation Notes:**
+- Uses Django REST Framework's `IsAuthenticated` permission class
+- Integrates with existing JWT middleware
+- Returns ISO 8601 formatted timestamps
+- Follows consistent error response format
+- Note: `stats` field is not yet implemented (planned for future enhancement)
 
 ---
 

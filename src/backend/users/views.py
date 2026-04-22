@@ -297,6 +297,40 @@ def login_view(request: Request) -> Response:
         )
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def profile_view(request: Request) -> Response:
+    """
+    Get current user profile.
+    
+    Endpoint: GET /users/me
+    
+    Response (200 OK):
+    {
+        "id": "uuid",
+        "email": "user@example.com",
+        "full_name": "John Doe",
+        "is_active": true,
+        "created_at": "2026-04-18T10:00:00Z"
+    }
+    
+    Error responses:
+    - 401 Unauthorized: No valid authentication token
+    """
+    user = request.user
+    
+    # Prepare user data
+    user_data = {
+        'id': str(user.id),
+        'email': user.email,
+        'full_name': user.full_name,
+        'is_active': user.is_active,
+        'created_at': user.created_at.isoformat() if user.created_at else None,
+    }
+    
+    return Response(user_data, status=status.HTTP_200_OK)
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def refresh_view(request: Request) -> Response:

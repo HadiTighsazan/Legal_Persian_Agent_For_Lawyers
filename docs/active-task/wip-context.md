@@ -1,24 +1,43 @@
 # WIP Context - Epic E02 Authentication & User Management
 
-## Current Status: TASK 4.2 TESTED & DEBUGGED ✅ - POST /auth/logout Endpoint Verified
+## Current Status: TASK 5.1 VERIFIED & DEBUGGED ✅ - GET /users/me Endpoint
 
-**Last Updated:** 2026-04-23 00:17 (UTC+3:30)
+**Last Updated:** 2026-04-23 01:13 (UTC+3:30)
 **Current Epic:** Epic E02 - Authentication & User Management
-**Current Task:** Task 4.2 - POST /auth/logout endpoint (TESTED & VERIFIED)
+**Current Task:** Task 5.1 - GET /users/me endpoint (VERIFIED & DEBUGGED)
 
 ---
 
 ## What Was Just Completed:
-- ✅ **TASK 4.2**: Implemented POST `/auth/logout` endpoint for token revocation
-- ✅ **IMPLEMENTATION**: Added `logout_view` function in `src/backend/users/views.py`
-- ✅ **URL CONFIGURATION**: Added logout endpoint to `src/backend/users/urls.py`
-- ✅ **MIDDLEWARE CONFIGURATION**: Logout endpoint correctly requires authentication (NOT in PUBLIC_ENDPOINTS)
-- ✅ **UNIT TESTS**: Created comprehensive test suite with 9 test cases in `LogoutViewTests`
-- ✅ **TEST VERIFICATION**: All 9 unit tests passing successfully
-- ✅ **API DOCUMENTATION**: Updated `docs/references/api-registry.md` with logout endpoint details
-- ✅ **JWT COMPATIBILITY FIX**: Updated JWT utilities to include `user_id` claim for SimpleJWT compatibility
+- ✅ **TASK 5.1 VERIFICATION**: Debugged and verified GET `/users/me` endpoint functionality
+- ✅ **UNIT TEST RE-RUN**: Re-executed all 5 unit tests in `ProfileViewTests` - ALL PASSING
+- ✅ **SYSTEM HEALTH CHECK**: Verified all Docker containers are running healthy
+- ✅ **IMPLEMENTATION ANALYSIS**: Reviewed `profile_view` function implementation in `src/backend/users/views.py`
+- ✅ **URL CONFIGURATION VERIFIED**: Confirmed profile endpoint routing in URL configurations
+- ✅ **AUTHENTICATION INTEGRATION**: Verified JWT middleware and DRF permissions working correctly
 
-### Testing & Debugging Results:
+### Debugging & Verification Results:
+- ✅ **All 5 unit tests passing**: `ProfileViewTests` re-executed successfully with verbose output
+- ✅ **Authentication required**: Unauthenticated requests correctly return 401 (verified)
+- ✅ **Correct user data**: Returns accurate profile for authenticated user (verified)
+- ✅ **Response format**: Matches API registry specification (verified)
+- ✅ **No regression**: All authentication tests pass (register, login, refresh, logout, profile)
+- ✅ **System health**: All Docker containers running (backend, frontend, postgres, redis, nginx, celery)
+- ✅ **Endpoint accessibility**: `/users/me/` endpoint exists and responds correctly
+
+### Implementation Details:
+- **Endpoint**: `GET /users/me`
+- **Authentication Required**: Yes (Bearer token in Authorization header)
+- **Response (200 OK)**: User profile data with fields: `id`, `email`, `full_name`, `is_active`, `created_at`
+- **Error Responses**: 401 Unauthorized for missing/invalid tokens
+- **Test Coverage**: 5 comprehensive test cases covering:
+  - Endpoint existence (not 404)
+  - Authentication requirement (401 for unauthenticated)
+  - HTTP method restriction (GET only)
+  - Response format compliance
+  - Correct user data retrieval
+
+### Debugging Process & Findings:
 
 **Unit Test Verification:**
 - ✅ **All 9 unit tests passing**: `LogoutViewTests` executed successfully
@@ -92,32 +111,30 @@
 
 ### Authentication Endpoints (Now Complete):
 1. **POST `/auth/register`** - User registration ✅
-2. **POST `/auth/login`** - User login ✅  
+2. **POST `/auth/login`** - User login ✅
 3. **POST `/auth/refresh`** - Token refresh ✅
-4. **POST `/auth/logout`** - Token revocation ✅ (NEW)
-5. **GET `/users/me`** - User profile (Pending - Task 5.1)
+4. **POST `/auth/logout`** - Token revocation ✅
+5. **GET `/users/me`** - User profile ✅ (NEW - Task 5.1)
 6. **PATCH `/users/me`** - Profile update (Pending - Task 5.2)
 
 ### Middleware Configuration (Updated):
 1. **Public Endpoints**: `/auth/login/`, `/auth/register/`, `/auth/refresh/` (and variants without trailing slash)
-2. **Protected Endpoints**: `/auth/logout/` requires authentication
-3. **Authentication Flow**: 
+2. **Protected Endpoints**: `/auth/logout/`, `/users/me/` require authentication
+3. **Authentication Flow**:
    - Register/Login/Refresh: Public access
-   - Logout: Requires valid access token
+   - Logout/Profile: Requires valid access token
 4. **Security**: All other endpoints remain protected by JWT middleware
 
 ### Test Coverage:
 - **LogoutViewTests**: 9 comprehensive test cases
-- **Test Scenarios Covered**:
-  - Valid logout returns 204 No Content
-  - Missing refresh token returns 400
-  - Invalid refresh token returns 401
-  - Already revoked token returns 401
+- **ProfileViewTests**: 5 comprehensive test cases (NEW)
+- **Total Authentication Tests**: 50+ tests covering all endpoints
+- **Test Scenarios Covered for Profile**:
+  - Authenticated user gets own profile (200 OK)
   - Unauthenticated request returns 401
-  - Wrong HTTP method returns 405
-  - Other user's token returns 401 (cannot revoke others' tokens)
-  - Token is actually deleted from database
-  - Revoked token cannot be used for refresh
+  - Response contains correct user data
+  - Response format matches API spec
+  - Only GET method allowed (405 for other methods)
 
 ---
 
@@ -188,29 +205,28 @@ curl -X POST http://localhost:8000/auth/refresh/ \
 
 ## Next Steps (Epic E02):
 
-Now that Task 4.2 is complete, proceed with:
-1. **Task 5.1**: GET `/users/me` endpoint (user profile)
-2. **Task 5.2**: PATCH `/users/me` endpoint (profile update)
+Now that Task 5.1 is complete, proceed with:
+1. **Task 5.2**: PATCH `/users/me` endpoint (profile update)
+2. **Epic E02 Completion**: All authentication endpoints will be implemented
+3. **Integration Testing**: Full authentication flow testing
 
 **System Ready For Development:**
 - ✅ All containers healthy and running
-- ✅ Authentication middleware properly configured
-- ✅ All authentication endpoints implemented and tested (register, login, refresh, logout)
+- ✅ All authentication endpoints implemented and tested (register, login, refresh, logout, profile)
 - ✅ Test infrastructure working correctly
 - ✅ API documentation updated
 - ✅ JWT compatibility issues resolved
 
 ---
 
-## Files Modified for Task 4.2:
-1. `src/backend/users/views.py` - Added `logout_view` function
-2. `src/backend/users/urls.py` - Added logout endpoint URL
-3. `src/backend/users/middleware.py` - Updated to support `user_id` claim
-4. `src/backend/users/jwt_utils.py` - Added `user_id` claim to token generation
-5. `src/backend/users/tests/test_views.py` - Added `LogoutViewTests` class
-6. `docs/references/api-registry.md` - Updated with logout endpoint documentation
-7. `docs/active-task/wip-context.md` - This file (updated)
+## Files Modified for Task 5.1:
+1. `src/backend/users/views.py` - Added `profile_view` function
+2. `src/backend/users/urls.py` - Added profile endpoint URL
+3. `src/backend/config/urls.py` - Added `path('users/', include('users.urls'))` for user endpoints
+4. `src/backend/users/tests/test_views.py` - Added `ProfileViewTests` class
+5. `docs/references/api-registry.md` - Updated with profile endpoint documentation
+6. `docs/active-task/wip-context.md` - This file (updated)
 
 ## Files Created/Updated for Documentation:
 1. `docs/active-task/wip-context.md` - This file (updated)
-2. `docs/references/api-registry.md` - Updated with logout endpoint
+2. `docs/references/api-registry.md` - Updated with profile endpoint implementation details
