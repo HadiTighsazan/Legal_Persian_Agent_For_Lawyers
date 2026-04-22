@@ -27,10 +27,25 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
     
     # Public endpoints that don't require authentication
     PUBLIC_ENDPOINTS = [
+        # Authentication endpoints
         '/auth/login/',
         '/auth/register/',
         '/auth/login',
         '/auth/register',
+        
+        # Health check endpoints (for Docker, Kubernetes, load balancers)
+        '/health/',
+        '/health/ready/',
+        '/health/live/',
+        '/health',
+        '/health/ready',
+        '/health/live',
+        
+        # API documentation endpoints
+        '/swagger/',
+        '/redoc/',
+        '/swagger',
+        '/redoc',
     ]
     
     def __init__(self, get_response: Callable):
