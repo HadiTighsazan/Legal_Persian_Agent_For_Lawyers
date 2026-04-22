@@ -30,8 +30,10 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
         # Authentication endpoints
         '/auth/login/',
         '/auth/register/',
+        '/auth/refresh/',
         '/auth/login',
         '/auth/register',
+        '/auth/refresh',
         
         # Health check endpoints (for Docker, Kubernetes, load balancers)
         '/health/',

@@ -87,8 +87,8 @@
 ---
 
 #### POST /auth/login
-**Description:** Login and get JWT tokens  
-**Auth Required:** No  
+**Description:** Login and get JWT tokens
+**Auth Required:** No
 **Request Body:**
 ```json
 {
@@ -118,29 +118,37 @@
 
 ---
 
-## Planned Endpoints (Epic E02+)
-
-### Authentication
-
 #### POST /auth/refresh
-
----
-
-#### POST /auth/refresh
-**Description:** Refresh JWT access token  
-**Auth Required:** No  
+**Description:** Refresh JWT access token
+**Auth Required:** No
 **Request Body:**
 ```json
 {
-  "refresh": "jwt_refresh_token"
+  "refreshToken": "jwt_refresh_token"
 }
 ```
 **Response:** `200 OK`
 ```json
 {
-  "access": "new_jwt_access_token"
+  "accessToken": "new_jwt_access_token"
 }
 ```
+**Error Responses:**
+- `400 Bad Request`: Missing refresh token
+- `401 Unauthorized`: Invalid, expired, or revoked refresh token
+- `401 Unauthorized`: User account is inactive
+- `500 Internal Server Error`: Unexpected server error
+
+---
+
+## Planned Endpoints (Epic E02+)
+
+### Authentication
+
+#### POST /auth/logout
+**Description:** Logout and blacklist token
+**Auth Required:** Yes
+**Response:** `204 No Content`
 
 ---
 

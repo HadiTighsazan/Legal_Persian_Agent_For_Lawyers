@@ -295,3 +295,116 @@ def login_view(request: Request) -> Response:
             {"error": "Internal server error"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def refresh_view(request: Request) -> Response:
+    """
+    Refresh an access token using a refresh token.
+    
+    Endpoint: POST /auth/refresh
+    
+    Request body:
+    {
+        "refreshToken": "jwt_refresh_token_here"
+    }
+    
+    Response (200 OK):
+    {
+        "accessToken": "new_jwt_access_token_here"
+    }
+    
+    Error responses:
+    - 400 Bad Request: Missing refresh token
+    - 401 Unauthorized: Invalid, expired, or revoked refresh token
+    """
+    try:
+        data = request.data
+        
+        # Validate required field
+        refresh_token = data.get('refreshToken')
+        
+        if not refresh_token:
+            return Response(
+                {"error": "Refresh token is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Verify refresh token JWT
+        payload = verify_refresh_token(refresh_token)
+        
+        if not payload:
+            return Response(
+                {"error": "Invalid or expired refresh token"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Extract user ID and token ID from payload
+        user_id = payload.get('userId')
+        token_id = payload.get('tokenId')
+        
+        if not user_id or not token_id:
+            return Response(
+                {"error": "Invalid token payload"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Get token hash for database lookup
+        token_hash = get_token_hash(refresh_token)
+        
+        try:
+            # Find the refresh token in database
+            db_refresh_token = RefreshToken.objects.get_by_token_hash(token_hash)
+            
+            # Check if token is valid (not expired, user active)
+            if not db_refresh_token.is_valid():
+                return Response(
+                    {"error": "Refresh token is no longer valid"},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            # Get the user
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response(
+                    {"error": "User not found"},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            # Check if user is active
+            if not user.is_active:
+                return Response(
+                    {"error": "User account is inactive"},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            # Generate new access token (same user, same token_id for refresh token)
+            # Note: We're not rotating the refresh token, just generating new access token
+            access_token = generate_access_token(user)
+            
+            return Response(
+                {
+                    'accessToken': access_token
+                },
+                status=status.HTTP_200_OK
+            )
+            
+        except RefreshToken.DoesNotExist:
+            # Token hash not found in database (possibly revoked)
+            return Response(
+                {"error": "Refresh token has been revoked"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+    except Exception as e:
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Token refresh error: {str(e)}")
+        
+        return Response(
+            {"error": "Internal server error"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

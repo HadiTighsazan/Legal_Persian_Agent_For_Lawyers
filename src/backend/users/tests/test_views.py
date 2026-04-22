@@ -501,3 +501,266 @@ class LoginViewTests(TestCase):
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('error', response.json())
+
+
+class RefreshTokenViewTests(TestCase):
+    """Test cases for the token refresh endpoint."""
+    
+    def setUp(self):
+        """Set up test client, URLs, and test user."""
+        self.client = APIClient()
+        self.refresh_url = '/auth/refresh/'
+        
+        # Create a test user
+        self.user = User.objects.create_user(
+            email='refresh@example.com',
+            password='SecurePass123!',
+            full_name='Refresh Test User'
+        )
+        
+        # Create a valid refresh token for the user
+        from users.jwt_utils import generate_refresh_token, get_token_hash
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        self.token_id = uuid.uuid4()
+        self.refresh_token = generate_refresh_token(self.user, self.token_id)
+        self.token_hash = get_token_hash(self.refresh_token)
+        
+        # Store refresh token in database
+        expires_at = timezone.now() + timedelta(days=7)
+        RefreshToken.objects.create_refresh_token(
+            user=self.user,
+            token_hash=self.token_hash,
+            expires_at=expires_at
+        )
+    
+    def test_refresh_endpoint_exists(self):
+        """Test that the refresh endpoint exists and accepts POST requests."""
+        response = self.client.post(self.refresh_url, {})
+        # Should not return 404 (endpoint exists)
+        self.assertNotEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+    
+    def test_refresh_requires_post_method(self):
+        """Test that refresh only accepts POST method."""
+        response = self.client.get(self.refresh_url)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        
+        response = self.client.put(self.refresh_url)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        
+        response = self.client.delete(self.refresh_url)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+    
+    def test_refresh_with_valid_token_returns_200(self):
+        """Test refresh with valid refresh token returns 200 OK with new access token."""
+        data = {
+            'refreshToken': self.refresh_token
+        }
+        
+        response = self.client.post(
+            self.refresh_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        response_data = response.json()
+        self.assertIn('accessToken', response_data)
+        
+        access_token = response_data['accessToken']
+        self.assertIsInstance(access_token, str)
+        self.assertTrue(len(access_token) > 0)
+        self.assertEqual(len(access_token.split('.')), 3)  # JWT format check
+    
+    def test_refresh_without_token_returns_400(self):
+        """Test refresh without refresh token returns 400 Bad Request."""
+        data = {}  # Missing refreshToken
+        
+        response = self.client.post(
+            self.refresh_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertEqual(response_data['error'], 'Refresh token is required')
+    
+    def test_refresh_with_invalid_token_returns_401(self):
+        """Test refresh with invalid JWT token returns 401 Unauthorized."""
+        data = {
+            'refreshToken': 'invalid.jwt.token.here'
+        }
+        
+        response = self.client.post(
+            self.refresh_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertEqual(response_data['error'], 'Invalid or expired refresh token')
+    
+    def test_refresh_with_expired_token_returns_401(self):
+        """Test refresh with expired refresh token returns 401 Unauthorized."""
+        # Create an expired refresh token
+        from users.jwt_utils import generate_refresh_token, get_token_hash
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        # Generate token with past expiration
+        expired_token_id = uuid.uuid4()
+        expired_refresh_token = generate_refresh_token(
+            self.user,
+            expired_token_id,
+            expires_in=timedelta(seconds=-1)  # Already expired
+        )
+        
+        # Store in database (even though expired)
+        expired_token_hash = get_token_hash(expired_refresh_token)
+        expired_expires_at = timezone.now() - timedelta(days=1)
+        RefreshToken.objects.create_refresh_token(
+            user=self.user,
+            token_hash=expired_token_hash,
+            expires_at=expired_expires_at
+        )
+        
+        data = {
+            'refreshToken': expired_refresh_token
+        }
+        
+        response = self.client.post(
+            self.refresh_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        # Could be either "Invalid or expired refresh token" or "Refresh token is no longer valid"
+    
+    def test_refresh_with_revoked_token_returns_401(self):
+        """Test refresh with revoked (deleted from DB) token returns 401."""
+        # Create a token and then delete it from database (simulating revocation)
+        from users.jwt_utils import generate_refresh_token, get_token_hash
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        revoked_token_id = uuid.uuid4()
+        revoked_refresh_token = generate_refresh_token(self.user, revoked_token_id)
+        revoked_token_hash = get_token_hash(revoked_refresh_token)
+        
+        # Create and immediately delete (simulating logout)
+        expires_at = timezone.now() + timedelta(days=7)
+        refresh_token = RefreshToken.objects.create_refresh_token(
+            user=self.user,
+            token_hash=revoked_token_hash,
+            expires_at=expires_at
+        )
+        refresh_token.delete()  # Revoke the token
+        
+        data = {
+            'refreshToken': revoked_refresh_token
+        }
+        
+        response = self.client.post(
+            self.refresh_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertEqual(response_data['error'], 'Refresh token has been revoked')
+    
+    def test_refresh_with_inactive_user_returns_401(self):
+        """Test refresh with inactive user account returns 401 Unauthorized."""
+        # Create an inactive user
+        inactive_user = User.objects.create_user(
+            email='inactive@example.com',
+            password='SecurePass123!',
+            full_name='Inactive User'
+        )
+        inactive_user.is_active = False
+        inactive_user.save()
+        
+        # Create refresh token for inactive user
+        from users.jwt_utils import generate_refresh_token, get_token_hash
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        inactive_token_id = uuid.uuid4()
+        inactive_refresh_token = generate_refresh_token(inactive_user, inactive_token_id)
+        inactive_token_hash = get_token_hash(inactive_refresh_token)
+        
+        expires_at = timezone.now() + timedelta(days=7)
+        RefreshToken.objects.create_refresh_token(
+            user=inactive_user,
+            token_hash=inactive_token_hash,
+            expires_at=expires_at
+        )
+        
+        data = {
+            'refreshToken': inactive_refresh_token
+        }
+        
+        response = self.client.post(
+            self.refresh_url,
+            data=json.dumps(data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertEqual(response_data['error'], 'Refresh token is no longer valid')
+    
+    def test_refresh_returns_different_access_token(self):
+        """Test that refresh returns a new access token (different from any previous)."""
+        # First, get an access token from login
+        login_data = {
+            'email': 'refresh@example.com',
+            'password': 'SecurePass123!'
+        }
+        
+        login_response = self.client.post(
+            '/auth/login/',
+            data=json.dumps(login_data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(login_response.status_code, status.HTTP_200_OK)
+        login_access_token = login_response.json()['accessToken']
+        
+        # Now use refresh endpoint
+        refresh_data = {
+            'refreshToken': self.refresh_token
+        }
+        
+        refresh_response = self.client.post(
+            self.refresh_url,
+            data=json.dumps(refresh_data),
+            content_type='application/json'
+        )
+        
+        self.assertEqual(refresh_response.status_code, status.HTTP_200_OK)
+        refresh_access_token = refresh_response.json()['accessToken']
+        
+        # The new access token should be different from the login access token
+        self.assertNotEqual(login_access_token, refresh_access_token)
+        
+        # Both should be valid JWT tokens
+        self.assertEqual(len(login_access_token.split('.')), 3)
+        self.assertEqual(len(refresh_access_token.split('.')), 3)
