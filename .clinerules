@@ -17,25 +17,33 @@ Never read the entire src/ directory or massive files unless specifically reques
 - Testing: Vitest, React Testing Library, Pytest
 - DevOps & Deployment: Docker, Nginx, Gunicorn
 
-# 3. Coding Rules
+# 3. Development Environment & Execution (CRITICAL)
+- The standard development workflow is fully containerized. ALWAYS use `docker-compose up` to run the project.
+- NEVER run services natively on the host machine (e.g., using `python manage.py runserver` for the backend or `npm run dev`/`vite` for the frontend).
+- To execute commands (like migrations or tests), use `docker-compose exec <service_name> <command>`.
+  - Example for backend tests: `docker-compose exec backend pytest`
+  - Example for migrations: `docker-compose exec backend python manage.py migrate`
+
+# 4. Coding Rules
 - Write Clean Code: Keep functions small and modular.
 - Naming Conventions: Use camelCase for variables/functions, PascalCase for classes/components.
 - Error Handling: Always use try/catch blocks and provide meaningful error messages.
 - Strict Typing: Use TypeScript for all Frontend code. Use Python Type Hints (PEP 484) for all Backend code.
-# 4. TDD Flow (Test-Driven Development)
+
+# 5. TDD Flow (Test-Driven Development)
 Always follow these $3$ exact steps for every new feature or component:
 1. RED: Write a failing test first. Stop and verify.
 2. GREEN: Write the minimum code required to make the test pass.
 3. REFACTOR: Clean up the code without changing behavior.
 
-# 5. WIP & State Management (CRITICAL)
+# 6. WIP & State Management (CRITICAL)
 - After completing ANY step or before stopping to ask the user for input, you MUST update `docs/active-task/wip-context.md`.
 - Overwrite the file with: 
   1. What was just completed.
   2. The current state of the code.
   3. The exact next step to be executed.
 
-# 6. Reference Documentation Rule
+# 7. Reference Documentation Rule
 - If you make ANY changes to database tables, models, or columns, immediately update `docs/references/database-schema.md`.
 - If you create or modify an API endpoint, immediately update `docs/references/api-registry.md`.
 - IMPORTANT: If you modify these reference files, you MUST explicitly highlight these changes in your final report and in wip-context.md so the user can sync them with the Architect AI.
