@@ -341,7 +341,8 @@ def refresh_view(request: Request) -> Response:
             )
         
         # Extract user ID and token ID from payload
-        user_id = payload.get('userId')
+        # Try 'user_id' first (SimpleJWT standard), then 'userId' for backward compatibility
+        user_id = payload.get('user_id') or payload.get('userId')
         token_id = payload.get('tokenId')
         
         if not user_id or not token_id:
@@ -403,6 +404,76 @@ def refresh_view(request: Request) -> Response:
         import logging
         logger = logging.getLogger(__name__)
         logger.error(f"Token refresh error: {str(e)}")
+        
+        return Response(
+            {"error": "Internal server error"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def logout_view(request: Request) -> Response:
+    """
+    Logout and revoke a refresh token.
+    
+    Endpoint: POST /auth/logout
+    
+    Request body:
+    {
+        "refreshToken": "jwt_refresh_token_here"
+    }
+    
+    Response: 204 No Content (empty body)
+    
+    Error responses:
+    - 400 Bad Request: Missing refresh token
+    - 401 Unauthorized: Refresh token not found or already revoked
+    """
+    try:
+        data = request.data
+        
+        # Validate required field
+        refresh_token = data.get('refreshToken')
+        
+        if not refresh_token:
+            return Response(
+                {"error": "Refresh token is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get token hash for database lookup
+        token_hash = get_token_hash(refresh_token)
+        
+        try:
+            # Find the refresh token in database
+            db_refresh_token = RefreshToken.objects.get_by_token_hash(token_hash)
+            
+            # Verify the token belongs to the authenticated user
+            if db_refresh_token.user.id != request.user.id:
+                return Response(
+                    {"error": "Refresh token does not belong to authenticated user"},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            # Revoke (delete) the refresh token
+            db_refresh_token.revoke()
+            
+            # Return 204 No Content
+            return Response(status=status.HTTP_204_NO_CONTENT)
+            
+        except RefreshToken.DoesNotExist:
+            # Token hash not found in database (already revoked or invalid)
+            return Response(
+                {"error": "Refresh token not found or already revoked"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+    except Exception as e:
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Logout error: {str(e)}")
         
         return Response(
             {"error": "Internal server error"},

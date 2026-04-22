@@ -141,21 +141,74 @@
 
 ---
 
+#### POST /auth/logout
+**Description:** Logout and revoke a refresh token
+**Auth Required:** Yes
+**Request Body:**
+```json
+{
+  "refreshToken": "jwt_refresh_token"
+}
+```
+**Response:** `204 No Content` (empty body)
+
+**Error Responses:**
+- `400 Bad Request`: Missing refresh token
+- `401 Unauthorized`: Invalid, expired, or revoked refresh token
+- `401 Unauthorized`: Refresh token does not belong to authenticated user
+- `500 Internal Server Error`: Unexpected server error
+
+**Notes:**
+- Requires valid access token in `Authorization: Bearer <token>` header
+- Deletes the refresh token from database, preventing future use
+- Access tokens remain valid until expiry (stateless JWT)
+- Users can only revoke their own refresh tokens
+
+---
+
 ## Planned Endpoints (Epic E02+)
 
 ### Authentication
 
-#### POST /auth/logout
-**Description:** Logout and blacklist token
+#### GET /users/me
+**Description:** Get current user profile
 **Auth Required:** Yes
-**Response:** `204 No Content`
+**Response:** `200 OK`
+```json
+{
+  "id": "uuid",
+  "email": "user@example.com",
+  "full_name": "John Doe",
+  "is_active": true,
+  "created_at": "2026-04-18T10:00:00Z",
+  "stats": {
+    "documents_count": 15,
+    "conversations_count": 42,
+    "total_storage_bytes": 524288000
+  }
+}
+```
 
 ---
 
-#### POST /auth/logout
-**Description:** Logout and blacklist token  
-**Auth Required:** Yes  
-**Response:** `204 No Content`
+#### PATCH /users/me
+**Description:** Update user profile
+**Auth Required:** Yes
+**Request Body:**
+```json
+{
+  "full_name": "John Updated Doe"
+}
+```
+**Response:** `200 OK`
+```json
+{
+  "id": "uuid",
+  "email": "user@example.com",
+  "full_name": "John Updated Doe",
+  "updated_at": "2026-04-18T11:00:00Z"
+}
+```
 
 ---
 

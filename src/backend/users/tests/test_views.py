@@ -12,6 +12,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from users.models import User, RefreshToken
+from users.jwt_utils import get_token_hash
 
 
 class RegistrationViewTests(TestCase):
@@ -764,3 +765,208 @@ class RefreshTokenViewTests(TestCase):
         # Both should be valid JWT tokens
         self.assertEqual(len(login_access_token.split('.')), 3)
         self.assertEqual(len(refresh_access_token.split('.')), 3)
+
+
+class LogoutViewTests(TestCase):
+    """Test cases for the logout endpoint."""
+    
+    def setUp(self):
+        """Set up test client, URLs, and test user."""
+        self.client = APIClient()
+        self.logout_url = '/auth/logout/'
+        
+        # Create a test user
+        self.user = User.objects.create_user(
+            email='logout@example.com',
+            password='SecurePass123!',
+            full_name='Logout Test User'
+        )
+        
+        # Generate tokens for the user
+        from users.jwt_utils import generate_access_token, generate_refresh_token, get_token_hash, create_tokens_for_user
+        import uuid
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        self.token_id = uuid.uuid4()
+        self.tokens = create_tokens_for_user(self.user, self.token_id)
+        self.access_token = self.tokens['access_token']
+        self.refresh_token = self.tokens['refresh_token']
+        
+        # Store refresh token in database
+        token_hash = get_token_hash(self.refresh_token)
+        expires_at = timezone.now() + timedelta(days=7)
+        self.db_refresh_token = RefreshToken.objects.create_refresh_token(
+            user=self.user,
+            token_hash=token_hash,
+            expires_at=expires_at
+        )
+        
+        # Set authentication for the client
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+    
+    def test_logout_endpoint_exists(self):
+        """Test that the logout endpoint exists and accepts POST requests."""
+        data = {
+            'refreshToken': self.refresh_token
+        }
+        response = self.client.post(self.logout_url, data, format='json')
+        # Should not return 404 (endpoint exists)
+        self.assertNotEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+    
+    def test_logout_requires_post_method(self):
+        """Test that logout only accepts POST method."""
+        # Test with GET
+        response = self.client.get(self.logout_url)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        
+        # Test with PUT
+        response = self.client.put(self.logout_url)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        
+        # Test with DELETE
+        response = self.client.delete(self.logout_url)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+    
+    def test_logout_with_valid_token_returns_204(self):
+        """Test logout with valid refresh token returns 204 No Content."""
+        data = {
+            'refreshToken': self.refresh_token
+        }
+        
+        response = self.client.post(self.logout_url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(response.content, b'')  # Empty response body
+        
+        # Verify token was deleted from database
+        with self.assertRaises(RefreshToken.DoesNotExist):
+            RefreshToken.objects.get_by_token_hash(get_token_hash(self.refresh_token))
+    
+    def test_logout_requires_authentication(self):
+        """Test that logout endpoint requires authentication."""
+        # Create a client without authentication
+        unauthenticated_client = APIClient()
+        
+        data = {
+            'refreshToken': self.refresh_token
+        }
+        
+        response = unauthenticated_client.post(self.logout_url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+    
+    def test_logout_missing_refresh_token_returns_400(self):
+        """Test logout without refresh token returns 400 Bad Request."""
+        data = {}  # Missing refreshToken field
+        
+        response = self.client.post(self.logout_url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertEqual(response_data['error'], 'Refresh token is required')
+    
+    def test_logout_with_invalid_refresh_token_returns_401(self):
+        """Test logout with invalid refresh token returns 401 Unauthorized."""
+        data = {
+            'refreshToken': 'invalid.jwt.token.here'
+        }
+        
+        response = self.client.post(self.logout_url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertEqual(response_data['error'], 'Refresh token not found or already revoked')
+    
+    def test_logout_with_already_revoked_token_returns_401(self):
+        """Test logout with already revoked token returns 401 Unauthorized."""
+        # First, logout to revoke the token
+        data = {
+            'refreshToken': self.refresh_token
+        }
+        response = self.client.post(self.logout_url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        
+        # Try to logout again with the same token
+        response = self.client.post(self.logout_url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertEqual(response_data['error'], 'Refresh token not found or already revoked')
+    
+    def test_logout_with_other_users_token_returns_401(self):
+        """Test logout with another user's refresh token returns 401."""
+        # Create another user
+        other_user = User.objects.create_user(
+            email='other@example.com',
+            password='SecurePass123!',
+            full_name='Other User'
+        )
+        
+        # Generate tokens for other user
+        from users.jwt_utils import create_tokens_for_user, get_token_hash
+        import uuid
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        other_token_id = uuid.uuid4()
+        other_tokens = create_tokens_for_user(other_user, other_token_id)
+        other_refresh_token = other_tokens['refresh_token']
+        
+        # Store other user's token in database
+        other_token_hash = get_token_hash(other_refresh_token)
+        expires_at = timezone.now() + timedelta(days=7)
+        RefreshToken.objects.create_refresh_token(
+            user=other_user,
+            token_hash=other_token_hash,
+            expires_at=expires_at
+        )
+        
+        # Try to logout with other user's token (authenticated as self.user)
+        data = {
+            'refreshToken': other_refresh_token
+        }
+        
+        response = self.client.post(self.logout_url, data, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertEqual(response_data['error'], 'Refresh token does not belong to authenticated user')
+        
+        # Verify other user's token still exists
+        try:
+            RefreshToken.objects.get_by_token_hash(other_token_hash)
+        except RefreshToken.DoesNotExist:
+            self.fail("Other user's token should not have been deleted")
+    
+    def test_logout_prevents_token_reuse(self):
+        """Test that logged out refresh token cannot be used for refresh."""
+        # First, logout to revoke the token
+        data = {
+            'refreshToken': self.refresh_token
+        }
+        response = self.client.post(self.logout_url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        
+        # Try to use the revoked token for refresh
+        refresh_data = {
+            'refreshToken': self.refresh_token
+        }
+        
+        # Use a different client without authentication (refresh endpoint is public)
+        refresh_client = APIClient()
+        refresh_response = refresh_client.post(
+            '/auth/refresh/',
+            refresh_data,
+            format='json'
+        )
+        
+        self.assertEqual(refresh_response.status_code, status.HTTP_401_UNAUTHORIZED)
+        refresh_response_data = refresh_response.json()
+        self.assertIn('error', refresh_response_data)

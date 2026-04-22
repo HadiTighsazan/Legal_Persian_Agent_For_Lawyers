@@ -158,7 +158,8 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
             User: User object if found, None otherwise
         """
         try:
-            user_id = payload.get('userId')
+            # Try 'user_id' first (SimpleJWT standard), then 'userId' for backward compatibility
+            user_id = payload.get('user_id') or payload.get('userId')
             if not user_id:
                 return None
             
