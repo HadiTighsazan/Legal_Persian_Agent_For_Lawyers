@@ -1,33 +1,29 @@
-# WIP Context — Phase 0: Prerequisites & Configuration Fixes
+# WIP Context — Phase 1: Database Migration (Epic E-03)
 
 ## What was just completed
 
-All three tasks under Phase 0 have been completed:
+### Task 1.1 — Created migration `0002_add_storage_fields.py`
+- **File created:** `src/backend/documents/migrations/0002_add_storage_fields.py`
+- **Operations in the migration:**
+  1. **AddField** — `filename` (`CharField(max_length=255)`) added as nullable first (`null=True`).
+  2. **RunPython** — `backfill_filename` copies `original_filename` → `filename` for all existing rows.
+  3. **AlterField** — `filename` altered to non-nullable (`null=False`).
+  4. **AddField** — `storage_type` (`CharField(max_length=20, default='local', db_index=True)`).
 
-### Task P0.1 — Updated `requirements.txt`
-- Added `boto3>=1.34.0` and `python-magic>=0.4.27` under a new "Storage & File Handling" section.
-
-### Task P0.2 — Updated `.env.example`
-- Added a new "Storage Configuration" section with:
-  - `STORAGE_TYPE=local`
-  - `LOCAL_STORAGE_PATH=./media/documents`
-  - `S3_BUCKET_NAME=docuchat-uploads`
-  - `S3_REGION=us-east-1`
-  - `AWS_ACCESS_KEY_ID=`
-  - `AWS_SECRET_ACCESS_KEY=`
-- Updated `MAX_UPLOAD_SIZE` from 524288000 (500MB) to 52428800 (50MB).
-- Updated `ALLOWED_FILE_TYPES` to include DOCX and TXT MIME types.
-
-### Task P0.3 — Updated `config/settings.py`
-- Added storage configuration variables after the file upload settings block:
-  - `STORAGE_TYPE`, `LOCAL_STORAGE_PATH`, `S3_BUCKET_NAME`, `S3_REGION`
-- Changed `MAX_UPLOAD_SIZE` from `500 * 1024 * 1024` to `50 * 1024 * 1024` (50MB).
-- Updated `ALLOWED_FILE_TYPES` to include `application/vnd.openxmlformats-officedocument.wordprocessingml.document` and `text/plain`.
+### Reference docs updated
+- `docs/references/database-schema.md` — Added `filename` and `storage_type` columns to the `documents` table.
 
 ## Current state of the code
 
-All three files have been modified and are ready. No breaking changes introduced — all new env vars have sensible defaults, so existing `.env` files remain compatible.
+- Migration file `0002_add_storage_fields.py` is ready and placed in the `documents` app's migrations directory.
+- The migration has NOT been applied yet (waiting for user to run `docker-compose exec backend python manage.py migrate`).
+- No changes were made to `models.py` — the model changes will be applied in a later phase (Phase 2 or 3) when the code is updated to use the new fields.
 
 ## Exact next step to be executed
 
-No further steps. Phase 0 is complete. The next phase can proceed once the user confirms.
+Phase 1 is complete. The user should run the migration when ready:
+```bash
+docker-compose exec backend python manage.py migrate
+```
+
+The next phase (Phase 2) can proceed once the user confirms.

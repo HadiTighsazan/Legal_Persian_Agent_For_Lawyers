@@ -26,12 +26,14 @@
 | user_id | UUID | FOREIGN KEY (users.id) ON DELETE CASCADE | Owner of document |
 | title | VARCHAR(500) | NOT NULL | Document title |
 | original_filename | VARCHAR(500) | NOT NULL | Original file name |
+| **filename** | **VARCHAR(255)** | **NOT NULL** | **Sanitized storage filename (added in E03-P1)** |
 | file_path | VARCHAR(1000) | NOT NULL | Storage path |
 | file_size | BIGINT | NOT NULL | File size in bytes |
 | mime_type | VARCHAR(100) | NOT NULL | File MIME type |
 | total_pages | INTEGER | NULL | Total page count |
 | status | VARCHAR(50) | DEFAULT 'uploaded' | processing status: uploaded, processing, completed, failed |
 | error_message | TEXT | NULL | Error details if failed |
+| **storage_type** | **VARCHAR(20)** | **DEFAULT 'local', INDEXED** | **Storage backend: local / s3 (added in E03-P1)** |
 | created_at | TIMESTAMP | DEFAULT NOW() | Upload timestamp |
 | updated_at | TIMESTAMP | DEFAULT NOW() | Last update timestamp |
 
@@ -39,6 +41,7 @@
 - `idx_documents_user_id` on `user_id`
 - `idx_documents_status` on `status`
 - `idx_documents_created_at` on `created_at`
+- `idx_documents_storage_type` on `storage_type`
 
 ---
 
@@ -192,3 +195,4 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 - Use CASCADE delete for related records
 - JSONB for flexible metadata storage
 - `refresh_tokens` table created in Epic E02 (Authentication & User Management)
+- `filename` and `storage_type` columns added to `documents` table in Epic E03 Phase 1 (migration `0002_add_storage_fields.py`)
