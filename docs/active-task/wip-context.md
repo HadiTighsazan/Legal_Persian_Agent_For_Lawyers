@@ -1,41 +1,34 @@
-# WIP Context — Phase 4: Document Repository (Epic E-03)
+# WIP Context — Phase 5: Upload Service (Epic E-03)
 
 ## What was just completed
 
-### Bug Fix: `create_document` IntegrityError
+### Task 5.1 — Created `documents/services/__init__.py`
+- **File created:** `src/backend/documents/services/__init__.py` (empty package init)
 
-**Root cause:** The `create_document` function in `document_repository.py` accepted a `filename` parameter but never passed it to `Document.objects.create()`. Migration `0002_add_storage_fields.py` added a non-nullable `filename` column to the `documents` table, so omitting it caused:
-```
-django.db.utils.IntegrityError: null value in column "filename" of relation "documents" violates not-null constraint
-```
+### Task 5.2 — Created `documents/services/upload_service.py`
+- **File created:** `src/backend/documents/services/upload_service.py`
+- Implemented the `upload_document(user, file)` orchestration function that performs the full upload workflow:
 
-**Fixes applied:**
+  1. **Validate file type** — Calls `validate_file_type()` from the Phase‑3 validator, checking the file extension against allowed types.
+  2. **Validate file size** — Calls `validate_file_size()` from the Phase‑3 validator, ensuring the file does not exceed the configured maximum.
+  3. **Generate unique filename** — Produces a filename in the format `{uuid}{ext}` using Python's `uuid.uuid4()`.
+  4. **Save file via storage backend** — Uses `get_storage_backend()` (Phase 2 factory) to persist the file through the configured backend (local or S3).
+  5. **Create database record** — Calls `create_document()` from the repository layer (Phase 4) to persist document metadata.
+  6. **Return metadata dict** — Returns a dictionary with `id`, `title`, `original_filename`, `file_size`, `mime_type`, `file_path`, `storage_type`, `status`, and `created_at`.
 
-1. **`src/backend/documents/repositories/document_repository.py`** (line 38, 43):
-   - Added `filename=filename` to the `Document.objects.create()` call.
-   - Added `storage_type=storage_type` to the `Document.objects.create()` call.
-   - Removed the stale comment that incorrectly claimed `storage_type` was "not a field on the current Document model".
+- **Exception handling:**
+  - `ValidationError` from file type/size checks propagates naturally to the caller.
+  - `StorageError` from the storage backend is caught and re-raised with logging.
+  - Generic exceptions from the repository layer are caught and wrapped in a `RuntimeError` with a descriptive message.
 
-2. **`src/backend/documents/models.py`** (lines 26, 31):
-   - Added `filename = models.CharField(max_length=255)` field to the `Document` model (was missing despite migration 0002 adding it to the DB).
-   - Added `storage_type = models.CharField(max_length=20, default="local", db_index=True)` field to the `Document` model (same reason).
-
-### Task 4.1 — Created `documents/repositories/__init__.py`
-- **File created:** `src/backend/documents/repositories/__init__.py` (empty package init)
-
-### Task 4.2 — Created `documents/repositories/document_repository.py`
-- **File created:** `src/backend/documents/repositories/document_repository.py`
-- Three repository functions:
-  - `create_document(...)` — Creates a `Document` instance with all required fields.
-  - `get_document_by_id(document_id)` — Retrieves a `Document` by UUID, returns `None` if not found.
-  - `get_user_documents(user, page=1, page_size=10)` — Returns a paginated dictionary with `results`, `total`, `page`, `page_size`, `total_pages`, `has_next`, `has_previous`.
+- **Helper:** `_guess_mime_type()` uses `mimetypes.guess_type()` to derive the MIME type from the original filename, falling back to `application/octet-stream`.
 
 ## Current state of the code
 
-- The `documents/repositories/` package is created with the document repository module.
-- The `Document` model in `models.py` now correctly declares `filename` and `storage_type` fields matching migration 0002.
-- The storage abstraction layer (Phase 2) and file validator utility (Phase 3) remain unchanged.
+- The `documents/services/` package is created with the upload service module.
+- The `upload_document()` function is fully implemented and ready to be called from API views (future Phase).
+- All prior layers (storage abstraction, file validators, document repository) remain unchanged.
 
 ## Exact next step to be executed
 
-Phase 4 is complete with the bug fix applied. The next phase can proceed once the user confirms.
+Phase 5 is complete. The next phase can proceed once the user confirms.
