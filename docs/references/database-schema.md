@@ -145,7 +145,7 @@
 |--------|------|-------------|-------------|
 | id | UUID | PRIMARY KEY | Refresh token unique identifier |
 | user_id | UUID | FOREIGN KEY (users.id) ON DELETE CASCADE | Token owner |
-| token_hash | VARCHAR(255) | UNIQUE, NOT NULL | Hashed refresh token |
+| token_hash | VARCHAR(255) | UNIQUE, NOT NULL | Hashed refresh token (SHA-256) |
 | expires_at | TIMESTAMP | NOT NULL | Expiration timestamp |
 | created_at | TIMESTAMP | DEFAULT NOW() | Creation timestamp |
 
@@ -154,12 +154,33 @@
 - `idx_refresh_tokens_token_hash` on `token_hash`
 - `idx_refresh_tokens_expires_at` on `expires_at`
 
+**Model Methods (RefreshTokenManager):**
+- `create_refresh_token(user, token_hash, expires_at)` — Create and persist a new refresh token
+- `get_by_token_hash(token_hash)` — Look up a token by its SHA-256 hash
+- `get_valid_tokens_for_user(user)` — Get all non-expired tokens for a user
+- `cleanup_expired_tokens()` — Delete all expired tokens (for cron/scheduled task)
+- `revoke_all_for_user(user)` — Delete all tokens for a user (e.g., force logout)
+- `is_token_valid(token_hash)` — Check if a token exists and is valid
+
+**Instance Methods:**
+- `is_expired()` — Check if token has expired
+- `is_valid()` — Check if token is not expired and user is active
+- `get_remaining_lifetime()` — Get timedelta until expiration
+- `revoke()` — Delete the token from database (permanent revocation)
+
+**Implementation Notes:**
+- Token hash is generated using `hashlib.sha256(token.encode()).hexdigest()`
+- Tokens are deleted (not soft-deleted) on revocation/logout
+- Access tokens are stateless JWT and remain valid until natural expiry
+- Expired tokens can be cleaned up via `cleanup_expired_tokens()` manager method
+
 ---
 
 ## PostgreSQL Extensions Required
 ```sql
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "vector";
+```
 
 ---
 
@@ -170,6 +191,4 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 - All timestamps in UTC
 - Use CASCADE delete for related records
 - JSONB for flexible metadata storage
-
-
----
+- `refresh_tokens` table created in Epic E02 (Authentication & User Management)

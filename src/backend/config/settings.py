@@ -271,3 +271,27 @@ LOGGING = {
         },
     },
 }
+
+# Swagger/OpenAPI Documentation Settings
+SWAGGER_SETTINGS = {
+    'SECURITY_DEFINITIONS': {
+        'Bearer': {
+            'type': 'apiKey',
+            'name': 'Authorization',
+            'in': 'header',
+            'description': 'JWT Authorization header using the Bearer scheme. Example: "Bearer {token}"'
+        }
+    },
+    'USE_SESSION_AUTH': False,
+    'JSON_EDITOR': True,
+    'SUPPORTED_SUBMIT_METHODS': [
+        'get',
+        'post',
+        'put',
+        'delete',
+        'patch',
+    ],
+    'DOC_EXPANSION': 'list',
+    'DEFAULT_MODEL_RENDERING': 'model',
+    'VALIDATOR_URL': None,
+}

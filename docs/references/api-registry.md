@@ -14,8 +14,8 @@
 ### ✅ Implemented Endpoints
 
 #### GET /api/health/
-**Description:** Health check endpoint  
-**Auth Required:** No  
+**Description:** Health check endpoint
+**Auth Required:** No
 **Response:** `200 OK`
 ```json
 {
@@ -27,36 +27,26 @@
 ```
 
 #### GET /health/
-**Description:** Nginx health check (simple text response)  
-**Auth Required:** No  
+**Description:** Nginx health check (simple text response)
+**Auth Required:** No
 **Response:** `200 OK` with "healthy"
 
 #### GET /admin/
-**Description:** Django admin interface  
-**Auth Required:** Yes (redirects to login)  
+**Description:** Django admin interface
+**Auth Required:** Yes (redirects to login)
 **Response:** `302 Found` (redirects to login page)
-
-### ⚠️ Partially Working Endpoints
-
-#### GET /swagger/
-**Description:** Swagger API documentation  
-**Status:** Returns 500 Internal Server Error  
-**Issue:** Django REST Framework documentation needs configuration
-
-#### GET /redoc/
-**Description:** ReDoc API documentation  
-**Status:** Returns 500 Internal Server Error  
-**Issue:** Django REST Framework documentation needs configuration
 
 ---
 
 ## Current Implementation Status (Epic E02)
 
-### ✅ Implemented Endpoints
+### ✅ Implemented Endpoints — Authentication & User Management
 
 #### POST /auth/register
-**Description:** Register new user account  
-**Auth Required:** No  
+**Description:** Register new user account
+**Auth Required:** No
+**Implementation Date:** 2026-04-22
+**Test Coverage:** 59 view tests, 6 middleware integration tests
 **Request Body:**
 ```json
 {
@@ -84,11 +74,20 @@
 - `409 Conflict`: Email already exists
 - `500 Internal Server Error`: Unexpected server error
 
+**Implementation Notes:**
+- Uses `@authentication_classes([])` and `@permission_classes([AllowAny])` to allow unauthenticated access
+- Validates email format via Django's `validate_email`
+- Enforces minimum password length of 8 characters
+- Creates user via `User.objects.create_user()`
+- Generates JWT access + refresh token pair on successful registration
+- Stores refresh token hash in `refresh_tokens` table
+
 ---
 
 #### POST /auth/login
 **Description:** Login and get JWT tokens
 **Auth Required:** No
+**Implementation Date:** 2026-04-22
 **Request Body:**
 ```json
 {
@@ -116,11 +115,18 @@
 - `401 Unauthorized`: User account is inactive
 - `500 Internal Server Error`: Unexpected server error
 
+**Implementation Notes:**
+- Uses `@authentication_classes([])` and `@permission_classes([AllowAny])` to allow unauthenticated access
+- Authenticates via email + password using `user.verify_password()`
+- Generates new JWT access + refresh token pair on successful login
+- Stores refresh token hash in `refresh_tokens` table
+
 ---
 
 #### POST /auth/refresh
 **Description:** Refresh JWT access token
-**Auth Required:** No
+**Auth Required:** No (requires valid refresh token in body)
+**Implementation Date:** 2026-04-22
 **Request Body:**
 ```json
 {
@@ -139,11 +145,19 @@
 - `401 Unauthorized`: User account is inactive
 - `500 Internal Server Error`: Unexpected server error
 
+**Implementation Notes:**
+- Uses `@authentication_classes([])` and `@permission_classes([AllowAny])` to allow unauthenticated access
+- Verifies refresh token JWT signature and payload via `verify_refresh_token()`
+- Looks up token hash in `refresh_tokens` table to ensure it hasn't been revoked
+- Validates token expiry and user active status
+- Generates a new access token (refresh token is NOT rotated)
+
 ---
 
 #### POST /auth/logout
 **Description:** Logout and revoke a refresh token
-**Auth Required:** Yes
+**Auth Required:** Yes (valid access token in Authorization header)
+**Implementation Date:** 2026-04-22
 **Request Body:**
 ```json
 {
@@ -169,6 +183,8 @@
 #### GET /users/me
 **Description:** Get current user profile
 **Auth Required:** Yes
+**Implementation Date:** 2026-04-22
+**Test Coverage:** 5 unit tests
 **Response:** `200 OK`
 ```json
 {
@@ -181,13 +197,34 @@
 }
 ```
 **Error Responses:**
-- `401 Unauthorized`: No valid authentication token
+- `401 Unauthorized`: No valid authentication token provided
+- `401 Unauthorized`: Token expired or invalid
+
+**Example Usage:**
+```bash
+# Get user profile with valid token
+curl -X GET http://localhost:8000/users/me/ \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+# Response (unauthorized)
+curl -X GET http://localhost:8000/users/me/
+# Returns: {"error": {"message": "Authentication credentials were not provided.", "code": "authentication_failed"}}
+```
+
+**Implementation Notes:**
+- Uses Django REST Framework's `IsAuthenticated` permission class
+- Integrates with existing JWT middleware
+- Returns ISO 8601 formatted timestamps
+- Follows consistent error response format
+- Note: `stats` field is not yet implemented (planned for future enhancement)
 
 ---
 
 #### PATCH /users/me
 **Description:** Update current user profile (partial update)
 **Auth Required:** Yes
+**Implementation Date:** 2026-04-22
 **Request Body:**
 ```json
 {
@@ -217,12 +254,29 @@ Both fields are optional. At least one should be provided for meaningful updates
 - Uses the same endpoint as GET `/users/me` but with PATCH HTTP method
 - Only provided fields are updated (partial update)
 - `updated_at` is automatically updated via model's `auto_now=True`
+- Uses `ProfileUpdateSerializer` for validation
+
+---
+
+### ✅ Implemented Endpoints — API Documentation
+
+#### GET /swagger/
+**Description:** Swagger UI API documentation
+**Auth Required:** No
+**Status:** ✅ Working
+**Implementation Date:** 2026-04-23
+**Configuration:** `drf_yasg` with OpenAPI schema view in `config/urls.py`
+
+#### GET /redoc/
+**Description:** ReDoc API documentation
+**Auth Required:** No
+**Status:** ✅ Working
+**Implementation Date:** 2026-04-23
+**Configuration:** `drf_yasg` with OpenAPI schema view in `config/urls.py`
 
 ---
 
 ## Planned Endpoints (Epic E02+)
-
-### Authentication
 
 ## Documents
 
@@ -592,73 +646,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 
 ---
 
-## User Profile
-
-#### GET /users/me
-**Description:** Get current user profile
-**Status:** ✅ Implemented
-**Auth Required:** Yes
-**Implementation Date:** 2026-04-22
-**Test Coverage:** 5 unit tests
-
-**Response:** `200 OK`
-```json
-{
-  "id": "uuid",
-  "email": "user@example.com",
-  "full_name": "John Doe",
-  "is_active": true,
-  "created_at": "2026-04-22T10:30:00Z"
-}
-```
-
-**Error Responses:**
-- `401 Unauthorized`: No valid authentication token provided
-- `401 Unauthorized`: Token expired or invalid
-
-**Example Usage:**
-```bash
-# Get user profile with valid token
-curl -X GET http://localhost:8000/users/me/ \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-
-# Response (unauthorized)
-curl -X GET http://localhost:8000/users/me/
-# Returns: {"error": {"message": "Authentication credentials were not provided.", "code": "authentication_failed"}}
-```
-
-**Implementation Notes:**
-- Uses Django REST Framework's `IsAuthenticated` permission class
-- Integrates with existing JWT middleware
-- Returns ISO 8601 formatted timestamps
-- Follows consistent error response format
-- Note: `stats` field is not yet implemented (planned for future enhancement)
-
----
-
-#### PATCH /users/me
-**Description:** Update user profile  
-**Auth Required:** Yes  
-**Request Body:**
-```json
-{
-  "full_name": "John Updated Doe"
-}
-```
-**Response:** `200 OK`
-```json
-{
-  "id": "uuid",
-  "email": "user@example.com",
-  "full_name": "John Updated Doe",
-  "updated_at": "2026-04-18T11:00:00Z"
-}
-```
-
----
-
-## API Keys (Optional)
+## API Keys (Optional - Planned)
 
 #### GET /api-keys
 **Description:** List user's API keys  
@@ -787,5 +775,6 @@ All endpoints may return these error formats:
 - Authentication via JWT in `Authorization: Bearer <token>` header
 - File uploads limited to 500MB per file
 - Supported file types: PDF only (initial version)
-- Current implementation (Epic E01) only has health endpoint working
-- Swagger/ReDoc documentation endpoints return 500 (need configuration)
+- Epic E01 (Health & Infrastructure): Health endpoints implemented and working
+- Epic E02 (Authentication & User Management): All auth endpoints implemented and working
+- Swagger/ReDoc documentation endpoints are configured and working via `drf_yasg`
