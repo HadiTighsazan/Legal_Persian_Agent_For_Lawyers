@@ -226,9 +226,15 @@ CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes
 # OpenAI Configuration
 OPENAI_API_KEY = env('OPENAI_API_KEY', default='')
 
+# Storage Configuration
+STORAGE_TYPE = env('STORAGE_TYPE', default='local')
+LOCAL_STORAGE_PATH = env('LOCAL_STORAGE_PATH', default=os.path.join(BASE_DIR, 'media/documents'))
+S3_BUCKET_NAME = env('S3_BUCKET_NAME', default='docuchat-uploads')
+S3_REGION = env('S3_REGION', default='us-east-1')
+
 # File upload settings
-MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500MB
-ALLOWED_FILE_TYPES = ['application/pdf']
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB
+ALLOWED_FILE_TYPES = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain']
 
 # Logging
 # Ensure logs directory exists
