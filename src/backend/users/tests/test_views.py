@@ -973,7 +973,7 @@ class LogoutViewTests(TestCase):
 
 
 class ProfileViewTests(TestCase):
-    """Test cases for the GET /users/me endpoint."""
+    """Test cases for the GET and PATCH /users/me endpoint."""
     
     def setUp(self):
         """Set up test client, URLs, and test user."""
@@ -1023,6 +1023,7 @@ class ProfileViewTests(TestCase):
         self.assertIn('full_name', data)
         self.assertIn('is_active', data)
         self.assertIn('created_at', data)
+        self.assertIn('updated_at', data)
         
         # Check values match test user
         self.assertEqual(data['email'], 'profiletest@example.com')
@@ -1038,7 +1039,7 @@ class ProfileViewTests(TestCase):
         data = response.json()
         
         # Verify response structure
-        expected_keys = ['id', 'email', 'full_name', 'is_active', 'created_at']
+        expected_keys = ['id', 'email', 'full_name', 'is_active', 'created_at', 'updated_at']
         for key in expected_keys:
             self.assertIn(key, data)
         
@@ -1048,6 +1049,7 @@ class ProfileViewTests(TestCase):
         self.assertIsInstance(data['full_name'], str)
         self.assertIsInstance(data['is_active'], bool)
         self.assertIsInstance(data['created_at'], str)
+        self.assertIsInstance(data['updated_at'], str)
         
         # Verify UUID format for id
         try:
@@ -1055,8 +1057,8 @@ class ProfileViewTests(TestCase):
         except ValueError:
             self.fail(f"id '{data['id']}' is not a valid UUID")
     
-    def test_profile_requires_get_method(self):
-        """Test that profile endpoint only accepts GET method."""
+    def test_profile_requires_get_or_patch_method(self):
+        """Test that profile endpoint only accepts GET and PATCH methods."""
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
         
         # Test POST method (should return 405)
@@ -1071,6 +1073,139 @@ class ProfileViewTests(TestCase):
         response = self.client.delete(self.profile_url)
         self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
         
-        # Test PATCH method (should return 405 - PATCH /users/me is separate endpoint)
-        response = self.client.patch(self.profile_url, {})
-        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        # Test PATCH method (should be allowed)
+        response = self.client.patch(self.profile_url, {}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    # ===== PATCH /users/me Tests =====
+
+    def test_patch_profile_requires_authentication(self):
+        """Test that unauthenticated PATCH requests return 401."""
+        self.client.credentials()
+        response = self.client.patch(self.profile_url, {'full_name': 'New Name'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_patch_profile_update_full_name_only(self):
+        """Test updating full_name only via PATCH."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        response = self.client.patch(
+            self.profile_url,
+            {'full_name': 'Updated Name'},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data['full_name'], 'Updated Name')
+        self.assertEqual(data['email'], 'profiletest@example.com')
+        # Verify database was updated
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.full_name, 'Updated Name')
+
+    def test_patch_profile_update_email_only(self):
+        """Test updating email only via PATCH."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        response = self.client.patch(
+            self.profile_url,
+            {'email': 'newemail@example.com'},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data['email'], 'newemail@example.com')
+        self.assertEqual(data['full_name'], 'Profile Test User')
+        # Verify database was updated
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.email, 'newemail@example.com')
+
+    def test_patch_profile_update_both_fields(self):
+        """Test updating both full_name and email via PATCH."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        response = self.client.patch(
+            self.profile_url,
+            {'full_name': 'Updated Name', 'email': 'both@example.com'},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data['full_name'], 'Updated Name')
+        self.assertEqual(data['email'], 'both@example.com')
+        # Verify database was updated
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.full_name, 'Updated Name')
+        self.assertEqual(self.user.email, 'both@example.com')
+
+    def test_patch_profile_empty_body_returns_200(self):
+        """Test that empty PATCH body returns 200 with unchanged data."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        response = self.client.patch(self.profile_url, {}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data['full_name'], 'Profile Test User')
+        self.assertEqual(data['email'], 'profiletest@example.com')
+
+    def test_patch_profile_invalid_email_format_returns_400(self):
+        """Test that invalid email format returns 400."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        response = self.client.patch(
+            self.profile_url,
+            {'email': 'not-an-email'},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        data = response.json()
+        self.assertIn('error', data)
+
+    def test_patch_profile_email_conflict_returns_409(self):
+        """Test that email conflict returns 409."""
+        # Create another user with a different email
+        other_user = User.objects.create_user(
+            email='other@example.com',
+            password='SecurePass123!',
+            full_name='Other User'
+        )
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        response = self.client.patch(
+            self.profile_url,
+            {'email': 'other@example.com'},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        data = response.json()
+        self.assertIn('error', data)
+
+    def test_patch_profile_updated_at_changes(self):
+        """Test that updated_at field changes after PATCH."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        original_updated_at = self.user.updated_at
+
+        # Wait a tiny bit to ensure timestamp difference
+        import time
+        time.sleep(0.01)
+
+        response = self.client.patch(
+            self.profile_url,
+            {'full_name': 'Updated Name'},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertIn('updated_at', data)
+        self.assertIsInstance(data['updated_at'], str)
+        # Verify updated_at changed
+        self.user.refresh_from_db()
+        self.assertGreater(self.user.updated_at, original_updated_at)
+
+    def test_patch_profile_response_includes_updated_at(self):
+        """Test that PATCH response includes updated_at field."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
+        response = self.client.patch(
+            self.profile_url,
+            {'full_name': 'Test'},
+            format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        expected_keys = ['id', 'email', 'full_name', 'is_active', 'created_at', 'updated_at']
+        for key in expected_keys:
+            self.assertIn(key, data)

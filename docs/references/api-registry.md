@@ -166,10 +166,6 @@
 
 ---
 
-## Planned Endpoints (Epic E02+)
-
-### Authentication
-
 #### GET /users/me
 **Description:** Get current user profile
 **Auth Required:** Yes
@@ -181,36 +177,52 @@
   "full_name": "John Doe",
   "is_active": true,
   "created_at": "2026-04-18T10:00:00Z",
-  "stats": {
-    "documents_count": 15,
-    "conversations_count": 42,
-    "total_storage_bytes": 524288000
-  }
+  "updated_at": "2026-04-18T10:00:00Z"
 }
 ```
+**Error Responses:**
+- `401 Unauthorized`: No valid authentication token
 
 ---
 
 #### PATCH /users/me
-**Description:** Update user profile
+**Description:** Update current user profile (partial update)
 **Auth Required:** Yes
 **Request Body:**
 ```json
 {
-  "full_name": "John Updated Doe"
+  "full_name": "John Updated Doe",
+  "email": "newemail@example.com"
 }
 ```
+Both fields are optional. At least one should be provided for meaningful updates.
+
 **Response:** `200 OK`
 ```json
 {
   "id": "uuid",
-  "email": "user@example.com",
+  "email": "newemail@example.com",
   "full_name": "John Updated Doe",
+  "is_active": true,
+  "created_at": "2026-04-18T10:00:00Z",
   "updated_at": "2026-04-18T11:00:00Z"
 }
 ```
+**Error Responses:**
+- `400 Bad Request`: Invalid email format, invalid JSON
+- `401 Unauthorized`: No valid authentication token
+- `409 Conflict`: Email already exists
+
+**Notes:**
+- Uses the same endpoint as GET `/users/me` but with PATCH HTTP method
+- Only provided fields are updated (partial update)
+- `updated_at` is automatically updated via model's `auto_now=True`
 
 ---
+
+## Planned Endpoints (Epic E02+)
+
+### Authentication
 
 ## Documents
 

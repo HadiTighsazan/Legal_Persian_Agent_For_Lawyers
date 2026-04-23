@@ -25,6 +25,7 @@ from users.jwt_utils import (
     create_tokens_for_user,
     get_token_hash,
 )
+from users.serializers import ProfileUpdateSerializer
 
 
 @api_view(['POST'])
@@ -297,38 +298,110 @@ def login_view(request: Request) -> Response:
         )
 
 
-@api_view(['GET'])
+@api_view(['GET', 'PATCH'])
 @permission_classes([IsAuthenticated])
 def profile_view(request: Request) -> Response:
     """
-    Get current user profile.
+    Get or update current user profile.
     
     Endpoint: GET /users/me
+    Endpoint: PATCH /users/me
     
-    Response (200 OK):
+    GET Response (200 OK):
     {
         "id": "uuid",
         "email": "user@example.com",
         "full_name": "John Doe",
         "is_active": true,
-        "created_at": "2026-04-18T10:00:00Z"
+        "created_at": "2026-04-18T10:00:00Z",
+        "updated_at": "2026-04-18T10:00:00Z"
+    }
+    
+    PATCH Request Body (partial update):
+    {
+        "full_name": "Updated Name",  # optional
+        "email": "newemail@example.com"  # optional
+    }
+    
+    PATCH Response (200 OK):
+    {
+        "id": "uuid",
+        "email": "newemail@example.com",
+        "full_name": "Updated Name",
+        "is_active": true,
+        "created_at": "2026-04-18T10:00:00Z",
+        "updated_at": "2026-04-18T10:01:00Z"
     }
     
     Error responses:
     - 401 Unauthorized: No valid authentication token
+    - 400 Bad Request: Invalid email format, invalid JSON
+    - 409 Conflict: Email already exists
     """
     user = request.user
     
-    # Prepare user data
-    user_data = {
-        'id': str(user.id),
-        'email': user.email,
-        'full_name': user.full_name,
-        'is_active': user.is_active,
-        'created_at': user.created_at.isoformat() if user.created_at else None,
-    }
+    if request.method == 'GET':
+        # Prepare user data
+        user_data = {
+            'id': str(user.id),
+            'email': user.email,
+            'full_name': user.full_name,
+            'is_active': user.is_active,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
+            'updated_at': user.updated_at.isoformat() if user.updated_at else None,
+        }
+        
+        return Response(user_data, status=status.HTTP_200_OK)
     
-    return Response(user_data, status=status.HTTP_200_OK)
+    elif request.method == 'PATCH':
+        # Validate request data using DRF serializer
+        serializer = ProfileUpdateSerializer(
+            data=request.data,
+            context={'user': user},
+            partial=True,
+        )
+        
+        if not serializer.is_valid():
+            # Extract the first error message
+            errors = serializer.errors
+            first_field = list(errors.keys())[0]
+            first_error = errors[first_field][0]
+            
+            # Determine appropriate HTTP status code
+            error_msg = str(first_error)
+            if 'already exists' in error_msg.lower():
+                return Response(
+                    {'error': error_msg},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            else:
+                return Response(
+                    {'error': error_msg},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        
+        # Apply validated updates
+        validated_data = serializer.validated_data
+        
+        if 'full_name' in validated_data:
+            user.full_name = validated_data['full_name']
+        
+        if 'email' in validated_data:
+            user.email = validated_data['email']
+        
+        user.save()
+        
+        # Prepare response data
+        user_data = {
+            'id': str(user.id),
+            'email': user.email,
+            'full_name': user.full_name,
+            'is_active': user.is_active,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
+            'updated_at': user.updated_at.isoformat() if user.updated_at else None,
+        }
+        
+        return Response(user_data, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
