@@ -32,6 +32,13 @@ class Document(models.Model):
     total_pages = models.IntegerField(null=True, blank=True)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='uploaded')
     error_message = models.TextField(null=True, blank=True)
+    
+    # Document processing pipeline fields
+    processing_status = models.CharField(max_length=20, default='pending')
+    total_chunks = models.IntegerField(default=0)
+    extracted_text_length = models.IntegerField(default=0)
+    processing_error = models.TextField(null=True, blank=True)
+    
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
     

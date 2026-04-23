@@ -34,6 +34,10 @@
 | status | VARCHAR(50) | DEFAULT 'uploaded' | processing status: uploaded, processing, completed, failed |
 | error_message | TEXT | NULL | Error details if failed |
 | **storage_type** | **VARCHAR(20)** | **DEFAULT 'local', INDEXED** | **Storage backend: local / s3 (added in E03-P1)** |
+| **processing_status** | **VARCHAR(20)** | **DEFAULT 'pending'** | **Pipeline processing status: pending, processing, completed, failed (added in E04-T2)** |
+| **total_chunks** | **INTEGER** | **DEFAULT 0** | **Total number of text chunks after splitting (added in E04-T2)** |
+| **extracted_text_length** | **INTEGER** | **DEFAULT 0** | **Length of extracted text in characters (added in E04-T2)** |
+| **processing_error** | **TEXT** | **NULL** | **Error details from pipeline processing (added in E04-T2)** |
 | created_at | TIMESTAMP | DEFAULT NOW() | Upload timestamp |
 | updated_at | TIMESTAMP | DEFAULT NOW() | Last update timestamp |
 
