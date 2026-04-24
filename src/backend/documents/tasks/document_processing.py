@@ -8,6 +8,8 @@ Provides three tasks:
   :class:`~documents.services.chunking_service.ChunkingService`, and persists the
   resulting chunks via bulk create.
 - ``process_document`` — orchestrates the full pipeline as a Celery chain.
+  This is a **regular Python function** (not a Celery task) called directly from
+  the API view to avoid deadlock risks.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ import fitz  # PyMuPDF
 
 from documents.models import Document, DocumentChunk
 from documents.services.chunking_service import ChunkingService
+from documents.storage import get_storage_backend
 from tasks.models import ProcessingTask
 from django.conf import settings
 
@@ -33,6 +36,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Subtask 4a — Extract text from PDF
 # ---------------------------------------------------------------------------
+
 
 @shared_task(bind=True)
 def extract_text_from_pdf(self, document_id: str) -> str:
@@ -87,16 +91,20 @@ def extract_text_from_pdf(self, document_id: str) -> str:
     document.save(update_fields=["processing_status"])
 
     try:
-        # Attempt to open the PDF with full path.
-        pdf_path = os.path.join(settings.MEDIA_ROOT, document.file_path)
+        # Resolve the PDF path using the storage backend.
+        # For local storage, file_path is already an absolute path.
+        # For S3 storage, we'd need to download the file first.
+        if os.path.isabs(document.file_path):
+            pdf_path = document.file_path
+        else:
+            pdf_path = os.path.join(settings.MEDIA_ROOT, document.file_path)
         pdf_document = fitz.open(pdf_path)
     except fitz.FileDataError:
         logger.exception("extract_text_from_pdf: Corrupted PDF for document %s", document_id)
-        _fail_extract(processing_task, document, "PDF file is corrupted")
+        _fail_extract(processing_task, document, "PDF file is corrupted or unreadable")
         return ""
     except Exception:
         logger.exception("extract_text_from_pdf: Failed to open PDF for document %s", document_id)
-        # Distinguish password-protected PDFs (common fitz error message).
         error_msg = str(traceback.format_exc())
         if "password" in error_msg.lower():
             _fail_extract(processing_task, document, "PDF is password-protected")
@@ -183,11 +191,14 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         logger.error("chunk_document: Document %s not found", document_id)
         return
 
-    # Locate the extract ProcessingTask so we can update its status.
-    extract_task = ProcessingTask.objects.filter(
+    # Create a new ProcessingTask for the chunk step.
+    chunk_task = ProcessingTask.objects.create(
         document=document,
-        task_type="extract",
-    ).first()
+        task_type="chunk",
+        celery_task_id=self.request.id,
+        status="running",
+        started_at=timezone.now(),
+    )
 
     # Handle empty text.
     if not extracted_text or not extracted_text.strip():
@@ -196,10 +207,9 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         document.processing_status = "completed"
         document.save(update_fields=["total_chunks", "processing_status"])
 
-        if extract_task:
-            extract_task.status = "completed"
-            extract_task.completed_at = timezone.now()
-            extract_task.save(update_fields=["status", "completed_at"])
+        chunk_task.status = "completed"
+        chunk_task.completed_at = timezone.now()
+        chunk_task.save(update_fields=["status", "completed_at"])
         return
 
     try:
@@ -232,11 +242,10 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         document.processing_status = "completed"
         document.save(update_fields=["total_chunks", "processing_status"])
 
-        # Mark the extract ProcessingTask as completed.
-        if extract_task:
-            extract_task.status = "completed"
-            extract_task.completed_at = timezone.now()
-            extract_task.save(update_fields=["status", "completed_at"])
+        # Mark the chunk ProcessingTask as completed.
+        chunk_task.status = "completed"
+        chunk_task.completed_at = timezone.now()
+        chunk_task.save(update_fields=["status", "completed_at"])
 
         logger.info(
             "chunk_document: Completed chunking for document %s (%d chunks created)",
@@ -248,12 +257,11 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         logger.exception("chunk_document: Failed to chunk document %s", document_id)
         error_message = traceback.format_exc()
 
-        # Update the extract task as failed.
-        if extract_task:
-            extract_task.status = "failed"
-            extract_task.error_message = error_message
-            extract_task.completed_at = timezone.now()
-            extract_task.save(update_fields=["status", "error_message", "completed_at"])
+        # Update the chunk task as failed.
+        chunk_task.status = "failed"
+        chunk_task.error_message = error_message
+        chunk_task.completed_at = timezone.now()
+        chunk_task.save(update_fields=["status", "error_message", "completed_at"])
 
         document.processing_status = "failed"
         document.processing_error = error_message
@@ -263,16 +271,21 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Subtask 4c — Orchestration (Celery chain)
 # ---------------------------------------------------------------------------
+# NOTE: This is a regular Python function, NOT a Celery task.
+# It is called directly from the API view to avoid the deadlock risk of
+# a Celery task submitting more Celery tasks via apply_async().
 
 
-@shared_task(bind=True)
-def process_document(self, document_id: str) -> str | None:
+def process_document(document_id: str) -> str | None:
     """Orchestrate the full document processing pipeline via a Celery chain.
 
     Creates a ``ProcessingTask`` record with ``task_type='extract'`` and
     ``status='pending'``, then builds and executes the chain::
 
         extract_text_from_pdf → chunk_document
+
+    This is a **regular Python function** (not a Celery task). It is called
+    directly from the API view.
 
     Args:
         document_id: The UUID (as a string) of the :class:`Document` to process.
@@ -290,9 +303,9 @@ def process_document(self, document_id: str) -> str | None:
         return None
 
     # Prevent duplicate processing.
-    if document.processing_status == "processing":
+    if document.processing_status in ("processing", "completed"):
         logger.warning(
-            "process_document: Document %s is already being processed — skipping",
+            "process_document: Document %s is already being processed or completed — skipping",
             document_id,
         )
         return None
@@ -305,6 +318,8 @@ def process_document(self, document_id: str) -> str | None:
     )
 
     # Build the Celery chain.
+    # The chain passes the return value of extract_text_from_pdf (extracted text)
+    # as the first positional argument to chunk_document.
     chain_obj = chain(
         extract_text_from_pdf.s(document_id),
         chunk_document.s(document_id),

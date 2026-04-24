@@ -30,7 +30,7 @@ class ProcessingTask(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='processing_tasks')
     task_type = models.CharField(max_length=50, choices=TASK_TYPE_CHOICES)
-    celery_task_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    celery_task_id = models.CharField(max_length=255, null=True, blank=True, db_index=True)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='pending')
     progress = models.IntegerField(default=0)  # 0-100
     result = models.JSONField(null=True, blank=True)

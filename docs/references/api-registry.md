@@ -364,48 +364,72 @@ Both fields are optional. At least one should be provided for meaningful updates
 
 ---
 
-#### POST /documents/{document_id}/process
-**Description:** Start document processing (extract, chunk, embed)  
-**Auth Required:** Yes  
+#### POST /documents/{document_id}/process/
+**Description:** Start document processing (extract, chunk)
+**Auth Required:** Yes
+**Implementation Date:** 2026-04-24
+**View:** `DocumentProcessView`
 **Response:** `202 Accepted`
 ```json
 {
-  "task_id": "uuid",
+  "task_id": "celery_task_id",
   "status": "pending",
-  "message": "Processing started"
+  "document_id": "uuid"
 }
 ```
+**Error Responses:**
+- `400 Bad Request`: Document is already being processed
+- `403 Forbidden`: Document belongs to another user
+- `404 Not Found`: Document does not exist
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies document ownership via `document.user != request.user`
+- Prevents duplicate processing if `processing_status in ("processing", "completed")`
+- Calls `process_document(document_id)` directly (regular Python function, not a Celery task)
+- Returns `202 Accepted` with Celery chain task ID
+- Error responses follow standard format: `{"error": "error_code", "message": "..."}`
 
 ---
 
-#### GET /documents/{document_id}/status
-**Description:** Get document processing status  
-**Auth Required:** Yes  
+#### GET /documents/{document_id}/processing-status/
+**Description:** Get document processing status with per-task details
+**Auth Required:** Yes
+**Implementation Date:** 2026-04-24
+**View:** `DocumentProcessingStatusView`
 **Response:** `200 OK`
 ```json
 {
   "document_id": "uuid",
   "status": "processing",
-  "progress": 45,
+  "progress": 50,
   "tasks": [
     {
       "task_type": "extract",
       "status": "completed",
-      "progress": 100
+      "progress": 100,
+      "error_message": null
     },
     {
       "task_type": "chunk",
       "status": "running",
-      "progress": 60
-    },
-    {
-      "task_type": "embed",
-      "status": "pending",
-      "progress": 0
+      "progress": 60,
+      "error_message": null
     }
   ]
 }
 ```
+**Error Responses:**
+- `403 Forbidden`: Document belongs to another user
+- `404 Not Found`: Document does not exist
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies document ownership
+- Queries `ProcessingTask.objects.filter(document=document).order_by("created_at")`
+- Per-task progress: completed=100, failed=0, running=task.progress, pending=0
+- Overall progress: average of all task progress values (0 if no tasks)
+- Uses `ProcessingStatusSerializer` for response validation
 
 ---
 

@@ -1,69 +1,67 @@
-# WIP Context — Epic E-04, Task 4
+# WIP Context — Epic E-04 Bug Fixes (Tasks 4 & 5)
 
-## What was just completed
-- **Task 4 of Epic E-04 (Celery Tasks for Document Processing)** has been completed, including optimizations and debugging.
-- Created `src/backend/documents/tasks/__init__.py` — exports the three task functions.
-- Created `src/backend/documents/tasks/document_processing.py` with three Celery tasks.
-- Created `src/backend/documents/tests/test_tasks.py` with 18 tests (all passing).
+## What Was Just Completed
 
-### Subtask 4a: `extract_text_from_pdf(document_id)` — `@shared_task(bind=True)`
-- Fetches `Document` by ID; locates the `ProcessingTask` via `filter(document=document, task_type="extract").order_by('-created_at').first()` (fallback: creates one if not found).
-- Sets `ProcessingTask.celery_task_id = self.request.id`, `status='running'`, `started_at=now()`.
-- Sets `Document.processing_status = 'processing'`.
-- Opens PDF via `fitz.open(os.path.join(settings.MEDIA_ROOT, document.file_path))` — uses `MEDIA_ROOT` + relative `file_path`.
-- Checks for password protection by inspecting the error message for "password" keyword.
-- Handles empty PDF (0 pages): marks as completed with `extracted_text_length=0`, returns `""`.
-- Iterates through pages, extracts text with `[PAGE N]\n` markers (N starts from 1), joined by `"\n".join(...)`.
-- Updates `Document.extracted_text_length`, `total_pages`.
-- Marks `ProcessingTask` as `completed` with `completed_at=now()`.
-- **Error handling**: Catches `fitz.FileDataError` → "PDF file is corrupted"; password-protected → "PDF is password-protected"; any other exception → logs full traceback. All failures call `_fail_extract()` which sets both `ProcessingTask` and `Document` to `failed` status.
-- **Return type**: `str` (always returns a string, empty string on failure/empty PDF).
+Applied comprehensive bug fixes to Tasks 4 (Celery Tasks) and 5 (Processing Status API) of Epic E-04. All 12 identified bugs were addressed across 3 phases.
 
-### Subtask 4b: `chunk_document(extracted_text, document_id)` — `@shared_task(bind=True)`
-- Receives `extracted_text` from the previous task in the Celery chain (first positional argument).
-- Locates the extract `ProcessingTask` via `filter(document=document, task_type="extract").first()`.
-- Empty/whitespace-only text → sets `Document.total_chunks=0`, `processing_status='completed'`, marks extract task as completed.
-- Calls `ChunkingService().chunk_text(extracted_text, chunk_size=1000, overlap=200)`.
-- Builds `DocumentChunk` objects using a list comprehension with `enumerate(chunk_results)`.
-- Bulk inserts via `DocumentChunk.objects.bulk_create(chunks_to_create)` inside `transaction.atomic()`.
-- Updates `Document.total_chunks`, `processing_status='completed'`.
-- Updates extract `ProcessingTask` to `status='completed'`, `completed_at=now()`.
-- **Error handling**: Catches any exception → marks both `ProcessingTask` and `Document` as failed with full traceback in `error_message`.
+### Files Modified
 
-### Subtask 4c: `process_document(document_id)` — `@shared_task(bind=True)` (Celery task, not a plain function)
-- **Important architectural decision**: This is a `@shared_task(bind=True)` (not a plain helper function), so it can be called via `.delay()` from API views.
-- Verifies `Document` exists and `processing_status != 'processing'` (prevents duplicate processing).
-- Creates initial `ProcessingTask` with `task_type='extract'`, `status='pending'`.
-- Builds Celery chain: `chain(extract_text_from_pdf.s(document_id), chunk_document.s(document_id))`.
-- Executes chain via `chain_obj.apply_async()`, stores `celery_task_id` on the `ProcessingTask`.
-- Returns the Celery task ID (or `None` on failure/duplicate).
+1. **`src/backend/documents/tasks/document_processing.py`** — Major refactor:
+   - **Bug #2**: Removed `@shared_task(bind=True)` from `process_document` — it's now a regular Python function called directly from the view, eliminating the deadlock risk of a Celery task submitting `apply_async()`.
+   - **Bug #3**: `chunk_document` now creates its own `ProcessingTask` with `task_type="chunk"` instead of reusing/modifying the "extract" task's status.
+   - **Bug #6**: PDF path resolution now checks `os.path.isabs()` first before joining with `MEDIA_ROOT`, fixing the issue for absolute paths returned by local storage.
+   - **Bug #5**: `process_document` now checks for both `"processing"` AND `"completed"` status to prevent duplicate processing.
+   - **Bug #12**: Improved error message for corrupted PDFs to "PDF file is corrupted or unreadable".
 
-### Helper: `_fail_extract(processing_task, document, error_message)`
-- Dedicated helper for marking both `ProcessingTask` and `Document` as failed with the given error message and `completed_at=now()`.
+2. **`src/backend/documents/views.py`** — Major refactor:
+   - **Bug #4**: Removed `.delay()` call since `process_document` is no longer a Celery task. Now calls `process_document()` directly and uses its return value (the chain's task ID).
+   - **Bug #5**: Added check for `"completed"` status alongside `"processing"` to prevent re-processing.
+   - **Bug #7**: Added Celery `AsyncResult` healing mechanism — checks real-time Celery state for tasks stuck at "running"/"pending" and updates DB accordingly.
+   - **Bug #8**: Status view now returns `"pending"` when no ProcessingTasks exist (document hasn't been processed yet), vs using `document.processing_status` directly.
+   - **Bug #10**: Replaced `get_object_or_404` with explicit `try/except Document.DoesNotExist` returning proper JSON error responses.
+   - **Bug #11**: Standardized all error responses to `{"error": "error_code", "message": "..."}` format matching the API registry.
 
-### Key changes from original implementation
-| Aspect | Original | Current (optimized) |
-|--------|----------|---------------------|
-| `process_document` type | Plain function | `@shared_task(bind=True)` |
-| PDF path | `document.file_path` directly | `os.path.join(settings.MEDIA_ROOT, document.file_path)` |
-| ProcessingTask lookup | `document.processing_tasks.get(task_type="extract")` | `filter(...).order_by('-created_at').first()` with fallback create |
-| Empty PDF handling | Falls through to chunking task | Returns `""` immediately, marks as completed |
-| Bulk insert wrapping | No transaction | `transaction.atomic()` |
-| Error traceback | `logger.exception()` only | `traceback.format_exc()` stored in `error_message` |
-| Return type (extract) | `Optional[str]` | `str` (always returns string) |
-| Duplicate processing check | Not present | Added in `process_document` |
-| Tests | Not present | 18 tests in `documents/tests/test_tasks.py` |
+3. **`src/backend/documents/tests/test_tasks.py`** — Updated tests:
+   - **Bug #1**: Fixed `chunk_document` test calls to match the correct argument order: `chunk_document(extracted_text, document_id)`.
+   - **Bug #3**: Added `test_creates_chunk_processing_task` to verify a "chunk" ProcessingTask is created.
+   - **Bug #5**: Added `test_skips_if_already_completed` test.
+   - Updated `process_document` tests since it's no longer a Celery task (no `.delay()` mock needed).
 
-## Current state of the code
-- `src/backend/documents/tasks/__init__.py` — created, exports all three tasks.
-- `src/backend/documents/tasks/document_processing.py` — fully implemented with all three Celery tasks, optimized and debugged.
-- `src/backend/documents/tests/test_tasks.py` — 18 tests, all passing.
-- `src/backend/documents/tests/__init__.py` — created (empty).
-- `src/backend/documents/services/chunking_service.py` — unchanged from Task 3.
-- `src/backend/documents/models.py` — unchanged from Task 2 (has processing pipeline fields).
-- `src/backend/tasks/models.py` — unchanged (has `ProcessingTask` model).
-- `docs/references/database-schema.md` — unchanged.
-- `docs/references/api-registry.md` — unchanged.
+4. **`src/backend/tasks/models.py`** — **Bug #9**: Removed `unique=True` from `celery_task_id`, replaced with `db_index=True`.
 
-## Exact next step to be executed
-- Proceed to Task 5 of Epic E-04 (Processing Status API — views, serializers, URLs).
+5. **`src/backend/tasks/migrations/0002_alter_celery_task_id_unique.py`** — New migration for the `celery_task_id` constraint change.
+
+### Reference Documentation Updated
+
+6. **`docs/references/database-schema.md`** — Updated `celery_task_id` description to reflect removed UNIQUE constraint.
+7. **`docs/references/api-registry.md`** — Updated implementation notes for `POST /documents/{id}/process/` to reflect new behavior.
+
+## Current State of Code
+
+- `process_document` is a regular function (not a Celery task) — called directly from `DocumentProcessView.post()`
+- `chunk_document` creates its own `ProcessingTask` with `task_type="chunk"` and manages its own lifecycle
+- `extract_text_from_pdf` manages the "extract" ProcessingTask as before
+- The Celery chain still works: `extract_text_from_pdf → chunk_document`, with extracted text passed as first arg
+- Error responses follow the API registry format
+- Celery `AsyncResult` healing prevents stale "running" statuses
+- PDF path resolution works for both relative and absolute paths
+
+## Exact Next Step
+
+Run the tests to verify all fixes work correctly:
+
+```bash
+docker-compose exec backend python -m pytest documents/tests/test_tasks.py -v
+```
+
+Then run the full test suite to ensure no regressions:
+
+```bash
+docker-compose exec backend python -m pytest
+```
+
+If tests pass, apply the new migration:
+
+```bash
+docker-compose exec backend python manage.py migrate tasks 0002
+```

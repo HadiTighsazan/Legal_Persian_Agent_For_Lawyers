@@ -113,7 +113,7 @@
 | id | UUID | PRIMARY KEY | Task unique identifier |
 | document_id | UUID | FOREIGN KEY (documents.id) ON DELETE CASCADE | Related document |
 | task_type | VARCHAR(50) | NOT NULL | Task type: extract, chunk, embed |
-| celery_task_id | VARCHAR(255) | UNIQUE, NULL | Celery task ID |
+| celery_task_id | VARCHAR(255) | INDEXED, NULL | Celery task ID (removed UNIQUE constraint in E04-T4 fix) |
 | status | VARCHAR(50) | DEFAULT 'pending' | Task status: pending, running, completed, failed |
 | progress | INTEGER | DEFAULT 0 | Progress percentage (0-100) |
 | result | JSONB | NULL | Task result data |

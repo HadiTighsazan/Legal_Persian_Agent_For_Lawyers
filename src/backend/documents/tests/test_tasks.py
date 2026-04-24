@@ -257,19 +257,16 @@ class ChunkDocumentTests(TestCase):
             processing_status="processing",
         )
 
-        # Create an extract ProcessingTask so chunk_document can find it.
-        self.extract_task = ProcessingTask.objects.create(
-            document=self.document,
-            task_type="extract",
-            celery_task_id="extract-celery-id",
-            status="running",
-            started_at=timezone.now(),
-        )
-
     def _run_task(self, extracted_text: str) -> None:
-        """Run chunk_document synchronously with a mock Celery request."""
+        """Run chunk_document synchronously with a mock Celery request.
+
+        NOTE: The function signature is chunk_document(self, extracted_text, document_id).
+        The Celery chain passes (extracted_text, document_id) — extracted_text comes
+        from the return value of extract_text_from_pdf, and document_id is the
+        immutable chain argument.
+        """
         with _mock_celery_request(chunk_document):
-            chunk_document(str(self.document.id), extracted_text)
+            chunk_document(extracted_text, str(self.document.id))
 
     # -- Happy path -------------------------------------------------------
 
@@ -287,6 +284,21 @@ class ChunkDocumentTests(TestCase):
             self.assertIsNotNone(chunk.content)
             self.assertIsInstance(chunk.token_count, int)
 
+    def test_creates_chunk_processing_task(self) -> None:
+        """A ProcessingTask with task_type='chunk' should be created."""
+        text = "[PAGE 1]\nHello world.\n[PAGE 2]\nMore content here."
+        self._run_task(text)
+
+        # Verify a "chunk" ProcessingTask was created (not reusing "extract").
+        chunk_task = ProcessingTask.objects.get(
+            document=self.document,
+            task_type="chunk",
+        )
+        self.assertEqual(chunk_task.status, "completed")
+        self.assertEqual(chunk_task.celery_task_id, "test-celery-id")
+        self.assertIsNotNone(chunk_task.started_at)
+        self.assertIsNotNone(chunk_task.completed_at)
+
     def test_updates_document_fields(self) -> None:
         """Document.total_chunks and processing_status should be updated."""
         text = "[PAGE 1]\nHello world.\n[PAGE 2]\nMore content here."
@@ -295,15 +307,6 @@ class ChunkDocumentTests(TestCase):
         self.document.refresh_from_db()
         self.assertGreater(self.document.total_chunks, 0)
         self.assertEqual(self.document.processing_status, "completed")
-
-    def test_updates_extract_task_status(self) -> None:
-        """The extract ProcessingTask should be marked completed."""
-        text = "[PAGE 1]\nSome content.\n[PAGE 2]\nMore content."
-        self._run_task(text)
-
-        self.extract_task.refresh_from_db()
-        self.assertEqual(self.extract_task.status, "completed")
-        self.assertIsNotNone(self.extract_task.completed_at)
 
     # -- Empty text -------------------------------------------------------
 
@@ -315,8 +318,12 @@ class ChunkDocumentTests(TestCase):
         self.assertEqual(self.document.total_chunks, 0)
         self.assertEqual(self.document.processing_status, "completed")
 
-        self.extract_task.refresh_from_db()
-        self.assertEqual(self.extract_task.status, "completed")
+        # Verify a chunk task was created and marked completed.
+        chunk_task = ProcessingTask.objects.get(
+            document=self.document,
+            task_type="chunk",
+        )
+        self.assertEqual(chunk_task.status, "completed")
 
     def test_whitespace_only_text_sets_zero_chunks(self) -> None:
         """Whitespace-only text should be treated as empty."""
@@ -339,25 +346,31 @@ class ChunkDocumentTests(TestCase):
         self.assertEqual(self.document.processing_status, "failed")
         self.assertIn("Simulated failure", self.document.processing_error)
 
-        self.extract_task.refresh_from_db()
-        self.assertEqual(self.extract_task.status, "failed")
-        self.assertIn("Simulated failure", self.extract_task.error_message)
+        # Verify the chunk task was marked as failed.
+        chunk_task = ProcessingTask.objects.get(
+            document=self.document,
+            task_type="chunk",
+        )
+        self.assertEqual(chunk_task.status, "failed")
+        self.assertIn("Simulated failure", chunk_task.error_message)
 
     # -- Document not found -----------------------------------------------
 
     def test_nonexistent_document_does_not_raise(self) -> None:
         """If the document does not exist, the task should return gracefully."""
         # Should not raise.
-        chunk_document("00000000-0000-0000-0000-000000000000", "some text")
+        chunk_document("some text", "00000000-0000-0000-0000-000000000000")
 
 
 # ---------------------------------------------------------------------------
 # Tests — process_document (orchestration)
 # ---------------------------------------------------------------------------
+# NOTE: process_document is now a regular Python function (not a Celery task).
+# It is called directly and returns the Celery chain's task ID.
 
 
 class ProcessDocumentTests(TestCase):
-    """Tests for the :func:`process_document` orchestration task."""
+    """Tests for the :func:`process_document` orchestration function."""
 
     def setUp(self) -> None:
         self.user = User.objects.create_user(
@@ -425,6 +438,14 @@ class ProcessDocumentTests(TestCase):
     def test_skips_if_already_processing(self) -> None:
         """If processing_status is 'processing', the task should return None."""
         self.document.processing_status = "processing"
+        self.document.save(update_fields=["processing_status"])
+
+        result = process_document(str(self.document.id))
+        self.assertIsNone(result)
+
+    def test_skips_if_already_completed(self) -> None:
+        """If processing_status is 'completed', the task should return None."""
+        self.document.processing_status = "completed"
         self.document.save(update_fields=["processing_status"])
 
         result = process_document(str(self.document.id))

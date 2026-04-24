@@ -1,9 +1,10 @@
 """
 Serializers for the documents app.
 
-Provides ``DocumentUploadSerializer`` for validating incoming file uploads
-and ``DocumentResponseSerializer`` for formatting document metadata into
-a consistent JSON response.
+Provides ``DocumentUploadSerializer`` for validating incoming file uploads,
+``DocumentResponseSerializer`` for formatting document metadata into
+a consistent JSON response, and processing-status serializers for
+:class:`~documents.views.DocumentProcessingStatusView`.
 """
 
 from rest_framework import serializers
@@ -55,4 +56,41 @@ class DocumentResponseSerializer(serializers.Serializer):
     )
     created_at = serializers.DateTimeField(
         help_text="Timestamp when the document record was created.",
+    )
+
+
+class ProcessingTaskSerializer(serializers.Serializer):
+    """Serialize a single :class:`~tasks.models.ProcessingTask` for the
+    processing-status response."""
+
+    task_type = serializers.CharField(
+        help_text="Type of processing task (extract, chunk, embed).",
+    )
+    status = serializers.CharField(
+        help_text="Current status of the task (pending, running, completed, failed).",
+    )
+    progress = serializers.IntegerField(
+        help_text="Progress percentage (0–100).",
+    )
+    error_message = serializers.CharField(
+        allow_null=True,
+        help_text="Error message if the task failed, or null.",
+    )
+
+
+class ProcessingStatusSerializer(serializers.Serializer):
+    """Serialize the full processing status response for a document."""
+
+    document_id = serializers.UUIDField(
+        help_text="Unique identifier of the document.",
+    )
+    status = serializers.CharField(
+        help_text="Overall processing status of the document.",
+    )
+    progress = serializers.IntegerField(
+        help_text="Aggregated progress percentage (average of all task progress values).",
+    )
+    tasks = ProcessingTaskSerializer(
+        many=True,
+        help_text="List of processing tasks for this document.",
     )
