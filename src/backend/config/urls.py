@@ -21,6 +21,7 @@ from drf_yasg.views import get_schema_view
 from rest_framework import permissions
 
 from core.views import HealthCheckView, LiveCheckView, ReadyCheckView
+from users import views as users_views
 
 # Swagger/OpenAPI schema view
 schema_view = get_schema_view(
@@ -51,7 +52,7 @@ urlpatterns = [
     
     # API v1 endpoints will be added in later tasks
     path('auth/', include('users.urls')),
-    path('users/', include('users.urls')),
+    path('users/me/', users_views.profile_view, name='users-profile'),
     path('documents/', include('documents.urls')),
     # path('api/v1/conversations/', include('conversations.urls', namespace='conversations')),
     # path('api/v1/tasks/', include('tasks.urls', namespace='tasks')),

@@ -83,17 +83,14 @@ class JWTUtilsTest(TestCase):
         self.assertIsNotNone(payload, "Payload should not be None")
         
         # Check payload structure
-        self.assertIn('userId', payload, "Payload should contain userId")
+        self.assertIn('user_id', payload, "Payload should contain user_id")
         self.assertIn('email', payload, "Payload should contain email")
-        self.assertIn('type', payload, "Payload should contain type")
         
         # Check payload values
-        self.assertEqual(str(payload['userId']), str(self.user.id), 
-                        "userId should match user id")
-        self.assertEqual(payload['email'], self.user.email, 
+        self.assertEqual(str(payload['user_id']), str(self.user.id),
+                        "user_id should match user id")
+        self.assertEqual(payload['email'], self.user.email,
                         "email should match user email")
-        self.assertEqual(payload['type'], 'access', 
-                        "type should be 'access'")
     
     def test_generate_refresh_token_creates_valid_token(self):
         """Test that generate_refresh_token creates a valid JWT token."""
@@ -111,17 +108,14 @@ class JWTUtilsTest(TestCase):
         self.assertIsNotNone(payload, "Payload should not be None")
         
         # Check payload structure
-        self.assertIn('userId', payload, "Payload should contain userId")
+        self.assertIn('user_id', payload, "Payload should contain user_id")
         self.assertIn('tokenId', payload, "Payload should contain tokenId")
-        self.assertIn('type', payload, "Payload should contain type")
         
         # Check payload values
-        self.assertEqual(str(payload['userId']), str(self.user.id), 
-                        "userId should match user id")
-        self.assertEqual(str(payload['tokenId']), str(self.token_id), 
+        self.assertEqual(str(payload['user_id']), str(self.user.id),
+                        "user_id should match user id")
+        self.assertEqual(str(payload['tokenId']), str(self.token_id),
                         "tokenId should match provided token id")
-        self.assertEqual(payload['type'], 'refresh', 
-                        "type should be 'refresh'")
     
     def test_access_token_expiration(self):
         """Test that access token expires after specified time."""
@@ -192,23 +186,19 @@ class JWTUtilsTest(TestCase):
         refresh_payload = verify_refresh_token(refresh_token)
         
         # Access token payload checks
-        self.assertEqual(access_payload['type'], 'access', 
-                        "Access token type should be 'access'")
-        self.assertIn('userId', access_payload, 
-                     "Access token should have userId")
-        self.assertIn('email', access_payload, 
+        self.assertIn('user_id', access_payload,
+                     "Access token should have user_id")
+        self.assertIn('email', access_payload,
                      "Access token should have email")
-        self.assertNotIn('tokenId', access_payload, 
+        self.assertNotIn('tokenId', access_payload,
                         "Access token should not have tokenId")
         
         # Refresh token payload checks
-        self.assertEqual(refresh_payload['type'], 'refresh', 
-                        "Refresh token type should be 'refresh'")
-        self.assertIn('userId', refresh_payload, 
-                     "Refresh token should have userId")
-        self.assertIn('tokenId', refresh_payload, 
+        self.assertIn('user_id', refresh_payload,
+                     "Refresh token should have user_id")
+        self.assertIn('tokenId', refresh_payload,
                      "Refresh token should have tokenId")
-        self.assertIn('email', refresh_payload, 
+        self.assertIn('email', refresh_payload,
                      "Refresh token should have email")
     
     def test_default_expiration_times(self):

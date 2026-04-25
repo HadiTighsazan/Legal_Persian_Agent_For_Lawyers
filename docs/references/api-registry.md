@@ -124,9 +124,9 @@
 ---
 
 #### POST /auth/refresh
-**Description:** Refresh JWT access token
+**Description:** Refresh JWT access token (with rotation)
 **Auth Required:** No (requires valid refresh token in body)
-**Implementation Date:** 2026-04-22
+**Implementation Date:** 2026-04-22 (updated 2026-04-25 with rotation)
 **Request Body:**
 ```json
 {
@@ -136,7 +136,8 @@
 **Response:** `200 OK`
 ```json
 {
-  "accessToken": "new_jwt_access_token"
+  "accessToken": "new_jwt_access_token",
+  "refreshToken": "new_jwt_refresh_token"
 }
 ```
 **Error Responses:**
@@ -150,7 +151,9 @@
 - Verifies refresh token JWT signature and payload via `verify_refresh_token()`
 - Looks up token hash in `refresh_tokens` table to ensure it hasn't been revoked
 - Validates token expiry and user active status
-- Generates a new access token (refresh token is NOT rotated)
+- **Refresh token rotation is now implemented**: the old refresh token is revoked (deleted from DB) and a new refresh token is generated and stored
+- Returns both `accessToken` and `refreshToken` in the response
+- Refresh token lifetime is read from `settings.SIMPLE_JWT['REFRESH_TOKEN_LIFETIME']`
 
 ---
 
@@ -209,12 +212,12 @@ curl -X GET http://localhost:8000/users/me/ \
 
 # Response (unauthorized)
 curl -X GET http://localhost:8000/users/me/
-# Returns: {"error": {"message": "Authentication credentials were not provided.", "code": "authentication_failed"}}
+# Returns: {"detail": "Authentication credentials were not provided."}
 ```
 
 **Implementation Notes:**
 - Uses Django REST Framework's `IsAuthenticated` permission class
-- Integrates with existing JWT middleware
+- Authentication is handled by DRF's `JWTAuthentication` (custom `JWTAuthenticationMiddleware` has been removed)
 - Returns ISO 8601 formatted timestamps
 - Follows consistent error response format
 - Note: `stats` field is not yet implemented (planned for future enhancement)
@@ -798,6 +801,27 @@ All endpoints may return these error formats:
 - Pagination uses `page` and `page_size` parameters
 - Authentication via JWT in `Authorization: Bearer <token>` header
 - File uploads limited to 500MB per file
+
+## Configuration Changes (E04-T4-T5 Bug Fixes — 2026-04-25)
+
+### Middleware
+- **Removed:** `users.middleware.JWTAuthenticationMiddleware` from `MIDDLEWARE` in settings.py
+- **Replaced by:** DRF's built-in `JWTAuthentication` in `REST_FRAMEWORK.DEFAULT_AUTHENTICATION_CLASSES`
+- The middleware file (`src/backend/users/middleware.py`) is preserved with a deprecation warning for reference
+
+### Authentication Error Format
+- With DRF's `JWTAuthentication`, unauthorized responses return `{"detail": "..."}` instead of the old middleware's `{"error": "...", "message": "..."}` format
+- This affects all protected endpoints when no valid token is provided
+
+### Token Blacklist
+- **Removed:** `rest_framework_simplejwt.token_blacklist` from `INSTALLED_APPS`
+- Token revocation is handled entirely via the custom `RefreshToken` model (in `refresh_tokens` table)
+- `is_token_blacklisted()` in `jwt_utils.py` now always returns `False` (revocation is checked via DB lookup)
+
+### URL Configuration
+- **Removed:** Duplicate `path('users/', include('users.urls'))` from `config/urls.py`
+- **Added:** Direct `path('users/me/', users_views.profile_view, name='users-profile')` for the profile endpoint
+- The `/users/me/` endpoint is now explicitly defined in the root URL configuration
 - Supported file types: PDF only (initial version)
 - Epic E01 (Health & Infrastructure): Health endpoints implemented and working
 - Epic E02 (Authentication & User Management): All auth endpoints implemented and working

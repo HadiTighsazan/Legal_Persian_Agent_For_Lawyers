@@ -7,7 +7,7 @@
 |--------|------|-------------|-------------|
 | id | UUID | PRIMARY KEY | User unique identifier |
 | email | VARCHAR(255) | UNIQUE, NOT NULL | User email |
-| password | VARCHAR(255) | NOT NULL | Hashed password (Django AbstractBaseUser field) |
+| password | VARCHAR(128) | NOT NULL | Hashed password (Django AbstractBaseUser field, migrated from password_hash in E04-T4-T5) |
 | full_name | VARCHAR(255) | NULL | User full name |
 | is_active | BOOLEAN | DEFAULT TRUE | Account status |
 | is_staff | BOOLEAN | DEFAULT FALSE | Staff access |
@@ -198,5 +198,12 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 - All timestamps in UTC
 - Use CASCADE delete for related records
 - JSONB for flexible metadata storage
+
+### Migration 0002 (E04-T4-T5 Bug Fixes)
+- **File:** `src/backend/users/migrations/0002_rename_password_hash_to_password.py`
+- **Changes:**
+  - Renamed `password_hash` → `password` in `users` table via `RenameField`
+  - Changed `password` column type from `VARCHAR(255)` to `VARCHAR(128)` (Django's standard for `AbstractBaseUser`)
+  - This migration aligns the User model with Django's native `AbstractBaseUser` password handling
 - `refresh_tokens` table created in Epic E02 (Authentication & User Management)
 - `filename` and `storage_type` columns added to `documents` table in Epic E03 Phase 1 (migration `0002_add_storage_fields.py`)

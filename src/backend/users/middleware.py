@@ -1,10 +1,13 @@
 """
-JWT Authentication Middleware for DocuChat.
+DEPRECATED: JWT Authentication Middleware for DocuChat.
 
-This middleware extracts and validates Bearer tokens from the Authorization header,
-attaches the authenticated user to request.user, and returns 401 for invalid tokens.
-Public endpoints like /auth/login/ and /auth/register/ are exempt from authentication.
+This middleware is deprecated. JWT authentication is now handled by
+DRF's `rest_framework_simplejwt.authentication.JWTAuthentication` configured
+in `REST_FRAMEWORK['DEFAULT_AUTHENTICATION_CLASSES']` in settings.py.
+
+This file is kept for reference only and is no longer included in MIDDLEWARE.
 """
+import warnings
 import re
 from typing import Callable, Optional
 
@@ -14,10 +17,20 @@ from django.utils.deprecation import MiddlewareMixin
 from users.jwt_utils import verify_access_token
 from users.models import User
 
+warnings.warn(
+    "JWTAuthenticationMiddleware is deprecated. "
+    "Use DRF's JWTAuthentication via DEFAULT_AUTHENTICATION_CLASSES instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 
 class JWTAuthenticationMiddleware(MiddlewareMixin):
     """
-    Middleware for JWT authentication.
+    DEPRECATED: Middleware for JWT authentication.
+    
+    This middleware is deprecated. JWT authentication is now handled by
+    DRF's `rest_framework_simplejwt.authentication.JWTAuthentication`.
     
     Extracts Bearer token from Authorization header, validates it,
     and attaches the authenticated user to request.user.
@@ -158,8 +171,7 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
             User: User object if found, None otherwise
         """
         try:
-            # Try 'user_id' first (SimpleJWT standard), then 'userId' for backward compatibility
-            user_id = payload.get('user_id') or payload.get('userId')
+            user_id = payload.get('user_id')
             if not user_id:
                 return None
             

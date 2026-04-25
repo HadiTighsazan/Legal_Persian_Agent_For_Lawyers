@@ -122,7 +122,8 @@ def register_view(request: Request) -> Response:
         
         # Store refresh token hash in database
         token_hash = get_token_hash(tokens['refresh_token'])
-        expires_at = timezone.now() + timedelta(days=7)  # 7 days expiry
+        refresh_lifetime = settings.SIMPLE_JWT['REFRESH_TOKEN_LIFETIME']
+        expires_at = timezone.now() + refresh_lifetime
         
         RefreshToken.objects.create_refresh_token(
             user=user,
@@ -262,7 +263,8 @@ def login_view(request: Request) -> Response:
         
         # Store refresh token hash in database
         token_hash = get_token_hash(tokens['refresh_token'])
-        expires_at = timezone.now() + timedelta(days=7)  # 7 days expiry
+        refresh_lifetime = settings.SIMPLE_JWT['REFRESH_TOKEN_LIFETIME']
+        expires_at = timezone.now() + refresh_lifetime
         
         RefreshToken.objects.create_refresh_token(
             user=user,
@@ -451,8 +453,7 @@ def refresh_view(request: Request) -> Response:
             )
         
         # Extract user ID and token ID from payload
-        # Try 'user_id' first (SimpleJWT standard), then 'userId' for backward compatibility
-        user_id = payload.get('user_id') or payload.get('userId')
+        user_id = payload.get('user_id')
         token_id = payload.get('tokenId')
         
         if not user_id or not token_id:
@@ -491,13 +492,32 @@ def refresh_view(request: Request) -> Response:
                     status=status.HTTP_401_UNAUTHORIZED
                 )
             
-            # Generate new access token (same user, same token_id for refresh token)
-            # Note: We're not rotating the refresh token, just generating new access token
+            # Rotate refresh token: revoke old one and issue a new one
+            # Revoke the old refresh token from database
+            db_refresh_token.revoke()
+            
+            # Generate new token ID and new refresh token
+            new_token_id = uuid.uuid4()
+            new_refresh_token = generate_refresh_token(user, new_token_id)
+            
+            # Store new refresh token hash in database
+            new_token_hash = get_token_hash(new_refresh_token)
+            refresh_lifetime = settings.SIMPLE_JWT['REFRESH_TOKEN_LIFETIME']
+            new_expires_at = timezone.now() + refresh_lifetime
+            
+            RefreshToken.objects.create_refresh_token(
+                user=user,
+                token_hash=new_token_hash,
+                expires_at=new_expires_at
+            )
+            
+            # Generate new access token
             access_token = generate_access_token(user)
             
             return Response(
                 {
-                    'accessToken': access_token
+                    'accessToken': access_token,
+                    'refreshToken': new_refresh_token
                 },
                 status=status.HTTP_200_OK
             )

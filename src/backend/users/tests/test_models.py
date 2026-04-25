@@ -57,9 +57,9 @@ class UserModelTest(TestCase):
         )
         
         # Password should not be stored in plain text
-        self.assertNotEqual(user.password_hash, 'plaintextpassword')
+        self.assertNotEqual(user.password, 'plaintextpassword')
         # Password hash should be a valid Django hash
-        self.assertTrue(user.password_hash.startswith('pbkdf2_sha256$'))
+        self.assertTrue(user.password.startswith('pbkdf2_sha256$'))
         
     def test_verify_password_method_exists(self):
         """Test that verify_password method exists (RED test - should fail initially)."""

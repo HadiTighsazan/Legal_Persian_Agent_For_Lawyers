@@ -856,7 +856,8 @@ class LogoutViewTests(TestCase):
         
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
         response_data = response.json()
-        self.assertIn('error', response_data)
+        # DRF returns 'detail' for authentication errors
+        self.assertIn('detail', response_data)
     
     def test_logout_missing_refresh_token_returns_400(self):
         """Test logout without refresh token returns 400 Bad Request."""

@@ -33,9 +33,8 @@ class JWTAuthenticationMiddlewareTests(TestCase):
         
         # Mock payload for valid token
         self.valid_payload = {
-            'userId': str(self.user.id),
+            'user_id': str(self.user.id),
             'email': self.user.email,
-            'type': 'access'
         }
     
     def test_middleware_imports_correctly(self):

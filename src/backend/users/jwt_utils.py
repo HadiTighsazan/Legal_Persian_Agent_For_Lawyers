@@ -12,7 +12,6 @@ from django.conf import settings
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
-from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
 
 from users.models import User
 
@@ -38,12 +37,9 @@ def generate_access_token(user: User, expires_in: Optional[timedelta] = None) ->
     # Create access token
     access_token = AccessToken()
     
-    # Set custom claims as per implementation plan
-    # Use 'user_id' for SimpleJWT compatibility (see settings.SIMPLE_JWT['USER_ID_CLAIM'])
+    # Set custom claims
     access_token['user_id'] = str(user.id)
-    access_token['userId'] = str(user.id)  # Keep for backward compatibility
     access_token['email'] = user.email
-    access_token['type'] = 'access'
     
     # Set expiration
     if expires_in:
@@ -79,13 +75,10 @@ def generate_refresh_token(user: User, token_id: uuid.UUID,
     # Create refresh token
     refresh_token = RefreshToken()
     
-    # Set custom claims as per implementation plan
-    # Use 'user_id' for SimpleJWT compatibility (see settings.SIMPLE_JWT['USER_ID_CLAIM'])
+    # Set custom claims
     refresh_token['user_id'] = str(user.id)
-    refresh_token['userId'] = str(user.id)  # Keep for backward compatibility
     refresh_token['tokenId'] = str(token_id)
     refresh_token['email'] = user.email
-    refresh_token['type'] = 'refresh'
     
     # Set expiration
     if expires_in:
@@ -123,13 +116,9 @@ def verify_access_token(token: str) -> Optional[Dict[str, Any]]:
         payload = access_token.payload
         
         # Validate required claims
-        # Check for 'user_id' (SimpleJWT standard) or 'userId' (backward compatibility)
-        if not ('user_id' in payload or 'userId' in payload):
+        if 'user_id' not in payload:
             return None
-        if not ('email' in payload and 'type' in payload):
-            return None
-        
-        if payload.get('type') != 'access':
+        if 'email' not in payload:
             return None
         
         return payload
@@ -167,13 +156,9 @@ def verify_refresh_token(token: str) -> Optional[Dict[str, Any]]:
         payload = refresh_token.payload
         
         # Validate required claims
-        # Check for 'user_id' (SimpleJWT standard) or 'userId' (backward compatibility)
-        if not ('user_id' in payload or 'userId' in payload):
+        if 'user_id' not in payload:
             return None
-        if not all(key in payload for key in ['tokenId', 'email', 'type']):
-            return None
-        
-        if payload.get('type') != 'refresh':
+        if not all(key in payload for key in ['tokenId', 'email']):
             return None
         
         # Validate tokenId is a valid UUID
@@ -193,27 +178,17 @@ def is_token_blacklisted(token) -> bool:
     """
     Check if a token is blacklisted.
     
+    DEPRECATED: Token revocation is now handled via the RefreshToken database model.
+    This function always returns False as blacklisting is managed through our
+    custom RefreshToken model with database-level revocation.
+    
     Args:
         token: AccessToken or RefreshToken object
     
     Returns:
-        bool: True if token is blacklisted, False otherwise
+        bool: Always False (revocation handled via RefreshToken model)
     """
-    try:
-        # Check if token blacklisting is enabled
-        if not getattr(settings, 'SIMPLE_JWT', {}).get('BLACKLIST_AFTER_ROTATION', False):
-            return False
-        
-        # Check if token is in blacklist
-        jti = token.get('jti')
-        if not jti:
-            return False
-        
-        return BlacklistedToken.objects.filter(token__jti=jti).exists()
-        
-    except Exception:
-        # If any error occurs, assume token is not blacklisted
-        return False
+    return False
 
 
 def get_token_payload(token: str, token_type: str = 'access') -> Optional[Dict[str, Any]]:
