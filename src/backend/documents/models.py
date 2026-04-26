@@ -12,6 +12,28 @@ from users.models import User
 class Document(models.Model):
     """
     Document model representing uploaded files.
+
+    The model has **two** status fields that serve different purposes:
+
+    ``status``
+        The **upload lifecycle** status.  Tracks whether the file has been
+        uploaded, is being processed, is complete, or has failed.  Uses the
+        :attr:`STATUS_CHOICES` enum (``uploaded`` / ``processing`` /
+        ``completed`` / ``failed``).  This is the primary status consumers
+        should check.
+
+    ``processing_status``
+        The **pipeline granular** status.  A free-text field (not constrained
+        by choices) that reflects the state of the document-processing
+        pipeline (``pending``, ``processing``, ``completed``, ``failed``).
+        This field is set by the Celery tasks and is **not** the authoritative
+        status for external consumers — use ``status`` for that.
+
+    **Why two fields?**  The ``status`` field is the source of truth for API
+    responses and external consumers.  The ``processing_status`` field exists
+    for backward compatibility with earlier pipeline logic and is gradually
+    being superseded by the :class:`~tasks.models.ProcessingTask` model, which
+    tracks individual pipeline-step states.
     """
     STATUS_CHOICES = [
         ('uploaded', 'Uploaded'),

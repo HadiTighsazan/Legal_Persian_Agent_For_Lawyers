@@ -20,11 +20,11 @@ from django.utils import timezone
 
 from documents.models import Document, DocumentChunk
 from documents.services.chunking_service import ChunkingService
+from documents.tasks import process_document  # re-exported from services module
 from documents.tasks.document_processing import (
     _handle_chain_error,
     chunk_document,
     extract_text_from_pdf,
-    process_document,
 )
 from tasks.models import ProcessingTask
 from users.models import User
@@ -172,15 +172,17 @@ class ExtractTextFromPdfTests(TestCase):
         self.assertIsNotNone(task.completed_at)
 
     def test_updates_document_fields(self) -> None:
-        """Document.processing_status, extracted_text_length should be updated."""
+        """Document.extracted_text_length and total_pages should be updated."""
         self.document.refresh_from_db()
         self.assertEqual(self.document.processing_status, "pending")
 
         self._run_task()
         self.document.refresh_from_db()
 
-        # Bug #1 fix: extraction now sets processing_status to "completed" on success.
-        self.assertEqual(self.document.processing_status, "completed")
+        # Extraction no longer sets processing_status to "completed" —
+        # that responsibility belongs to chunk_document. The status remains
+        # "processing" (set by process_document before the chain starts).
+        self.assertEqual(self.document.processing_status, "processing")
         self.assertGreater(self.document.extracted_text_length, 0)
         self.assertEqual(self.document.total_pages, 2)
 
@@ -458,7 +460,7 @@ class ProcessDocumentTests(TestCase):
 
     def test_creates_pending_processing_task(self) -> None:
         """A ProcessingTask with status='pending' should be created."""
-        with patch("documents.tasks.document_processing.chain") as mock_chain:
+        with patch("documents.services.processing_service.chain") as mock_chain:
             mock_result = MagicMock()
             mock_result.id = "chain-celery-id-001"
             mock_chain_obj = MagicMock()
@@ -476,7 +478,7 @@ class ProcessDocumentTests(TestCase):
 
     def test_returns_celery_task_id(self) -> None:
         """The function should return the Celery task ID."""
-        with patch("documents.tasks.document_processing.chain") as mock_chain:
+        with patch("documents.services.processing_service.chain") as mock_chain:
             mock_result = MagicMock()
             mock_result.id = "chain-celery-id-002"
             mock_chain_obj = MagicMock()
@@ -488,7 +490,7 @@ class ProcessDocumentTests(TestCase):
 
     def test_builds_celery_chain(self) -> None:
         """Verify that chain() is called with the correct tasks."""
-        with patch("documents.tasks.document_processing.chain") as mock_chain:
+        with patch("documents.services.processing_service.chain") as mock_chain:
             mock_result = MagicMock()
             mock_result.id = "chain-celery-id-003"
             mock_chain_obj = MagicMock()
@@ -525,7 +527,7 @@ class ProcessDocumentTests(TestCase):
 
     def test_passes_link_error_to_apply_async(self) -> None:
         """The chain should be submitted with a link_error callback."""
-        with patch("documents.tasks.document_processing.chain") as mock_chain:
+        with patch("documents.services.processing_service.chain") as mock_chain:
             mock_result = MagicMock()
             mock_result.id = "chain-celery-id-link-error"
             mock_chain_obj = MagicMock()

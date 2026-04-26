@@ -8,11 +8,8 @@ for the document processing pipeline (Epic E-04, Task 5).
 """
 
 import logging
-from django.utils import timezone
 
-from celery import current_app as celery_app
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.http import Http404
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
@@ -24,6 +21,11 @@ from documents.serializers import (
     DocumentResponseSerializer,
     DocumentUploadSerializer,
     ProcessingStatusSerializer,
+)
+from documents.services.processing_service import (
+    build_task_data,
+    compute_display_status,
+    compute_overall_progress,
 )
 from documents.services.upload_service import upload_document
 from documents.storage.base import StorageError
@@ -143,17 +145,21 @@ class DocumentProcessView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Prevent duplicate processing (both in-progress and already-completed).
-        if document.processing_status in ("processing", "completed"):
+        # Trigger the Celery chain via the process_document helper.
+        # process_document is a regular Python function (not a Celery task),
+        # so we call it directly. It returns the Celery chain's task ID,
+        # or None if the document is already being processed or completed.
+        task_id = process_document(str(document.id))
+
+        if task_id is None:
+            # process_document returned None — the document is already being
+            # processed or has already been completed. This check is delegated
+            # to process_document() to avoid a race window between the view's
+            # check and the actual task creation.
             return Response(
                 {"error": "bad_request", "message": "Document is already being processed or has been processed"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        # Trigger the Celery chain via the process_document helper.
-        # process_document is a regular Python function (not a Celery task),
-        # so we call it directly. It returns the Celery chain's task ID.
-        task_id = process_document(str(document.id))
 
         logger.info(
             "Processing triggered for document %s (celery_task_id=%s)",
@@ -208,60 +214,12 @@ class DocumentProcessingStatusView(APIView):
             document=document,
         ).order_by("created_at")
 
-        # Build task list with progress rules and Celery AsyncResult healing.
-        task_data = []
-        for task in tasks:
-            # Check Celery AsyncResult for real-time state if we have a task ID.
-            if task.celery_task_id and task.status in ("running", "pending"):
-                try:
-                    async_result = celery_app.AsyncResult(task.celery_task_id)
-                    celery_state = async_result.state
-                    # Heal stale DB state based on Celery's actual state.
-                    if celery_state == "FAILURE" and task.status != "failed":
-                        task.status = "failed"
-                        task.error_message = task.error_message or "Task failed (detected via Celery AsyncResult)"
-                        task.completed_at = timezone.now()
-                        task.save(update_fields=["status", "error_message", "completed_at"])
-                    elif celery_state == "REVOKED" and task.status != "cancelled":
-                        task.status = "cancelled"
-                        task.completed_at = timezone.now()
-                        task.save(update_fields=["status", "completed_at"])
-                except Exception:
-                    logger.warning(
-                        "Failed to check AsyncResult for task %s", task.celery_task_id,
-                        exc_info=True,
-                    )
+        # Build task data with AsyncResult healing applied.
+        task_data = build_task_data(list(tasks))
 
-            if task.status == "completed":
-                progress = 100
-            elif task.status == "failed":
-                progress = 0
-            elif task.status == "running":
-                progress = task.progress
-            else:  # pending or cancelled
-                progress = 0
-
-            task_data.append(
-                {
-                    "task_type": task.task_type,
-                    "status": task.status,
-                    "progress": progress,
-                    "error_message": task.error_message,
-                }
-            )
-
-        # Calculate overall progress (average of all task progress values).
-        if task_data:
-            overall_progress = sum(t["progress"] for t in task_data) // len(task_data)
-        else:
-            overall_progress = 0
-
-        # Determine the top-level status.
-        # If no tasks exist, the document hasn't been processed yet.
-        if not task_data:
-            display_status = "pending"
-        else:
-            display_status = document.processing_status
+        # Compute derived values from task states.
+        display_status = compute_display_status(task_data)
+        overall_progress = compute_overall_progress(task_data)
 
         # Build and validate the response via serializer.
         response_data = {

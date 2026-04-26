@@ -2,74 +2,72 @@
 
 ## What Was Just Completed
 
-Applied the 6 issues identified in the Task 4 code review to [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py) and [`src/backend/documents/tests/test_tasks.py`](src/backend/documents/tests/test_tasks.py).
+**Phase 3 (Cleanup) of the Task 5 refactoring plan** — 3 changes across 4 files.
 
-### 🔴 Bug #1 Fixed: `extract_text_from_pdf` now sets `processing_status = "completed"` on success
+### Change #8: Moved `process_document` to services module
 
-**File:** [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py:149-153)
+**Files:**
+- [`src/backend/documents/services/processing_service.py`](src/backend/documents/services/processing_service.py:174) — Added `process_document()` function with lazy imports to avoid circular deps
+- [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py) — Removed `process_document` function body, replaced with docstring noting the move
+- [`src/backend/documents/tasks/__init__.py`](src/backend/documents/tasks/__init__.py) — Updated to re-export `process_document` from the service module for backward compatibility
 
-**Change:** Added `document.processing_status = "completed"` to the `save(update_fields=...)` call at line 152-153 (both the normal extraction path and the empty-PDF path at line 131). Previously, extraction only set `processing_status = "processing"` at start and never updated it to `"completed"`, which meant that if chunking subsequently failed, the document would remain stuck at `"processing"`.
+**Rationale:** `process_document` is a regular Python function (not a Celery task), so it belongs in the services layer alongside the other processing-service functions. The tasks module should only contain actual Celery tasks (`@shared_task`). A backward-compatible re-export via `tasks/__init__.py` ensures no import breakage for existing callers.
 
-### 🔴 Bug #2 Fixed: `chunk_document` no longer overwrites `"failed"` status
-
-**File:** [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py:231-278)
-
-**Change:** Both the empty-text handler (line 234) and the successful-chunking path (line 274) now check `if document.processing_status != "failed"` before setting `processing_status = "completed"`. If the document was already marked as `"failed"` by `_fail_extract()` (e.g., corrupted PDF), the failed status is preserved and only `total_chunks` is saved.
-
-### 🟡 Design Concern #1 Fixed: `link_error` callback on the Celery chain
-
-**File:** [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py:314-421)
-
-**Change:**
-- Added a new [`_handle_chain_error`](src/backend/documents/tasks/document_processing.py:314) shared task that acts as a `link_error` callback. It finds the most recent `pending`/`running` `ProcessingTask` for the document and marks it as `"failed"`, and also marks the document as `"failed"` if not already in a terminal state.
-- [`process_document`](src/backend/documents/tasks/document_processing.py:364) now passes `link_error=[_handle_chain_error.s(document_id, task_type="extract")]` to `chain_obj.apply_async()`.
-
-### 🟡 Design Concern #2 Fixed: Retry mechanism for transient failures
-
-**File:** [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py:41-48, 187-194)
-
-**Change:** Both [`extract_text_from_pdf`](src/backend/documents/tasks/document_processing.py:41) and [`chunk_document`](src/backend/documents/tasks/document_processing.py:187) now use:
+**Circular import handling:** The function uses lazy imports inside its body:
 ```python
-@shared_task(
-    bind=True,
-    autoretry_for=(IntegrityError, OperationalError, ConnectionError, TimeoutError),
-    max_retries=3,
-    retry_backoff=True,
-    retry_backoff_max=60,
-    retry_jitter=True,
+from documents.tasks.document_processing import (
+    _handle_chain_error, chunk_document, extract_text_from_pdf,
 )
 ```
-Transient DB/storage errors are retried up to 3 times with exponential backoff (max 60s). Permanent PDF errors (corrupted, password-protected) are still caught and fail immediately without retry.
+This avoids the circular dependency: `processing_service → tasks.document_processing → processing_service`.
 
-### 🟡 Test Gap #1 Filled: Extract-success + chunk-failure scenario
+### Change #9: Documented `status` vs `processing_status` in model docstring
 
-**File:** [`src/backend/documents/tests/test_tasks.py`](src/backend/documents/tests/test_tasks.py:398-422)
+**File:** [`src/backend/documents/models.py`](src/backend/documents/models.py:12)
 
-**Test:** [`test_extract_success_then_chunk_failure_sets_failed_status`](src/backend/documents/tests/test_tasks.py:398) — Sets `processing_status = "completed"` (simulating successful extraction), then runs `chunk_document` with a mocked `ChunkingService` that raises. Verifies the document ends up as `"failed"` (not stuck at `"processing"` or incorrectly `"completed"`).
+Updated the `Document` model docstring to clarify the distinction between the two status fields:
 
-### 🟡 Test Gap #2 Filled: Extract-fail + chunk-on-empty scenario
+| Field | Purpose | Values |
+|-------|---------|--------|
+| `status` | Upload lifecycle — source of truth for API consumers | `uploaded`, `processing`, `completed`, `failed` (choices) |
+| `processing_status` | Pipeline granular state — set by Celery tasks, being superseded by `ProcessingTask` model | `pending`, `processing`, `completed`, `failed` (free text) |
 
-**File:** [`src/backend/documents/tests/test_tasks.py`](src/backend/documents/tests/test_tasks.py:360-394)
+### Change #10: Added serializer unit tests
 
-**Tests:**
-- [`test_does_not_overwrite_failed_status_on_empty_text`](src/backend/documents/tests/test_tasks.py:360) — Sets `processing_status = "failed"`, runs `chunk_document("")`, verifies status remains `"failed"` and `processing_error` is preserved.
-- [`test_does_not_overwrite_failed_status_on_successful_chunking`](src/backend/documents/tests/test_tasks.py:382) — Same setup but with valid text; verifies `"failed"` status is preserved even when chunking succeeds.
+**New file:** [`src/backend/documents/tests/test_serializers.py`](src/backend/documents/tests/test_serializers.py)
 
-### Additional Test Coverage
+Added **28 test cases** across 4 test classes:
 
-- [`test_passes_link_error_to_apply_async`](src/backend/documents/tests/test_tasks.py:526) — Verifies `process_document` passes `link_error` to `chain_obj.apply_async()`.
-- **`HandleChainErrorTests`** class (6 tests) — Comprehensive tests for the `_handle_chain_error` callback: marks pending/running tasks as failed, marks document as failed, does not overwrite terminal document status, handles nonexistent document gracefully.
+| Test Class | Tests | Coverage |
+|-----------|-------|----------|
+| `DocumentUploadSerializerTests` | 4 | Valid file, missing file, null file, help_text |
+| `DocumentResponseSerializerTests` | 7 | Valid data, serialized output, missing id/title/status, invalid UUID, help_text on all fields |
+| `ProcessingTaskSerializerTests` | 8 | Valid data, serialized output, error_message as string, missing task_type/status/progress, non-integer progress, help_text on all fields |
+| `ProcessingStatusSerializerTests` | 9 | Valid data, serialized output, missing document_id/status/progress/tasks, empty tasks list, invalid task entry, help_text on all fields |
 
-### Updated Existing Test
+### Additional Fix: Updated `test_tasks.py` imports and mock paths
 
-- [`test_updates_document_fields`](src/backend/documents/tests/test_tasks.py:174) — Now expects `processing_status = "completed"` (was `"processing"`) after successful extraction, reflecting Bug #1 fix.
+**File:** [`src/backend/documents/tests/test_tasks.py`](src/backend/documents/tests/test_tasks.py)
 
-### Files Modified
+- Updated `process_document` import from `documents.tasks.document_processing` to `documents.tasks` (re-export)
+- Updated mock paths from `documents.tasks.document_processing.chain` to `documents.services.processing_service.chain` (since `process_document` now lives in the service module)
+- Updated `test_updates_document_fields` assertion: `processing_status` is now `"processing"` (not `"completed"`) after extraction alone, since `chunk_document` is responsible for setting the terminal status
+
+### Files Modified/Created
 
 | File | Change |
 |------|--------|
-| `src/backend/documents/tasks/document_processing.py` | Bug #1, Bug #2, Design #1 (link_error), Design #2 (retry) |
-| `src/backend/documents/tests/test_tasks.py` | Test Gap #1, Test Gap #2, link_error tests, `_handle_chain_error` tests, updated existing test |
+| `src/backend/documents/services/processing_service.py` | Added `process_document()` function with lazy imports |
+| `src/backend/documents/tasks/document_processing.py` | Removed `process_document` body, replaced with docstring |
+| `src/backend/documents/tasks/__init__.py` | Re-export `process_document` from service module |
+| `src/backend/documents/models.py` | Updated `Document` docstring with `status` vs `processing_status` clarification |
+| `src/backend/documents/tests/test_serializers.py` | **NEW** — 28 serializer unit tests |
+| `src/backend/documents/tests/test_tasks.py` | Updated imports, mock paths, and assertion for new `process_document` location |
+
+### Test Results
+
+- **All 83 tests pass** (0 failures, 0 errors)
+- Tests run via: `docker-compose exec backend python -m pytest documents/tests/ --ds=config.settings`
 
 ---
 
@@ -138,12 +136,14 @@ Transient DB/storage errors are retried up to 3 times with exponential backoff (
 
 ## Current State of Code
 
-- `process_document` is a regular function (not a Celery task) — called directly from `DocumentProcessView.post()`
+- `process_document` is a regular function (not a Celery task) — now lives in `documents/services/processing_service.py`, called directly from `DocumentProcessView.post()`
 - `chunk_document` creates its own `ProcessingTask` with `task_type="chunk"` and manages its own lifecycle
-- `extract_text_from_pdf` manages the "extract" ProcessingTask as before
+- `extract_text_from_pdf` manages the "extract" ProcessingTask — uses `status="pending"` lookup for robustness
 - The Celery chain still works: `extract_text_from_pdf → chunk_document`, with extracted text passed as first arg
-- **Bug #1 fixed**: `extract_text_from_pdf` now sets `document.processing_status = "completed"` on success
-- **Bug #2 fixed**: `chunk_document` preserves `processing_status = "failed"` if extraction already failed
+- **Phase 1 bugs fixed**: `None` return handled, premature `processing_status` removed, `display_status` computed from tasks, redundant check removed
+- **Phase 2 architecture**: `AsyncResult` healing extracted to `processing_service.py`, view is ~20 lines, 25 new test cases
+- **Phase 3 cleanup**: `process_document` moved to services module, model docstring clarifies `status` vs `processing_status`, 28 serializer unit tests added
+- **Bug #2 (original) fixed**: `chunk_document` preserves `processing_status = "failed"` if extraction already failed
 - **Design #1 fixed**: `_handle_chain_error` callback catches chain-level failures via `link_error`
 - **Design #2 fixed**: Both tasks have `autoretry_for` with exponential backoff for transient DB/storage errors
 - Error responses follow the API registry format
@@ -156,7 +156,9 @@ Transient DB/storage errors are retried up to 3 times with exponential backoff (
 
 ## Exact Next Step
 
-Run the tests to verify all changes pass. Expected command:
+All 3 phases of the Task 5 refactoring plan are complete. The full documents test suite (83 tests) and users test suite (117 tests) both pass.
+
+To verify:
 ```
-docker-compose exec backend python -m pytest documents/tests/test_tasks.py --ds=config.settings --reuse-db -v
+docker-compose exec backend python -m pytest documents/tests/ users/tests/ --ds=config.settings
 ```
