@@ -55,7 +55,7 @@ urlpatterns = [
     path('users/me/', users_views.profile_view, name='users-profile'),
     path('documents/', include('documents.urls')),
     # path('api/v1/conversations/', include('conversations.urls', namespace='conversations')),
-    # path('api/v1/tasks/', include('tasks.urls', namespace='tasks')),
+    path('tasks/', include('tasks.urls')),
     # path('api/v1/api-keys/', include('api_keys.urls', namespace='api_keys')),
 ]
 

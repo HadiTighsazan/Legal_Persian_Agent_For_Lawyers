@@ -2,7 +2,7 @@
 URL configuration for the documents app.
 
 Registers the ``upload/``, ``process/``, ``processing-status/``, ``chunks/``,
-``embed/``, ``batch-embed/``, ``re-embed/``, and ``tasks/`` routes.
+``embed/``, ``batch-embed/``, ``re-embed/``, and ``retry/`` routes.
 """
 
 from django.urls import path
@@ -16,7 +16,6 @@ from documents.views import (
     DocumentProcessingStatusView,
     DocumentUploadView,
     ProcessingTaskRetryView,
-    TaskStatusView,
 )
 
 app_name = "documents"
@@ -57,10 +56,5 @@ urlpatterns = [
         "chunks/<uuid:chunk_id>/re-embed/",
         ChunkReEmbedView.as_view(),
         name="chunk-re-embed",
-    ),
-    path(
-        "tasks/<uuid:task_id>/",
-        TaskStatusView.as_view(),
-        name="task-status",
     ),
 ]

@@ -1207,7 +1207,7 @@ class TaskStatusViewTests(TestCase):
             started_at=timezone.now(),
         )
         self.url = reverse(
-            "documents:task-status",
+            "tasks:task-status",
             kwargs={"task_id": self.task.id},
         )
 
@@ -1216,7 +1216,7 @@ class TaskStatusViewTests(TestCase):
     def test_nonexistent_task_returns_404(self) -> None:
         """GET for a non-existent task ID should return 404."""
         url = reverse(
-            "documents:task-status",
+            "tasks:task-status",
             kwargs={"task_id": uuid.uuid4()},
         )
         response = self.client.get(url, **_auth_header(self.user))
