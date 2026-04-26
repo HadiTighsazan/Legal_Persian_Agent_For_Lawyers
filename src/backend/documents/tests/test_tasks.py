@@ -5,6 +5,7 @@ Covers:
 - :func:`~documents.tasks.document_processing.extract_text_from_pdf`
 - :func:`~documents.tasks.document_processing.chunk_document`
 - :func:`~documents.tasks.document_processing.process_document`
+- :func:`~documents.tasks.embedding_tasks.embed_document`
 """
 
 from __future__ import annotations
@@ -742,3 +743,270 @@ class HandleChainErrorTests(TestCase):
         """If the document does not exist, the callback should return gracefully."""
         # Should not raise.
         self._run_callback(document_id="00000000-0000-0000-0000-000000000000")
+
+
+# ---------------------------------------------------------------------------
+# Tests — embed_document (embedding_tasks)
+# ---------------------------------------------------------------------------
+
+
+class EmbedDocumentTaskTests(TestCase):
+    """Tests for the :func:`embed_document` task in :mod:`documents.tasks.embedding_tasks`."""
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="embed@example.com",
+            password="testpass123",
+        )
+
+        self.document = Document.objects.create(
+            user=self.user,
+            title="Embed Test Doc",
+            filename="embed_test.pdf",
+            original_filename="embed_test.pdf",
+            file_path="/tmp/fake.pdf",
+            file_size=1000,
+            mime_type="application/pdf",
+            processing_status="completed",
+        )
+
+        self.processing_task = ProcessingTask.objects.create(
+            document=self.document,
+            task_type="embed",
+            status="pending",
+        )
+
+    def _run_task(self, document_id: str | None = None, task_id: str | None = None) -> None:
+        """Run embed_document synchronously with a mock Celery request."""
+        from documents.tasks.embedding_tasks import embed_document
+
+        with _mock_celery_request(embed_document):
+            embed_document(
+                document_id or str(self.document.id),
+                task_id or str(self.processing_task.id),
+            )
+
+    def _create_chunks(self, count: int, has_embedding: bool = False) -> list:
+        """Create *count* DocumentChunk records for the test document."""
+        chunks = []
+        for i in range(count):
+            chunk = DocumentChunk.objects.create(
+                document=self.document,
+                chunk_index=i,
+                content=f"Test chunk content {i}." * 20,
+                token_count=50,
+                embedding=None if not has_embedding else [0.1] * 1536,
+            )
+            chunks.append(chunk)
+        return chunks
+
+    # -- Happy path -------------------------------------------------------
+
+    def test_successful_embedding(self) -> None:
+        """3 un-embedded chunks → all get embeddings, task → completed."""
+        self._create_chunks(3)
+
+        with patch(
+            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            return_value=[[0.1] * 1536, [0.2] * 1536, [0.3] * 1536],
+        ):
+            self._run_task()
+
+        self.processing_task.refresh_from_db()
+        self.assertEqual(self.processing_task.status, "completed")
+        self.assertEqual(self.processing_task.progress, 100)
+        self.assertIsNotNone(self.processing_task.completed_at)
+
+        # Verify all chunks got embeddings.
+        chunks = DocumentChunk.objects.filter(document=self.document).order_by("chunk_index")
+        for chunk in chunks:
+            self.assertIsNotNone(chunk.embedding)
+            self.assertEqual(len(chunk.embedding), 1536)
+
+    def test_no_unembedded_chunks(self) -> None:
+        """All chunks already embedded → task completes immediately."""
+        self._create_chunks(2, has_embedding=True)
+
+        with patch(
+            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+        ) as mock_embed:
+            self._run_task()
+
+        # batch_generate_embeddings should NOT have been called.
+        mock_embed.assert_not_called()
+
+        self.processing_task.refresh_from_db()
+        self.assertEqual(self.processing_task.status, "completed")
+        self.assertEqual(self.processing_task.progress, 100)
+
+    def test_empty_document_no_chunks(self) -> None:
+        """Document with 0 chunks → task completes immediately."""
+        with patch(
+            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+        ) as mock_embed:
+            self._run_task()
+
+        mock_embed.assert_not_called()
+
+        self.processing_task.refresh_from_db()
+        self.assertEqual(self.processing_task.status, "completed")
+        self.assertEqual(self.processing_task.progress, 100)
+
+    # -- Error handling ---------------------------------------------------
+
+    def test_processing_task_not_found(self) -> None:
+        """Invalid task_id → logs error, returns gracefully."""
+        # Should not raise.
+        self._run_task(task_id="00000000-0000-0000-0000-000000000000")
+
+        # ProcessingTask should still be "pending" (no update happened).
+        self.processing_task.refresh_from_db()
+        self.assertEqual(self.processing_task.status, "pending")
+
+    def test_document_not_found(self) -> None:
+        """Invalid document_id → task marked as failed."""
+        self._run_task(document_id="00000000-0000-0000-0000-000000000000")
+
+        self.processing_task.refresh_from_db()
+        self.assertEqual(self.processing_task.status, "failed")
+        self.assertIn("not found", self.processing_task.error_message.lower())
+        self.assertIsNotNone(self.processing_task.completed_at)
+
+    def test_partial_batch_failures(self) -> None:
+        """Some embeddings fail → remaining chunks still get embeddings."""
+        self._create_chunks(3)
+
+        # Return None for the second chunk (simulating API failure).
+        with patch(
+            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            return_value=[[0.1] * 1536, None, [0.3] * 1536],
+        ):
+            self._run_task()
+
+        self.processing_task.refresh_from_db()
+        self.assertEqual(self.processing_task.status, "completed")
+        self.assertEqual(self.processing_task.progress, 100)
+
+        chunks = DocumentChunk.objects.filter(document=self.document).order_by("chunk_index")
+        self.assertIsNotNone(chunks[0].embedding)
+        self.assertIsNone(chunks[1].embedding)
+        self.assertIsNotNone(chunks[2].embedding)
+
+    def test_task_marked_failed_on_error(self) -> None:
+        """API error → task marked as failed with error_message."""
+        self._create_chunks(2)
+
+        with patch(
+            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            side_effect=ValueError("OpenAI API connection failed"),
+        ):
+            self._run_task()
+
+        self.processing_task.refresh_from_db()
+        self.assertEqual(self.processing_task.status, "failed")
+        self.assertIn("OpenAI API connection failed", self.processing_task.error_message)
+        self.assertIsNotNone(self.processing_task.completed_at)
+
+    # -- Progress tracking ------------------------------------------------
+
+    def test_progress_updates(self) -> None:
+        """Verify progress goes from 0 → 50 → 100 for 2 batches of 50 chunks each."""
+        # Create 100 chunks (2 batches of 50).
+        self._create_chunks(100)
+
+        embeddings = [[float(i)] * 1536 for i in range(100)]
+
+        with patch(
+            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            side_effect=lambda texts: [embeddings.pop(0) for _ in texts],
+        ):
+            self._run_task()
+
+        self.processing_task.refresh_from_db()
+        self.assertEqual(self.processing_task.status, "completed")
+        self.assertEqual(self.processing_task.progress, 100)
+
+        # Verify all chunks got embeddings.
+        chunks = DocumentChunk.objects.filter(
+            document=self.document,
+            embedding__isnull=True,
+        )
+        self.assertEqual(chunks.count(), 0)
+
+    def test_single_batch_progress(self) -> None:
+        """A single batch (< 50 chunks) should go from 0 → 100."""
+        self._create_chunks(25)
+
+        with patch(
+            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            return_value=[[0.1] * 1536] * 25,
+        ):
+            self._run_task()
+
+        self.processing_task.refresh_from_db()
+        self.assertEqual(self.processing_task.status, "completed")
+        self.assertEqual(self.processing_task.progress, 100)
+
+    # -- Celery task lifecycle --------------------------------------------
+
+    def test_sets_celery_task_id(self) -> None:
+        """The celery_task_id should be set to the mock request ID."""
+        self._create_chunks(1)
+
+        with patch(
+            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            return_value=[[0.1] * 1536],
+        ):
+            self._run_task()
+
+        self.processing_task.refresh_from_db()
+        self.assertEqual(self.processing_task.celery_task_id, "test-celery-id")
+
+    def test_sets_started_at(self) -> None:
+        """The started_at timestamp should be set when task begins running."""
+        self._create_chunks(1)
+
+        with patch(
+            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            return_value=[[0.1] * 1536],
+        ):
+            self._run_task()
+
+        self.processing_task.refresh_from_db()
+        self.assertIsNotNone(self.processing_task.started_at)
+
+    # -- Edge cases -------------------------------------------------------
+
+    def test_exactly_one_batch(self) -> None:
+        """Exactly SUB_BATCH_SIZE (50) chunks → processed in a single batch."""
+        self._create_chunks(50)
+
+        with patch(
+            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            return_value=[[0.1] * 1536] * 50,
+        ) as mock_embed:
+            self._run_task()
+
+        # batch_generate_embeddings should have been called exactly once.
+        self.assertEqual(mock_embed.call_count, 1)
+
+        self.processing_task.refresh_from_db()
+        self.assertEqual(self.processing_task.status, "completed")
+        self.assertEqual(self.processing_task.progress, 100)
+
+    def test_uneven_batch(self) -> None:
+        """75 chunks (1.5 batches) → processed correctly with 2 batch calls."""
+        self._create_chunks(75)
+
+        with patch(
+            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            return_value=[[0.1] * 1536] * 75,
+        ) as mock_embed:
+            self._run_task()
+
+        # batch_generate_embeddings should have been called twice.
+        self.assertEqual(mock_embed.call_count, 2)
+
+        self.processing_task.refresh_from_db()
+        self.assertEqual(self.processing_task.status, "completed")
+        self.assertEqual(self.processing_task.progress, 100)

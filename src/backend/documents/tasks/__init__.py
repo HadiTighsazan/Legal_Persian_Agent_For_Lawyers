@@ -1,4 +1,5 @@
-from .document_processing import chunk_document, embed_document, extract_text_from_pdf
+from .document_processing import chunk_document, extract_text_from_pdf
+from .embedding_tasks import embed_document  # ← NEW: from new module
 
 # process_document is a regular Python function (not a Celery task) that has
 # been moved to documents.services.processing_service. It is re-exported here
