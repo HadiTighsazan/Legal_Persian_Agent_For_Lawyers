@@ -1,29 +1,34 @@
-# WIP Context — Task 1 of Epic E-05 (Embedding & Vector Storage)
+# WIP Context — Task 2 of Epic E-05 (Embedding & Vector Storage)
 
 ## Status: ✅ COMPLETED
 
 ## What Was Completed
 
-### Source Code Changes
-1. **`src/backend/requirements.txt`** — Added `openai>=1.0.0` and `pgvector>=0.2.0` under new `# AI & Embeddings` section
-2. **`src/backend/config/settings.py`** — Added `'pgvector.django'` to `INSTALLED_APPS` (after `django_filters`)
-3. **`src/backend/documents/models.py`** — Added `from pgvector.django import VectorField` import; changed `embedding` from `TextField` to `VectorField(dimensions=1536, null=True, blank=True)`
-4. **`docker/backend/Dockerfile`** — Added `extra-index-url https://pypi.org/simple` as fallback (since `pgvector` is not on the Liara mirror)
+### Source Code Created
+1. **`src/backend/documents/services/embedding_service.py`** — Core embedding service with 5 functions:
+   - `generate_embedding(text)` — Single text embedding with exponential backoff retry (3 retries, 2^retry seconds)
+   - `batch_generate_embeddings(texts)` — Batch embedding with sub-batching (50 per sub-batch), maps results back by index
+   - `generate_embeddings_for_document(document_id)` — Full-document embedding with ProcessingTask progress tracking
+   - `batch_embed_chunks(chunk_ids)` — On-demand chunk embedding returning `{"processed": N, "skipped": M, "failed": K}`
+   - `reembed_chunk(chunk_id)` — Single chunk re-embedding
 
-### Migration
-5. **Auto-generated** `documents/migrations/0004_alter_documentchunk_embedding.py` via `makemigrations`
-6. **Edited migration** to add `RunSQL` operations:
-   - `CREATE EXTENSION IF NOT EXISTS vector` (before AlterField)
-   - `CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON document_chunks USING ivfflat (embedding vector_cosine_ops)` (after AlterField)
-7. **Ran migration** successfully
+2. **`src/backend/documents/tests/test_embedding_service.py`** — 24 test cases covering:
+   - `generate_embedding`: success, empty text, rate-limit retry, rate-limit exhausted, APIError, AuthenticationError, APIConnectionError
+   - `batch_generate_embeddings`: success, mixed failures, sub-batch splitting (120 texts → 3 sub-batches), all empty, rate-limit retry
+   - `generate_embeddings_for_document`: success, no chunks, all already embedded, not found, partial failures, batch progress
+   - `batch_embed_chunks`: mixed state, invalid IDs, all already embedded
+   - `reembed_chunk`: success, not found, failure
 
-### Verification
-- `showmigrations documents` — All 4 migrations applied [X]
-- `\d document_chunks` — `embedding` column is `vector(1536)`
-- `\di idx_chunks_embedding` — ivfflat index exists on `embedding vector_cosine_ops`
+### Key Design Decisions
+- **OpenAI client**: Created per-call via `_get_openai_client()` helper (not global singleton) to avoid Django settings import-time issues
+- **Retry strategy**: Manual exponential backoff (no `tenacity` dependency) — 3 retries with 2^attempt seconds delay
+- **Error handling**: All API errors caught and logged; functions return `None` or error dicts (not exceptions)
+- **Batch size**: 50 per sub-batch as specified in PRD
+- **Queryset evaluation**: `generate_embeddings_for_document` evaluates chunks into a list upfront to avoid queryset re-evaluation issues when saving embeddings mid-batch
 
-### Documentation
-8. **`docs/references/database-schema.md`** — Added Migration 0004 note under "Migration Notes"
+### Test Results
+- **24/24 tests PASSED** with mocked OpenAI calls
+- No new dependencies required
 
 ## Next Steps
-- Proceed to Task 2 of Epic E-05 (Embedding Generation Service)
+- Proceed to Task 3 of Epic E-05 (Celery Task for Embedding)
