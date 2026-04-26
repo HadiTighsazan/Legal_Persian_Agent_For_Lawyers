@@ -220,6 +220,11 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
 CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes
+CELERY_TASK_ACKS_LATE = True          # Tasks re-queued if worker crashes
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_TASK_RETRY_BACKOFF = True       # Exponential backoff
+CELERY_TASK_RETRY_BACKOFF_MAX = 600    # Max 10 minutes between retries
+CELERY_TASK_RETRY_JITTER = True        # Add randomness to backoff
 
 # OpenAI Configuration
 OPENAI_API_KEY = env('OPENAI_API_KEY', default='')

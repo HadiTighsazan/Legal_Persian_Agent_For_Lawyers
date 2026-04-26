@@ -28,6 +28,12 @@ import fitz  # PyMuPDF
 
 from documents.models import Document, DocumentChunk
 from documents.services.chunking_service import ChunkingService
+from documents.services.error_handler import (
+    _has_pdf_magic_bytes,
+    classify_pdf_error,
+    fail_processing_task,
+    log_milestone,
+)
 from documents.storage import get_storage_backend
 from tasks.models import ProcessingTask
 from django.conf import settings
@@ -69,7 +75,7 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         The task is marked as failed on error; exceptions are **not** re-raised
         so the Celery worker does not retry indefinitely.
     """
-    logger.info("extract_text_from_pdf: Starting extraction for document %s", document_id)
+    log_milestone(logger, document_id, "Starting extraction")
 
     try:
         document = Document.objects.get(id=document_id)
@@ -115,18 +121,22 @@ def extract_text_from_pdf(self, document_id: str) -> str:
             pdf_path = document.file_path
         else:
             pdf_path = os.path.join(settings.MEDIA_ROOT, document.file_path)
+
+        # Check PDF magic bytes before attempting to open.
+        if not _has_pdf_magic_bytes(pdf_path):
+            fail_processing_task(
+                processing_task, document, "File is not a valid PDF", logger,
+            )
+            return ""
+
         pdf_document = fitz.open(pdf_path)
-    except fitz.FileDataError:
-        logger.exception("extract_text_from_pdf: Corrupted PDF for document %s", document_id)
-        _fail_extract(processing_task, document, "PDF file is corrupted or unreadable")
+    except fitz.FileDataError as e:
+        error_msg = classify_pdf_error(e, pdf_path)
+        fail_processing_task(processing_task, document, error_msg, logger)
         return ""
-    except Exception:
-        logger.exception("extract_text_from_pdf: Failed to open PDF for document %s", document_id)
-        error_msg = str(traceback.format_exc())
-        if "password" in error_msg.lower():
-            _fail_extract(processing_task, document, "PDF is password-protected")
-        else:
-            _fail_extract(processing_task, document, error_msg)
+    except Exception as e:
+        error_msg = classify_pdf_error(e, pdf_path)
+        fail_processing_task(processing_task, document, error_msg, logger)
         return ""
 
     num_pages = pdf_document.page_count
@@ -169,26 +179,12 @@ def extract_text_from_pdf(self, document_id: str) -> str:
     processing_task.completed_at = timezone.now()
     processing_task.save(update_fields=["status", "completed_at"])
 
-    logger.info(
-        "extract_text_from_pdf: Completed extraction for document %s (%d pages, %d chars)",
-        document_id,
-        num_pages,
-        len(extracted_text),
+    log_milestone(
+        logger, document_id, "Extraction complete",
+        pages=num_pages, chars=len(extracted_text),
     )
 
     return extracted_text
-
-
-def _fail_extract(processing_task: ProcessingTask, document: Document, error_message: str) -> None:
-    """Mark both the ProcessingTask and Document as failed."""
-    processing_task.status = "failed"
-    processing_task.error_message = error_message
-    processing_task.completed_at = timezone.now()
-    processing_task.save(update_fields=["status", "error_message", "completed_at"])
-
-    document.processing_status = "failed"
-    document.processing_error = error_message
-    document.save(update_fields=["processing_status", "processing_error"])
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +214,7 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
             the extraction task.
         document_id: The UUID (as a string) of the :class:`Document`.
     """
-    logger.info("chunk_document: Starting chunking for document %s", document_id)
+    log_milestone(logger, document_id, "Starting chunking")
 
     try:
         document = Document.objects.get(id=document_id)
@@ -276,8 +272,16 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
             for i, chunk in enumerate(chunk_results)
         ]
 
-        with transaction.atomic():
-            DocumentChunk.objects.bulk_create(chunks_to_create)
+        try:
+            with transaction.atomic():
+                DocumentChunk.objects.bulk_create(chunks_to_create)
+        except (IntegrityError, OperationalError) as e:
+            fail_processing_task(
+                chunk_task, document,
+                "Database error during chunking",
+                logger,
+            )
+            return
 
         # Update document metadata.
         document.total_chunks = len(chunks_to_create)
@@ -294,25 +298,15 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         chunk_task.completed_at = timezone.now()
         chunk_task.save(update_fields=["status", "completed_at"])
 
-        logger.info(
-            "chunk_document: Completed chunking for document %s (%d chunks created)",
-            document_id,
-            len(chunks_to_create),
+        log_milestone(
+            logger, document_id, "Chunking complete",
+            chunks=len(chunks_to_create),
         )
+        log_milestone(logger, document_id, "Pipeline complete")
 
     except Exception:
-        logger.exception("chunk_document: Failed to chunk document %s", document_id)
         error_message = traceback.format_exc()
-
-        # Update the chunk task as failed.
-        chunk_task.status = "failed"
-        chunk_task.error_message = error_message
-        chunk_task.completed_at = timezone.now()
-        chunk_task.save(update_fields=["status", "error_message", "completed_at"])
-
-        document.processing_status = "failed"
-        document.processing_error = error_message
-        document.save(update_fields=["processing_status", "processing_error"])
+        fail_processing_task(chunk_task, document, error_message, logger)
 
 
 # ---------------------------------------------------------------------------
@@ -337,11 +331,11 @@ def _handle_chain_error(self, document_id: str, task_type: str = "extract") -> N
         task_type: The ``ProcessingTask.task_type`` to mark as failed
             (default ``"extract"``).
     """
-    logger.info(
-        "_handle_chain_error: Chain failed for document %s — marking %s task as failed",
-        document_id,
-        task_type,
+    log_milestone(
+        logger, document_id,
+        "Chain failed — marking %s task as failed" % task_type,
     )
+
     try:
         document = Document.objects.get(id=document_id)
     except Document.DoesNotExist:

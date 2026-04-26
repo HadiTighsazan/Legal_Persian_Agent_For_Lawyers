@@ -15,6 +15,8 @@ import tempfile
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import fitz
+from celery.exceptions import SoftTimeLimitExceeded
+from django.db import IntegrityError
 from django.test import TestCase
 from django.utils import timezone
 
@@ -207,8 +209,10 @@ class ExtractTextFromPdfTests(TestCase):
     def test_corrupted_pdf_sets_failed_status(self) -> None:
         """A corrupted PDF should mark both ProcessingTask and Document as failed."""
         bad_path = os.path.join(self.tmpdir, "corrupted.pdf")
+        # Write a file that starts with %PDF magic bytes but is not a valid PDF
+        # (so the magic bytes check passes, but fitz.open raises FileDataError).
         with open(bad_path, "wb") as f:
-            f.write(b"not a real pdf content")
+            f.write(b"%PDF-1.4\n%%... garbage after header that is not a valid PDF")
 
         self.document.file_path = bad_path
         self.document.save(update_fields=["file_path"])
@@ -233,6 +237,90 @@ class ExtractTextFromPdfTests(TestCase):
         """If the document does not exist, return empty string without error."""
         result = extract_text_from_pdf("00000000-0000-0000-0000-000000000000")
         self.assertEqual(result, "")
+
+    # -- Password-protected PDF -------------------------------------------
+
+    def test_password_protected_pdf_sets_failed_status(self) -> None:
+        """A password-protected PDF should mark both ProcessingTask and Document as failed."""
+        bad_path = os.path.join(self.tmpdir, "protected.pdf")
+        # Write a valid PDF header so the magic bytes check passes.
+        with open(bad_path, "wb") as f:
+            f.write(b"%PDF-1.4\n%%...")
+
+        self.document.file_path = bad_path
+        self.document.save(update_fields=["file_path"])
+
+        # Mock fitz.open to raise an exception with "password" in the message.
+        with patch.object(fitz, "open", side_effect=Exception("requires a password")):
+            result = self._run_task()
+
+        self.assertEqual(result, "")
+
+        self.document.refresh_from_db()
+        self.assertEqual(self.document.processing_status, "failed")
+        self.assertIn("password-protected", self.document.processing_error.lower())
+
+        task = ProcessingTask.objects.get(
+            document=self.document,
+            task_type="extract",
+        )
+        self.assertEqual(task.status, "failed")
+        self.assertIn("password-protected", task.error_message.lower())
+
+    # -- Non-PDF file -----------------------------------------------------
+
+    def test_non_pdf_file_sets_failed_status(self) -> None:
+        """A non-PDF file uploaded with .pdf extension should be detected and failed."""
+        bad_path = os.path.join(self.tmpdir, "fake.pdf")
+        # Write a file that does NOT start with %PDF magic bytes.
+        with open(bad_path, "wb") as f:
+            f.write(b"not a pdf")
+
+        self.document.file_path = bad_path
+        self.document.save(update_fields=["file_path"])
+
+        result = self._run_task()
+        self.assertEqual(result, "")
+
+        self.document.refresh_from_db()
+        self.assertEqual(self.document.processing_status, "failed")
+        self.assertIn("not a valid pdf", self.document.processing_error.lower())
+
+        task = ProcessingTask.objects.get(
+            document=self.document,
+            task_type="extract",
+        )
+        self.assertEqual(task.status, "failed")
+        self.assertIn("not a valid pdf", task.error_message.lower())
+
+    # -- Celery task timeout ----------------------------------------------
+
+    def test_celery_task_timeout_behavior(self) -> None:
+        """A SoftTimeLimitExceeded during extraction should mark the task as failed."""
+        bad_path = os.path.join(self.tmpdir, "timeout.pdf")
+        # Write a valid PDF header so the magic bytes check passes.
+        with open(bad_path, "wb") as f:
+            f.write(b"%PDF-1.4\n%%...")
+
+        self.document.file_path = bad_path
+        self.document.save(update_fields=["file_path"])
+
+        # Mock fitz.open to raise SoftTimeLimitExceeded.
+        with patch.object(fitz, "open", side_effect=SoftTimeLimitExceeded()):
+            result = self._run_task()
+
+        self.assertEqual(result, "")
+
+        self.document.refresh_from_db()
+        self.assertEqual(self.document.processing_status, "failed")
+        self.assertIn("timed out", self.document.processing_error.lower())
+
+        task = ProcessingTask.objects.get(
+            document=self.document,
+            task_type="extract",
+        )
+        self.assertEqual(task.status, "failed")
+        self.assertIn("timed out", task.error_message.lower())
 
 
 # ---------------------------------------------------------------------------
@@ -429,6 +517,29 @@ class ChunkDocumentTests(TestCase):
         """If the document does not exist, the task should return gracefully."""
         # Should not raise.
         chunk_document("some text", "00000000-0000-0000-0000-000000000000")
+
+    # -- Database error during chunk insert -------------------------------
+
+    def test_database_error_during_chunk_insert(self) -> None:
+        """An IntegrityError during bulk_create should mark the task as failed."""
+        text = "[PAGE 1]\nSome text to chunk."
+
+        with patch.object(
+            DocumentChunk.objects, "bulk_create",
+            side_effect=IntegrityError("duplicate key value violates unique constraint"),
+        ):
+            self._run_task(text)
+
+        self.document.refresh_from_db()
+        self.assertEqual(self.document.processing_status, "failed")
+        self.assertIn("Database error during chunking", self.document.processing_error)
+
+        chunk_task = ProcessingTask.objects.get(
+            document=self.document,
+            task_type="chunk",
+        )
+        self.assertEqual(chunk_task.status, "failed")
+        self.assertIn("Database error during chunking", chunk_task.error_message)
 
 
 # ---------------------------------------------------------------------------
