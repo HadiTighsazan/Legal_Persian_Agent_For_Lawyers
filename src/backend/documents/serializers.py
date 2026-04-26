@@ -94,3 +94,30 @@ class ProcessingStatusSerializer(serializers.Serializer):
         many=True,
         help_text="List of processing tasks for this document.",
     )
+
+
+class DocumentChunkSerializer(serializers.Serializer):
+    """Serialize a single DocumentChunk for the chunks list response."""
+
+    id = serializers.UUIDField(
+        help_text="Unique identifier of the chunk.",
+    )
+    chunk_index = serializers.IntegerField(
+        help_text="Sequential index of the chunk within the document.",
+    )
+    page_start = serializers.IntegerField(
+        help_text="Starting page number for this chunk.",
+    )
+    page_end = serializers.IntegerField(
+        help_text="Ending page number for this chunk.",
+    )
+    content = serializers.CharField(
+        help_text="Text content of the chunk.",
+    )
+    token_count = serializers.IntegerField(
+        allow_null=True,
+        help_text="Number of tokens in the chunk, or null if not computed.",
+    )
+    metadata = serializers.JSONField(
+        help_text="Additional metadata associated with the chunk.",
+    )

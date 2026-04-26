@@ -5,6 +5,7 @@ Covers:
 - :class:`~documents.views.DocumentProcessView` (POST)
 - :class:`~documents.views.DocumentProcessingStatusView` (GET)
 - :class:`~documents.views.DocumentUploadView` (POST) — basic smoke test
+- :class:`~documents.views.DocumentChunksListView` (GET)
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from documents.models import Document
+from documents.models import Document, DocumentChunk
 from tasks.models import ProcessingTask
 from users.models import User
 
@@ -424,6 +425,215 @@ class DocumentUploadViewSmokeTests(TestCase):
         """POST without a file should return 400."""
         response = self.client.post(self.url, **_auth_header(self.user))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+# ---------------------------------------------------------------------------
+# Tests — DocumentChunksListView (GET /documents/<uuid>/chunks/)
+# ---------------------------------------------------------------------------
+
+
+class DocumentChunksListViewTests(TestCase):
+    """Tests for the :class:`DocumentChunksListView` endpoint."""
+
+    def setUp(self) -> None:
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="chunks-test@example.com",
+            password="testpass123",
+        )
+        self.other_user = User.objects.create_user(
+            email="other-chunks@example.com",
+            password="testpass123",
+        )
+        self.document = _create_document(self.user)
+        self.url = reverse(
+            "documents:document-chunks",
+            kwargs={"document_id": self.document.id},
+        )
+
+    # -- 404 Not Found -----------------------------------------------------
+
+    def test_nonexistent_document_returns_404(self) -> None:
+        """GET for a non-existent document should return 404."""
+        url = reverse(
+            "documents:document-chunks",
+            kwargs={"document_id": uuid.uuid4()},
+        )
+        response = self.client.get(url, **_auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["error"], "not_found")
+
+    # -- 403 Forbidden -----------------------------------------------------
+
+    def test_other_users_document_returns_403(self) -> None:
+        """GET for another user's document should return 403."""
+        response = self.client.get(self.url, **_auth_header(self.other_user))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data["error"], "permission_denied")
+
+    # -- 401 Unauthenticated -----------------------------------------------
+
+    def test_unauthenticated_request_returns_401(self) -> None:
+        """GET without auth should return 401."""
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    # -- 200 OK — empty chunks ---------------------------------------------
+
+    def test_empty_chunks_returns_200_with_empty_list(self) -> None:
+        """A document with no chunks should return 200 with empty results."""
+        response = self.client.get(self.url, **_auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        data = response.json()
+        self.assertEqual(data["count"], 0)
+        self.assertEqual(data["page"], 1)
+        self.assertEqual(data["page_size"], 20)
+        self.assertEqual(data["total_pages"], 0)
+        self.assertIsNone(data["next"])
+        self.assertIsNone(data["previous"])
+        self.assertEqual(data["results"], [])
+
+    # -- 200 OK — with chunks ----------------------------------------------
+
+    def test_returns_chunks_in_order(self) -> None:
+        """Chunks should be returned ordered by chunk_index ASC."""
+        for i in range(3):
+            DocumentChunk.objects.create(
+                document=self.document,
+                chunk_index=i,
+                page_start=i * 10 + 1,
+                page_end=(i + 1) * 10,
+                content=f"Chunk {i} content",
+                token_count=50,
+                metadata={"section": f"Section {i}"},
+            )
+
+        response = self.client.get(self.url, **_auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        data = response.json()
+        self.assertEqual(data["count"], 3)
+        self.assertEqual(len(data["results"]), 3)
+        for i, chunk in enumerate(data["results"]):
+            self.assertEqual(chunk["chunk_index"], i)
+            self.assertEqual(chunk["content"], f"Chunk {i} content")
+
+    # -- Pagination --------------------------------------------------------
+
+    def test_pagination_page_size(self) -> None:
+        """``page_size`` should limit the number of returned chunks."""
+        for i in range(5):
+            DocumentChunk.objects.create(
+                document=self.document,
+                chunk_index=i,
+                page_start=1,
+                page_end=10,
+                content=f"Chunk {i}",
+            )
+
+        response = self.client.get(
+            self.url,
+            {"page": 1, "page_size": 2},
+            **_auth_header(self.user),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        data = response.json()
+        self.assertEqual(data["count"], 5)
+        self.assertEqual(data["page_size"], 2)
+        self.assertEqual(data["total_pages"], 3)
+        self.assertEqual(len(data["results"]), 2)
+        self.assertEqual(data["next"], 2)
+        self.assertIsNone(data["previous"])
+
+    def test_pagination_second_page(self) -> None:
+        """Page 2 should return the next set of chunks."""
+        for i in range(5):
+            DocumentChunk.objects.create(
+                document=self.document,
+                chunk_index=i,
+                page_start=1,
+                page_end=10,
+                content=f"Chunk {i}",
+            )
+
+        response = self.client.get(
+            self.url,
+            {"page": 2, "page_size": 2},
+            **_auth_header(self.user),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        data = response.json()
+        self.assertEqual(data["count"], 5)
+        self.assertEqual(data["page"], 2)
+        self.assertEqual(len(data["results"]), 2)
+        self.assertEqual(data["results"][0]["chunk_index"], 2)
+        self.assertEqual(data["results"][1]["chunk_index"], 3)
+        self.assertEqual(data["next"], 3)
+        self.assertEqual(data["previous"], 1)
+
+    def test_pagination_last_page(self) -> None:
+        """The last page should have remaining items and next=None."""
+        for i in range(5):
+            DocumentChunk.objects.create(
+                document=self.document,
+                chunk_index=i,
+                page_start=1,
+                page_end=10,
+                content=f"Chunk {i}",
+            )
+
+        response = self.client.get(
+            self.url,
+            {"page": 3, "page_size": 2},
+            **_auth_header(self.user),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        data = response.json()
+        self.assertEqual(data["count"], 5)
+        self.assertEqual(data["page"], 3)
+        self.assertEqual(len(data["results"]), 1)
+        self.assertEqual(data["results"][0]["chunk_index"], 4)
+        self.assertIsNone(data["next"])
+        self.assertEqual(data["previous"], 2)
+
+    # -- Response format ---------------------------------------------------
+
+    def test_response_format_contains_expected_fields(self) -> None:
+        """The response should contain all expected pagination fields."""
+        DocumentChunk.objects.create(
+            document=self.document,
+            chunk_index=0,
+            page_start=1,
+            page_end=5,
+            content="Test content",
+            token_count=10,
+            metadata={"key": "value"},
+        )
+
+        response = self.client.get(self.url, **_auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        data = response.json()
+        self.assertIn("count", data)
+        self.assertIn("page", data)
+        self.assertIn("page_size", data)
+        self.assertIn("total_pages", data)
+        self.assertIn("next", data)
+        self.assertIn("previous", data)
+        self.assertIn("results", data)
+
+        chunk = data["results"][0]
+        self.assertIn("id", chunk)
+        self.assertIn("chunk_index", chunk)
+        self.assertIn("page_start", chunk)
+        self.assertIn("page_end", chunk)
+        self.assertIn("content", chunk)
+        self.assertIn("token_count", chunk)
+        self.assertIn("metadata", chunk)
 
 
 # ---------------------------------------------------------------------------

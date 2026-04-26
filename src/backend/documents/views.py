@@ -4,7 +4,9 @@ Views for the documents app.
 Provides ``DocumentUploadView`` — an API endpoint that accepts file uploads,
 delegates processing to the upload service, and returns document metadata.
 Also provides ``DocumentProcessView`` and ``DocumentProcessingStatusView``
-for the document processing pipeline (Epic E-04, Task 5).
+for the document processing pipeline (Epic E-04, Task 5), and
+``DocumentChunksListView`` for retrieving paginated document chunks
+(Epic E-04, Task 6).
 """
 
 import logging
@@ -16,8 +18,9 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from documents.models import Document
+from documents.models import Document, DocumentChunk
 from documents.serializers import (
+    DocumentChunkSerializer,
     DocumentResponseSerializer,
     DocumentUploadSerializer,
     ProcessingStatusSerializer,
@@ -233,3 +236,82 @@ class DocumentProcessingStatusView(APIView):
         serializer.is_valid(raise_exception=True)
 
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
+
+
+class DocumentChunksListView(APIView):
+    """Retrieve paginated chunks for a given document.
+
+    **Endpoint:** ``GET /documents/<uuid:document_id>/chunks/``
+
+    **Authentication:** Required.
+
+    **Query Parameters:**
+        - ``page`` (int, default=1)
+        - ``page_size`` (int, default=20)
+
+    **Responses:**
+        - ``200 OK`` — Chunks returned successfully (may be empty list).
+        - ``403 Forbidden`` — Document belongs to another user.
+        - ``404 Not Found`` — Document does not exist.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, document_id: str) -> Response:
+        """Handle the chunks list GET request."""
+        try:
+            document = Document.objects.get(id=document_id)
+        except Document.DoesNotExist:
+            return Response(
+                {"error": "not_found", "message": "Document not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Verify ownership.
+        if document.user != request.user:
+            return Response(
+                {"error": "permission_denied", "message": "You do not have permission to view this document."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Parse pagination params.
+        try:
+            page = int(request.query_params.get("page", 1))
+            page_size = int(request.query_params.get("page_size", 20))
+        except (ValueError, TypeError):
+            page, page_size = 1, 20
+
+        if page < 1:
+            page = 1
+        if page_size < 1:
+            page_size = 20
+
+        # Query chunks ordered by chunk_index.
+        chunks = DocumentChunk.objects.filter(
+            document=document,
+        ).order_by("chunk_index")
+
+        # Apply pagination.
+        total = chunks.count()
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_chunks = chunks[start:end]
+
+        # Serialize.
+        serializer = DocumentChunkSerializer(page_chunks, many=True)
+
+        # Build paginated response.
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+        return Response(
+            {
+                "count": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "next": page + 1 if page < total_pages else None,
+                "previous": page - 1 if page > 1 else None,
+                "results": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )

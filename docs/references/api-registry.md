@@ -436,6 +436,49 @@ Both fields are optional. At least one should be provided for meaningful updates
 
 ---
 
+#### GET /documents/{document_id}/chunks/
+**Description:** Retrieve paginated chunks for a given document
+**Auth Required:** Yes
+**Query Parameters:**
+- `page`: Integer (default: 1)
+- `page_size`: Integer (default: 20)
+
+**Response:** `200 OK`
+```json
+{
+  "count": 5,
+  "page": 1,
+  "page_size": 20,
+  "total_pages": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": "uuid",
+      "chunk_index": 0,
+      "page_start": 1,
+      "page_end": 5,
+      "content": "Chunk text content...",
+      "token_count": 50,
+      "metadata": {}
+    }
+  ]
+}
+```
+**Error Responses:**
+- `403 Forbidden`: Document belongs to another user
+- `404 Not Found`: Document does not exist
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies document ownership
+- Queries `DocumentChunk.objects.filter(document=document).order_by("chunk_index")`
+- Manual pagination via slice-based `[start:end]` on the queryset
+- Returns `count`, `page`, `page_size`, `total_pages`, `next`, `previous`, `results`
+- Uses `DocumentChunkSerializer` for response serialization
+
+---
+
 ## Conversations
 
 #### POST /conversations
