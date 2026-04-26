@@ -1,51 +1,58 @@
-# WIP Context — Task 6: Chunks Retrieval API
+# WIP Context — Task 7: Retry API
 
 ## What Was Just Completed
 
-**Task 6 — Implement `GET /documents/{document_id}/chunks/` endpoint** that returns paginated document chunks for a given document.
+**Implementation of `POST /documents/processing-tasks/{task_id}/retry/` endpoint** — all 5 steps completed.
 
-### Changes Made
+### Step 1 — Model + Migration
+- Added `retry_count = models.IntegerField(default=0)` to [`ProcessingTask`](src/backend/tasks/models.py:39)
+- Created and applied migration `tasks.0003_processingtask_retry_count`
 
-| File | Change |
-|------|--------|
-| [`src/backend/documents/serializers.py`](src/backend/documents/serializers.py:100) | Added `DocumentChunkSerializer` with 7 fields (id, chunk_index, page_start, page_end, content, token_count, metadata) |
-| [`src/backend/documents/views.py`](src/backend/documents/views.py:238) | Added `DocumentChunksListView` — GET handler with ownership verification, pagination, and ordered-by-chunk_index query |
-| [`src/backend/documents/urls.py`](src/backend/documents/urls.py:30) | Registered `<uuid:document_id>/chunks/` route as `document-chunks` |
-| [`src/backend/documents/tests/test_views.py`](src/backend/documents/tests/test_views.py:431) | Added `DocumentChunksListViewTests` with 9 test cases |
-| [`docs/references/api-registry.md`](docs/references/api-registry.md:437) | Documented the new endpoint with request/response format |
+### Step 2 — View
+- Created [`ProcessingTaskRetryView`](src/backend/documents/views.py:241) with full validation logic:
+  - `IsAuthenticated` permission
+  - Fetches `ProcessingTask` by UUID → 404 if not found
+  - Verifies ownership via `task.document.user != request.user` → 403
+  - Checks `task.status == "failed"` → 400 if not
+  - Checks `task.retry_count < 3` → 400 with `max_retries_exceeded` if exceeded
+  - Increments `retry_count`, resets `status="pending"`, clears `error_message` and `completed_at`
+  - Calls `process_document(str(task.document.id))` to re-trigger Celery chain
+  - If `process_document` returns `None` → 400 (document already processing/completed)
+  - Updates `celery_task_id` with new task ID, saves, returns 200
 
-### Test Coverage (9 new tests)
+### Step 3 — URL Route
+- Registered `processing-tasks/<uuid:task_id>/retry/` in [`documents/urls.py`](src/backend/documents/urls.py:36)
 
-| Test | What it verifies |
-|------|-----------------|
-| `test_nonexistent_document_returns_404` | 404 for non-existent document |
-| `test_other_users_document_returns_403` | 403 for other user's document |
-| `test_unauthenticated_request_returns_401` | 401 without auth |
-| `test_empty_chunks_returns_200_with_empty_list` | 200 with empty results |
-| `test_returns_chunks_in_order` | Chunks ordered by `chunk_index` ASC |
-| `test_pagination_page_size` | `page_size` limits results |
-| `test_pagination_second_page` | Page 2 returns correct slice |
-| `test_pagination_last_page` | Last page has `next=None` |
-| `test_response_format_contains_expected_fields` | All expected fields present |
+### Step 4 — Tests
+- Added [`ProcessingTaskRetryViewTests`](src/backend/documents/tests/test_views.py:145) with 12 test cases:
+  - `test_nonexistent_task_returns_404`
+  - `test_other_users_task_returns_403`
+  - `test_unauthenticated_request_returns_401`
+  - `test_non_failed_task_returns_400`
+  - `test_max_retries_exceeded_returns_400`
+  - `test_successful_retry_returns_200`
+  - `test_successful_retry_increments_retry_count`
+  - `test_successful_retry_clears_error_message`
+  - `test_successful_retry_resets_status_to_pending`
+  - `test_successful_retry_updates_celery_task_id`
+  - `test_successful_retry_clears_completed_at`
+  - `test_retry_when_document_already_processing_returns_400`
+- All 48 tests in `test_views.py` pass (12 new + 36 existing)
 
-### Test Results
-
-- **All 36 document view tests pass** (0 failures, 0 errors)
-- Tests run via: `docker-compose exec backend python -m pytest documents/tests/test_views.py --ds=config.settings -v`
-
-### Reference Documentation Updated
-
-- **`docs/references/api-registry.md`**: Added `GET /documents/{document_id}/chunks/` endpoint documentation with request/response format, error responses, and implementation notes
+### Step 5 — Reference Documentation
+- Added retry endpoint to [`docs/references/api-registry.md`](docs/references/api-registry.md) under Documents section
+- Added `retry_count` field to [`docs/references/database-schema.md`](docs/references/database-schema.md) in the `processing_tasks` table
 
 ## Current State of Code
 
-- `DocumentChunksListView` follows the same ownership-verification pattern as `DocumentProcessView` and `DocumentProcessingStatusView`
-- Uses manual pagination (slice-based) instead of DRF's `PageNumberPagination` for consistency with existing patterns
-- Returns `count`, `page`, `page_size`, `total_pages`, `next`, `previous`, `results` for full pagination metadata
-- Handles invalid/negative page/page_size gracefully by falling back to defaults
-- Chunks are ordered by `chunk_index` ASC
-- `DocumentChunkSerializer` serializes all 7 fields from the `DocumentChunk` model
+- [`src/backend/tasks/models.py`](src/backend/tasks/models.py) — `ProcessingTask` has `retry_count` field
+- [`src/backend/tasks/migrations/0003_processingtask_retry_count.py`](src/backend/tasks/migrations/0003_processingtask_retry_count.py) — Migration applied
+- [`src/backend/documents/views.py`](src/backend/documents/views.py) — `ProcessingTaskRetryView` implemented
+- [`src/backend/documents/urls.py`](src/backend/documents/urls.py) — Retry route registered
+- [`src/backend/documents/tests/test_views.py`](src/backend/documents/tests/test_views.py) — 12 retry tests passing
+- [`docs/references/api-registry.md`](docs/references/api-registry.md) — Retry endpoint documented
+- [`docs/references/database-schema.md`](docs/references/database-schema.md) — `retry_count` field documented
 
 ## Exact Next Step
 
-Task 6 is complete. All 36 document view tests pass. The next task can proceed.
+Task 7 implementation is complete. Ready for review.

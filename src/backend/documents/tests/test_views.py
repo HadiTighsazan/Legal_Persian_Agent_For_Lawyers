@@ -143,6 +143,171 @@ class DocumentProcessViewTests(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Tests — ProcessingTaskRetryView (POST /documents/processing-tasks/<uuid>/retry/)
+# ---------------------------------------------------------------------------
+
+
+class ProcessingTaskRetryViewTests(TestCase):
+    """Tests for the :class:`ProcessingTaskRetryView` endpoint."""
+
+    def setUp(self) -> None:
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="retry-test@example.com",
+            password="testpass123",
+        )
+        self.other_user = User.objects.create_user(
+            email="other-retry@example.com",
+            password="testpass123",
+        )
+        self.document = _create_document(self.user, processing_status="failed")
+        self.task = ProcessingTask.objects.create(
+            document=self.document,
+            task_type="extract",
+            celery_task_id="original-celery-id",
+            status="failed",
+            error_message="Something went wrong",
+            started_at=timezone.now(),
+            completed_at=timezone.now(),
+        )
+        self.url = reverse(
+            "documents:processing-task-retry",
+            kwargs={"task_id": self.task.id},
+        )
+
+    # -- 404 Not Found -----------------------------------------------------
+
+    def test_nonexistent_task_returns_404(self) -> None:
+        """POST to a non-existent task ID should return 404."""
+        url = reverse(
+            "documents:processing-task-retry",
+            kwargs={"task_id": uuid.uuid4()},
+        )
+        response = self.client.post(url, **_auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["error"], "not_found")
+
+    # -- 403 Forbidden -----------------------------------------------------
+
+    def test_other_users_task_returns_403(self) -> None:
+        """POST to another user's task should return 403."""
+        response = self.client.post(self.url, **_auth_header(self.other_user))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data["error"], "permission_denied")
+
+    # -- 401 Unauthenticated -----------------------------------------------
+
+    def test_unauthenticated_request_returns_401(self) -> None:
+        """POST without auth should return 401."""
+        response = self.client.post(self.url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    # -- 400 Bad Request — not in failed state -----------------------------
+
+    def test_non_failed_task_returns_400(self) -> None:
+        """POST for a task that is not 'failed' should return 400."""
+        self.task.status = "pending"
+        self.task.save()
+
+        response = self.client.post(self.url, **_auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "bad_request")
+        self.assertIn("not in a failed state", response.data["message"])
+
+    # -- 400 Bad Request — max retries exceeded ----------------------------
+
+    def test_max_retries_exceeded_returns_400(self) -> None:
+        """POST for a task with retry_count >= 3 should return 400."""
+        self.task.retry_count = 3
+        self.task.save()
+
+        response = self.client.post(self.url, **_auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "max_retries_exceeded")
+        self.assertIn("Maximum retry limit", response.data["message"])
+
+    # -- 200 OK (happy path) -----------------------------------------------
+
+    @patch("documents.views.process_document")
+    def test_successful_retry_returns_200(self, mock_process: MagicMock) -> None:
+        """Successful retry should return 200 with new task info."""
+        mock_process.return_value = "new-celery-task-id"
+
+        response = self.client.post(self.url, **_auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        data = response.json()
+        self.assertEqual(data["task_id"], "new-celery-task-id")
+        self.assertEqual(data["status"], "pending")
+        self.assertEqual(data["retry_count"], 1)
+        self.assertEqual(data["document_id"], str(self.document.id))
+
+        mock_process.assert_called_once_with(str(self.document.id))
+
+    @patch("documents.views.process_document")
+    def test_successful_retry_increments_retry_count(self, mock_process: MagicMock) -> None:
+        """Successful retry should increment retry_count in the DB."""
+        mock_process.return_value = "new-celery-task-id"
+
+        self.client.post(self.url, **_auth_header(self.user))
+
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.retry_count, 1)
+
+    @patch("documents.views.process_document")
+    def test_successful_retry_clears_error_message(self, mock_process: MagicMock) -> None:
+        """Successful retry should clear the error_message."""
+        mock_process.return_value = "new-celery-task-id"
+
+        self.client.post(self.url, **_auth_header(self.user))
+
+        self.task.refresh_from_db()
+        self.assertIsNone(self.task.error_message)
+
+    @patch("documents.views.process_document")
+    def test_successful_retry_resets_status_to_pending(self, mock_process: MagicMock) -> None:
+        """Successful retry should reset status to 'pending'."""
+        mock_process.return_value = "new-celery-task-id"
+
+        self.client.post(self.url, **_auth_header(self.user))
+
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, "pending")
+
+    @patch("documents.views.process_document")
+    def test_successful_retry_updates_celery_task_id(self, mock_process: MagicMock) -> None:
+        """Successful retry should update celery_task_id with the new task ID."""
+        mock_process.return_value = "new-celery-task-id"
+
+        self.client.post(self.url, **_auth_header(self.user))
+
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.celery_task_id, "new-celery-task-id")
+
+    @patch("documents.views.process_document")
+    def test_successful_retry_clears_completed_at(self, mock_process: MagicMock) -> None:
+        """Successful retry should clear completed_at."""
+        mock_process.return_value = "new-celery-task-id"
+
+        self.client.post(self.url, **_auth_header(self.user))
+
+        self.task.refresh_from_db()
+        self.assertIsNone(self.task.completed_at)
+
+    # -- 400 Bad Request — process_document returns None -------------------
+
+    @patch("documents.views.process_document")
+    def test_retry_when_document_already_processing_returns_400(self, mock_process: MagicMock) -> None:
+        """If process_document returns None, the view should return 400."""
+        mock_process.return_value = None
+
+        response = self.client.post(self.url, **_auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "bad_request")
+        self.assertIn("already being processed", response.data["message"])
+
+
+# ---------------------------------------------------------------------------
 # Tests — DocumentProcessingStatusView (GET /documents/<uuid>/processing-status/)
 # ---------------------------------------------------------------------------
 

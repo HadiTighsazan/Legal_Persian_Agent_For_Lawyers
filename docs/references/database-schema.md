@@ -118,6 +118,7 @@
 | progress | INTEGER | DEFAULT 0 | Progress percentage (0-100) |
 | result | JSONB | NULL | Task result data |
 | error_message | TEXT | NULL | Error details if failed |
+| **retry_count** | **INTEGER** | **DEFAULT 0** | **Number of retry attempts (max 3, added in Task 7)** |
 | started_at | TIMESTAMP | NULL | Task start time |
 | completed_at | TIMESTAMP | NULL | Task completion time |
 | created_at | TIMESTAMP | DEFAULT NOW() | Creation timestamp |

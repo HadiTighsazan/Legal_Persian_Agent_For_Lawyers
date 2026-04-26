@@ -238,6 +238,93 @@ class DocumentProcessingStatusView(APIView):
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
+class ProcessingTaskRetryView(APIView):
+    """Retry a failed processing task.
+
+    **Endpoint:** ``POST /documents/processing-tasks/<uuid:task_id>/retry/``
+
+    **Authentication:** Required.
+
+    **Responses:**
+        - ``200 OK`` — Task retry initiated successfully.
+        - ``400 Bad Request`` — Task is not in a failed state, or max retries exceeded.
+        - ``403 Forbidden`` — Task belongs to another user.
+        - ``404 Not Found`` — Processing task does not exist.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, task_id: str) -> Response:
+        """Handle the retry POST request."""
+        try:
+            task = ProcessingTask.objects.get(id=task_id)
+        except ProcessingTask.DoesNotExist:
+            return Response(
+                {"error": "not_found", "message": "Processing task not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Verify ownership via the task's document.
+        if task.document.user != request.user:
+            return Response(
+                {"error": "permission_denied", "message": "You do not have permission to retry this task."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check task is in a failed state.
+        if task.status != "failed":
+            return Response(
+                {"error": "bad_request", "message": "Task is not in a failed state"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check retry limit.
+        if task.retry_count >= 3:
+            return Response(
+                {"error": "max_retries_exceeded", "message": "Maximum retry limit (3) exceeded"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Increment retry count.
+        task.retry_count += 1
+
+        # Reset task state.
+        task.status = "pending"
+        task.error_message = None
+        task.completed_at = None
+
+        # Re-trigger the Celery processing pipeline.
+        new_task_id = process_document(str(task.document.id))
+
+        if new_task_id is None:
+            # process_document returned None — document is already processing/completed.
+            return Response(
+                {"error": "bad_request", "message": "Document is already being processed or has been processed"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Update the celery_task_id with the new task ID.
+        task.celery_task_id = new_task_id
+        task.save()
+
+        logger.info(
+            "Task %s retried (retry_count=%d, new_celery_task_id=%s)",
+            task.id,
+            task.retry_count,
+            new_task_id,
+        )
+
+        return Response(
+            {
+                "task_id": new_task_id,
+                "status": "pending",
+                "retry_count": task.retry_count,
+                "document_id": str(task.document.id),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class DocumentChunksListView(APIView):
     """Retrieve paginated chunks for a given document.
 

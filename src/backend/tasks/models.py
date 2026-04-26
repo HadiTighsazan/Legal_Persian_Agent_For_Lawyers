@@ -35,6 +35,7 @@ class ProcessingTask(models.Model):
     progress = models.IntegerField(default=0)  # 0-100
     result = models.JSONField(null=True, blank=True)
     error_message = models.TextField(null=True, blank=True)
+    retry_count = models.IntegerField(default=0)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)

@@ -367,6 +367,37 @@ Both fields are optional. At least one should be provided for meaningful updates
 
 ---
 
+#### POST /documents/processing-tasks/{task_id}/retry/
+**Description:** Retry a failed processing task
+**Auth Required:** Yes
+**View:** `ProcessingTaskRetryView`
+**Response:** `200 OK`
+```json
+{
+  "task_id": "new_celery_task_id",
+  "status": "pending",
+  "retry_count": 1,
+  "document_id": "uuid"
+}
+```
+**Error Responses:**
+- `400 Bad Request`: Task is not in a failed state
+- `400 Bad Request`: Maximum retry limit (3) exceeded
+- `403 Forbidden`: Task belongs to another user
+- `404 Not Found`: Processing task does not exist
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies task ownership via `task.document.user != request.user`
+- Checks task is in `'failed'` state before allowing retry
+- Enforces maximum of 3 retries (`retry_count < 3`)
+- Increments `retry_count`, resets `status` to `'pending'`, clears `error_message` and `completed_at`
+- Calls `process_document(document_id)` to re-trigger the Celery chain
+- Updates `celery_task_id` with the new task ID from `process_document`
+- Reuses the existing failed `ProcessingTask` record (does not create a new one)
+
+---
+
 #### POST /documents/{document_id}/process/
 **Description:** Start document processing (extract, chunk)
 **Auth Required:** Yes

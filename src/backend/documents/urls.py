@@ -12,6 +12,7 @@ from documents.views import (
     DocumentProcessView,
     DocumentProcessingStatusView,
     DocumentUploadView,
+    ProcessingTaskRetryView,
 )
 
 app_name = "documents"
@@ -32,5 +33,10 @@ urlpatterns = [
         "<uuid:document_id>/chunks/",
         DocumentChunksListView.as_view(),
         name="document-chunks",
+    ),
+    path(
+        "processing-tasks/<uuid:task_id>/retry/",
+        ProcessingTaskRetryView.as_view(),
+        name="processing-task-retry",
     ),
 ]
