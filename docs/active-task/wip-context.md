@@ -1,79 +1,50 @@
-# WIP Context — Task 8: Error Handling & Edge Cases
+# WIP Context — Task 9: URL Registration
 
 ## What Was Just Completed
 
-**Implementation of comprehensive error handling for the document processing pipeline** — all 6 steps completed.
+**Task 9 — Verified all URL routes are correctly registered** for the document processing pipeline.
 
-### Step 1 — Created `error_handler.py` (Centralized Error Handler Service)
+### Step 1 — Verified URL Registration (Tests Passed)
 
-Created [`src/backend/documents/services/error_handler.py`](src/backend/documents/services/error_handler.py) with:
+Ran [`src/backend/documents/tests/test_views.py`](src/backend/documents/tests/test_views.py) — **48/48 tests passed**, confirming all URL routes resolve correctly via `reverse()` calls.
 
-- **`_has_pdf_magic_bytes(file_path)`** — Checks if the first 4 bytes of a file are `%PDF`
-- **`classify_pdf_error(exception, pdf_path)`** — Classifies PDF errors:
-  - Non-PDF magic bytes → `"File is not a valid PDF"`
-  - `fitz.FileDataError` / `fitz.EmptyFileError` → `"PDF file is corrupted or unreadable"`
-  - `SoftTimeLimitExceeded` → `"Task timed out"`
-  - Exception message contains "password" → `"PDF is password-protected"`
-  - Fallback → `str(exception)`
-- **`fail_processing_task(processing_task, document, error_message, logger)`** — Sets both `ProcessingTask` and `Document` to `"failed"` status with the error message, logs via `logger.exception()`
-- **`log_milestone(logger, document_id, milestone, **extra)`** — Logs processing milestones at INFO level with consistent `[document_id] milestone — key=value` format
+### Step 2 — Verified All 5 Routes in `documents/urls.py`
 
-### Step 2 — Updated Celery Configuration in `settings.py`
+| Route | Method | View Class | URL Name | Status |
+|---|---|---|---|---|
+| `upload/` | POST | `DocumentUploadView` | `document-upload` | ✅ Correct |
+| `<uuid:document_id>/process/` | POST | `DocumentProcessView` | `document-process` | ✅ Correct |
+| `<uuid:document_id>/processing-status/` | GET | `DocumentProcessingStatusView` | `document-processing-status` | ✅ Correct |
+| `<uuid:document_id>/chunks/` | GET | `DocumentChunksListView` | `document-chunks` | ✅ Correct |
+| `processing-tasks/<uuid:task_id>/retry/` | POST | `ProcessingTaskRetryView` | `processing-task-retry` | ✅ Correct |
 
-Added to [`src/backend/config/settings.py`](src/backend/config/settings.py) (lines 223–227):
-- `CELERY_TASK_ACKS_LATE = True`
-- `CELERY_TASK_REJECT_ON_WORKER_LOST = True`
-- `CELERY_TASK_RETRY_BACKOFF = True`
-- `CELERY_TASK_RETRY_BACKOFF_MAX = 600`
-- `CELERY_TASK_RETRY_JITTER = True`
+### Step 3 — Verified `config/urls.py`
 
-### Step 3 — Refactored `document_processing.py`
+[`src/backend/config/urls.py`](src/backend/config/urls.py) line 56 already includes `path('documents/', include('documents.urls'))`.
 
-Updated [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py):
+### Step 4 — Verified `api-registry.md`
 
-- **Imports**: Added `_has_pdf_magic_bytes`, `classify_pdf_error`, `fail_processing_task`, `log_milestone` from error_handler
-- **`extract_text_from_pdf()`**:
-  - Added milestone logging at start (`"Starting extraction"`) and end (`"Extraction complete"`)
-  - Added magic bytes check before `fitz.open()` — fails with `"File is not a valid PDF"` if missing
-  - Replaced inline error handling with `classify_pdf_error()` + `fail_processing_task()`
-  - Removed the old `_fail_extract()` helper function
-- **`chunk_document()`**:
-  - Added milestone logging at start (`"Starting chunking"`), after success (`"Chunking complete"`), and at pipeline end (`"Pipeline complete"`)
-  - Wrapped `bulk_create` in try/except for `IntegrityError`/`OperationalError` → fails with `"Database error during chunking"`
-  - Replaced inline error handling with `fail_processing_task()`
-- **`_handle_chain_error()`**:
-  - Added milestone logging for chain failure
+All 4 new endpoint URL patterns in [`docs/references/api-registry.md`](docs/references/api-registry.md) match the actual routes in `urls.py`:
+- `POST /documents/{document_id}/process/` — matches `<uuid:document_id>/process/` ✅
+- `GET /documents/{document_id}/processing-status/` — matches `<uuid:document_id>/processing-status/` ✅
+- `GET /documents/{document_id}/chunks/` — matches `<uuid:document_id>/chunks/` ✅
+- `POST /documents/processing-tasks/{task_id}/retry/` — matches `processing-tasks/<uuid:task_id>/retry/` ✅
 
-### Step 4 — Updated Tests in `test_tasks.py`
+### Step 5 — Ran Full Test Suite
 
-Added 4 new test methods to [`src/backend/documents/tests/test_tasks.py`](src/backend/documents/tests/test_tasks.py):
-
-| # | Test Method | Scenario | Status |
-|---|---|---|---|
-| 1 | `test_password_protected_pdf_sets_failed_status` | Password-protected PDF (mock `fitz.open` with "password" in message) | ✅ Passing |
-| 2 | `test_non_pdf_file_sets_failed_status` | Non-PDF file (no `%PDF` magic bytes) | ✅ Passing |
-| 3 | `test_database_error_during_chunk_insert` | `IntegrityError` during `bulk_create` | ✅ Passing |
-| 4 | `test_celery_task_timeout_behavior` | `SoftTimeLimitExceeded` during extraction | ✅ Passing |
-
-### Step 5 — Ran Tests
-
-All **32 tests** in `documents/tests/test_tasks.py` pass:
-- `ExtractTextFromPdfTests` — 9 tests (5 existing + 4 new)
-- `ChunkDocumentTests` — 10 tests (all existing)
-- `ProcessDocumentTests` — 7 tests (all existing)
-- `HandleChainErrorTests` — 6 tests (all existing)
-
-### Step 6 — Reference Documentation
-
-No changes needed to `api-registry.md` or `database-schema.md` — this task did not modify any API endpoints or database schema.
+Ran `documents/tests/` — **108/108 tests passed** across all test files:
+- `test_serializers.py` — 28 tests
+- `test_tasks.py` — 32 tests
+- `test_views.py` — 48 tests
 
 ## Current State of Code
 
-- [`src/backend/documents/services/error_handler.py`](src/backend/documents/services/error_handler.py) — Centralized error handler service created
-- [`src/backend/config/settings.py`](src/backend/config/settings.py) — New Celery retry/acks-late settings added
-- [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py) — Refactored to use error handler, magic bytes check, milestone logging, DB error handling
-- [`src/backend/documents/tests/test_tasks.py`](src/backend/documents/tests/test_tasks.py) — 4 new edge case tests added, all 32 tests passing
+- [`src/backend/documents/urls.py`](src/backend/documents/urls.py) — All 5 URL routes properly configured with correct view mappings, URL names, and path converters
+- [`src/backend/config/urls.py`](src/backend/config/urls.py) — Already includes `documents/` URL inclusion
+- [`src/backend/documents/views.py`](src/backend/documents/views.py) — All 5 views implemented
+- [`src/backend/documents/tests/test_views.py`](src/backend/documents/tests/test_views.py) — 48 tests, all passing
+- [`docs/references/api-registry.md`](docs/references/api-registry.md) — URL patterns verified accurate
 
 ## Exact Next Step
 
-Task 8 implementation is complete. Ready for review.
+Task 9 implementation is complete. Ready for review. Next: Task 10 — Write Tests (if not already done) or mark Epic E-04 as complete.
