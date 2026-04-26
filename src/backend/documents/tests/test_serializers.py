@@ -6,6 +6,10 @@ Covers:
 - :class:`~documents.serializers.DocumentResponseSerializer`
 - :class:`~documents.serializers.ProcessingTaskSerializer`
 - :class:`~documents.serializers.ProcessingStatusSerializer`
+- :class:`~documents.serializers.DocumentEmbedResponseSerializer`
+- :class:`~documents.serializers.ChunkBatchEmbedRequestSerializer`
+- :class:`~documents.serializers.ChunkBatchEmbedResponseSerializer`
+- :class:`~documents.serializers.ChunkReEmbedResponseSerializer`
 """
 
 from __future__ import annotations
@@ -18,6 +22,10 @@ from django.test import TestCase
 from django.utils import timezone as tz_utils
 
 from documents.serializers import (
+    ChunkBatchEmbedRequestSerializer,
+    ChunkBatchEmbedResponseSerializer,
+    ChunkReEmbedResponseSerializer,
+    DocumentEmbedResponseSerializer,
     DocumentResponseSerializer,
     DocumentUploadSerializer,
     ProcessingStatusSerializer,
@@ -306,6 +314,270 @@ class ProcessingStatusSerializerTests(TestCase):
     def test_help_text_on_all_fields(self) -> None:
         """Every field should have a descriptive help_text."""
         serializer = ProcessingStatusSerializer()
+        for field_name, field in serializer.fields.items():
+            with self.subTest(field=field_name):
+                self.assertTrue(
+                    field.help_text,
+                    f"Field '{field_name}' is missing help_text",
+                )
+
+
+# ---------------------------------------------------------------------------
+# Tests — DocumentEmbedResponseSerializer
+# ---------------------------------------------------------------------------
+
+
+class DocumentEmbedResponseSerializerTests(TestCase):
+    """Validate the embed-response serializer for POST /documents/{id}/embed."""
+
+    def setUp(self) -> None:
+        self.data = {
+            "task_id": uuid.uuid4(),
+            "task_type": "embed",
+            "status": "pending",
+            "document_id": uuid.uuid4(),
+            "total_chunks": 5,
+        }
+
+    def test_valid_data_passes(self) -> None:
+        """All required fields present should pass validation."""
+        serializer = DocumentEmbedResponseSerializer(data=self.data)
+        self.assertTrue(serializer.is_valid())
+
+    def test_serializes_output(self) -> None:
+        """Output dict has correct types (UUID to str, etc.)."""
+        serializer = DocumentEmbedResponseSerializer(instance=self.data)
+        output = serializer.data
+        self.assertEqual(output["task_id"], str(self.data["task_id"]))
+        self.assertEqual(output["task_type"], "embed")
+        self.assertEqual(output["status"], "pending")
+        self.assertEqual(output["document_id"], str(self.data["document_id"]))
+        self.assertEqual(output["total_chunks"], 5)
+
+    def test_default_task_type(self) -> None:
+        """``task_type`` defaults to ``\"embed\"``."""
+        data = {
+            "task_id": uuid.uuid4(),
+            "document_id": uuid.uuid4(),
+            "total_chunks": 3,
+        }
+        serializer = DocumentEmbedResponseSerializer(data=data)
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["task_type"], "embed")
+
+    def test_default_status(self) -> None:
+        """``status`` defaults to ``\"pending\"``."""
+        data = {
+            "task_id": uuid.uuid4(),
+            "document_id": uuid.uuid4(),
+            "total_chunks": 3,
+        }
+        serializer = DocumentEmbedResponseSerializer(data=data)
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["status"], "pending")
+
+    def test_missing_task_id_returns_error(self) -> None:
+        """Omitting ``task_id`` fails validation."""
+        self.data.pop("task_id")
+        serializer = DocumentEmbedResponseSerializer(data=self.data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("task_id", serializer.errors)
+
+    def test_missing_document_id_returns_error(self) -> None:
+        """Omitting ``document_id`` fails validation."""
+        self.data.pop("document_id")
+        serializer = DocumentEmbedResponseSerializer(data=self.data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("document_id", serializer.errors)
+
+    def test_missing_total_chunks_returns_error(self) -> None:
+        """Omitting ``total_chunks`` fails validation."""
+        self.data.pop("total_chunks")
+        serializer = DocumentEmbedResponseSerializer(data=self.data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("total_chunks", serializer.errors)
+
+    def test_help_text_on_all_fields(self) -> None:
+        """Every field has descriptive help_text."""
+        serializer = DocumentEmbedResponseSerializer()
+        for field_name, field in serializer.fields.items():
+            with self.subTest(field=field_name):
+                self.assertTrue(
+                    field.help_text,
+                    f"Field '{field_name}' is missing help_text",
+                )
+
+
+# ---------------------------------------------------------------------------
+# Tests — ChunkBatchEmbedRequestSerializer
+# ---------------------------------------------------------------------------
+
+
+class ChunkBatchEmbedRequestSerializerTests(TestCase):
+    """Validate the batch-embed request serializer for POST /chunks/batch-embed."""
+
+    def setUp(self) -> None:
+        self.data = {
+            "chunk_ids": [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()],
+        }
+
+    def test_valid_chunk_ids_passes(self) -> None:
+        """List of valid UUIDs passes."""
+        serializer = ChunkBatchEmbedRequestSerializer(data=self.data)
+        self.assertTrue(serializer.is_valid())
+
+    def test_empty_list_passes(self) -> None:
+        """Empty list is valid (view handles it)."""
+        self.data["chunk_ids"] = []
+        serializer = ChunkBatchEmbedRequestSerializer(data=self.data)
+        self.assertTrue(serializer.is_valid())
+
+    def test_invalid_uuid_fails(self) -> None:
+        """Non-UUID string in list fails."""
+        self.data["chunk_ids"] = ["not-a-uuid"]
+        serializer = ChunkBatchEmbedRequestSerializer(data=self.data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("chunk_ids", serializer.errors)
+
+    def test_missing_chunk_ids_returns_error(self) -> None:
+        """Omitting ``chunk_ids`` fails."""
+        self.data.pop("chunk_ids")
+        serializer = ChunkBatchEmbedRequestSerializer(data=self.data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("chunk_ids", serializer.errors)
+
+    def test_help_text_on_all_fields(self) -> None:
+        """Every field has descriptive help_text."""
+        serializer = ChunkBatchEmbedRequestSerializer()
+        for field_name, field in serializer.fields.items():
+            with self.subTest(field=field_name):
+                self.assertTrue(
+                    field.help_text,
+                    f"Field '{field_name}' is missing help_text",
+                )
+
+
+# ---------------------------------------------------------------------------
+# Tests — ChunkBatchEmbedResponseSerializer
+# ---------------------------------------------------------------------------
+
+
+class ChunkBatchEmbedResponseSerializerTests(TestCase):
+    """Validate the batch-embed response serializer for POST /chunks/batch-embed."""
+
+    def setUp(self) -> None:
+        self.data = {
+            "processed": 10,
+            "skipped": 2,
+            "failed": 1,
+        }
+
+    def test_valid_data_passes(self) -> None:
+        """All fields present passes."""
+        serializer = ChunkBatchEmbedResponseSerializer(data=self.data)
+        self.assertTrue(serializer.is_valid())
+
+    def test_serializes_output(self) -> None:
+        """Output has correct integer values."""
+        serializer = ChunkBatchEmbedResponseSerializer(instance=self.data)
+        output = serializer.data
+        self.assertEqual(output["processed"], 10)
+        self.assertEqual(output["skipped"], 2)
+        self.assertEqual(output["failed"], 1)
+
+    def test_zero_counts_are_valid(self) -> None:
+        """All zeros is valid."""
+        data = {"processed": 0, "skipped": 0, "failed": 0}
+        serializer = ChunkBatchEmbedResponseSerializer(data=data)
+        self.assertTrue(serializer.is_valid())
+
+    def test_missing_processed_returns_error(self) -> None:
+        """Omitting ``processed`` fails."""
+        self.data.pop("processed")
+        serializer = ChunkBatchEmbedResponseSerializer(data=self.data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("processed", serializer.errors)
+
+    def test_missing_skipped_returns_error(self) -> None:
+        """Omitting ``skipped`` fails."""
+        self.data.pop("skipped")
+        serializer = ChunkBatchEmbedResponseSerializer(data=self.data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("skipped", serializer.errors)
+
+    def test_missing_failed_returns_error(self) -> None:
+        """Omitting ``failed`` fails."""
+        self.data.pop("failed")
+        serializer = ChunkBatchEmbedResponseSerializer(data=self.data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("failed", serializer.errors)
+
+    def test_help_text_on_all_fields(self) -> None:
+        """Every field has descriptive help_text."""
+        serializer = ChunkBatchEmbedResponseSerializer()
+        for field_name, field in serializer.fields.items():
+            with self.subTest(field=field_name):
+                self.assertTrue(
+                    field.help_text,
+                    f"Field '{field_name}' is missing help_text",
+                )
+
+
+# ---------------------------------------------------------------------------
+# Tests — ChunkReEmbedResponseSerializer
+# ---------------------------------------------------------------------------
+
+
+class ChunkReEmbedResponseSerializerTests(TestCase):
+    """Validate the re-embed response serializer for POST /chunks/{chunk_id}/re-embed."""
+
+    def setUp(self) -> None:
+        self.data = {
+            "chunk_id": uuid.uuid4(),
+            "embedding_updated": True,
+        }
+
+    def test_valid_data_passes(self) -> None:
+        """All fields present passes."""
+        serializer = ChunkReEmbedResponseSerializer(data=self.data)
+        self.assertTrue(serializer.is_valid())
+
+    def test_serializes_output(self) -> None:
+        """Output has correct types."""
+        serializer = ChunkReEmbedResponseSerializer(instance=self.data)
+        output = serializer.data
+        self.assertEqual(output["chunk_id"], str(self.data["chunk_id"]))
+        self.assertTrue(output["embedding_updated"])
+
+    def test_embedding_updated_true(self) -> None:
+        """Boolean ``True`` is valid."""
+        self.data["embedding_updated"] = True
+        serializer = ChunkReEmbedResponseSerializer(data=self.data)
+        self.assertTrue(serializer.is_valid())
+
+    def test_embedding_updated_false(self) -> None:
+        """Boolean ``False`` is valid."""
+        self.data["embedding_updated"] = False
+        serializer = ChunkReEmbedResponseSerializer(data=self.data)
+        self.assertTrue(serializer.is_valid())
+
+    def test_missing_chunk_id_returns_error(self) -> None:
+        """Omitting ``chunk_id`` fails."""
+        self.data.pop("chunk_id")
+        serializer = ChunkReEmbedResponseSerializer(data=self.data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("chunk_id", serializer.errors)
+
+    def test_missing_embedding_updated_returns_error(self) -> None:
+        """Omitting ``embedding_updated`` fails."""
+        self.data.pop("embedding_updated")
+        serializer = ChunkReEmbedResponseSerializer(data=self.data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("embedding_updated", serializer.errors)
+
+    def test_help_text_on_all_fields(self) -> None:
+        """Every field has descriptive help_text."""
+        serializer = ChunkReEmbedResponseSerializer()
         for field_name, field in serializer.fields.items():
             with self.subTest(field=field_name):
                 self.assertTrue(

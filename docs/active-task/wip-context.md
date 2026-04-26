@@ -1,34 +1,26 @@
-# WIP Context — Task 2 of Epic E-05 (Embedding & Vector Storage)
+# WIP Context — Task 3 of Epic E-05 (Embedding & Vector Storage)
 
 ## Status: ✅ COMPLETED
 
 ## What Was Completed
 
-### Source Code Created
-1. **`src/backend/documents/services/embedding_service.py`** — Core embedding service with 5 functions:
-   - `generate_embedding(text)` — Single text embedding with exponential backoff retry (3 retries, 2^retry seconds)
-   - `batch_generate_embeddings(texts)` — Batch embedding with sub-batching (50 per sub-batch), maps results back by index
-   - `generate_embeddings_for_document(document_id)` — Full-document embedding with ProcessingTask progress tracking
-   - `batch_embed_chunks(chunk_ids)` — On-demand chunk embedding returning `{"processed": N, "skipped": M, "failed": K}`
-   - `reembed_chunk(chunk_id)` — Single chunk re-embedding
+### Source Code Modified
 
-2. **`src/backend/documents/tests/test_embedding_service.py`** — 24 test cases covering:
-   - `generate_embedding`: success, empty text, rate-limit retry, rate-limit exhausted, APIError, AuthenticationError, APIConnectionError
-   - `batch_generate_embeddings`: success, mixed failures, sub-batch splitting (120 texts → 3 sub-batches), all empty, rate-limit retry
-   - `generate_embeddings_for_document`: success, no chunks, all already embedded, not found, partial failures, batch progress
-   - `batch_embed_chunks`: mixed state, invalid IDs, all already embedded
-   - `reembed_chunk`: success, not found, failure
+1. **`src/backend/documents/serializers.py`** — Added 4 new serializer classes after `DocumentChunkSerializer`:
+   - `DocumentEmbedResponseSerializer` — Response serializer for `POST /documents/{id}/embed` (returns task metadata: `task_id`, `task_type` default `"embed"`, `status` default `"pending"`, `document_id`, `total_chunks`)
+   - `ChunkBatchEmbedRequestSerializer` — Request serializer for `POST /chunks/batch-embed` (validates `chunk_ids` list of UUIDs)
+   - `ChunkBatchEmbedResponseSerializer` — Response serializer for `POST /chunks/batch-embed` (returns `processed`, `skipped`, `failed` counts)
+   - `ChunkReEmbedResponseSerializer` — Response serializer for `POST /chunks/{chunk_id}/re-embed` (returns `chunk_id`, `embedding_updated` boolean)
 
-### Key Design Decisions
-- **OpenAI client**: Created per-call via `_get_openai_client()` helper (not global singleton) to avoid Django settings import-time issues
-- **Retry strategy**: Manual exponential backoff (no `tenacity` dependency) — 3 retries with 2^attempt seconds delay
-- **Error handling**: All API errors caught and logged; functions return `None` or error dicts (not exceptions)
-- **Batch size**: 50 per sub-batch as specified in PRD
-- **Queryset evaluation**: `generate_embeddings_for_document` evaluates chunks into a list upfront to avoid queryset re-evaluation issues when saving embeddings mid-batch
+2. **`src/backend/documents/tests/test_serializers.py`** — Added 4 new test classes (28 test methods total):
+   - `DocumentEmbedResponseSerializerTests` — 8 tests covering valid data, serialized output, default values, missing fields, and help_text
+   - `ChunkBatchEmbedRequestSerializerTests` — 5 tests covering valid UUIDs, empty list, invalid UUID, missing field, and help_text
+   - `ChunkBatchEmbedResponseSerializerTests` — 7 tests covering valid data, serialized output, zero counts, missing fields, and help_text
+   - `ChunkReEmbedResponseSerializerTests` — 7 tests covering valid data, serialized output, boolean values, missing fields, and help_text
 
 ### Test Results
-- **24/24 tests PASSED** with mocked OpenAI calls
-- No new dependencies required
+- **55/55 tests PASSED** (27 existing + 28 new)
+- All new serializers follow the existing conventions: `serializers.Serializer` base class, `help_text` on every field, class-level docstrings
 
 ## Next Steps
-- Proceed to Task 3 of Epic E-05 (Celery Task for Embedding)
+- Proceed to Task 4 of Epic E-05 (Embedding Views)

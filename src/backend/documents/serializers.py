@@ -121,3 +121,72 @@ class DocumentChunkSerializer(serializers.Serializer):
     metadata = serializers.JSONField(
         help_text="Additional metadata associated with the chunk.",
     )
+
+
+class DocumentEmbedResponseSerializer(serializers.Serializer):
+    """Response serializer for POST /documents/{id}/embed.
+
+    Returns task metadata immediately after triggering the embedding
+    Celery task for all un-embedded chunks of a document.
+    """
+
+    task_id = serializers.UUIDField(
+        help_text="UUID of the Celery task processing the embedding.",
+    )
+    task_type = serializers.CharField(
+        default="embed",
+        help_text="Type of processing task (always 'embed').",
+    )
+    status = serializers.CharField(
+        default="pending",
+        help_text="Initial status of the embedding task.",
+    )
+    document_id = serializers.UUIDField(
+        help_text="UUID of the document being embedded.",
+    )
+    total_chunks = serializers.IntegerField(
+        help_text="Number of chunks queued for embedding.",
+    )
+
+
+class ChunkBatchEmbedRequestSerializer(serializers.Serializer):
+    """Validate the incoming chunk_ids list for batch embedding.
+
+    Accepts a list of UUIDs identifying which chunks to embed.
+    """
+
+    chunk_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        help_text="List of chunk UUIDs to embed.",
+    )
+
+
+class ChunkBatchEmbedResponseSerializer(serializers.Serializer):
+    """Response serializer for POST /chunks/batch-embed.
+
+    Provides a summary of the batch embedding operation.
+    """
+
+    processed = serializers.IntegerField(
+        help_text="Number of chunks successfully embedded.",
+    )
+    skipped = serializers.IntegerField(
+        help_text="Number of chunks skipped (already had embeddings).",
+    )
+    failed = serializers.IntegerField(
+        help_text="Number of chunks that failed to embed.",
+    )
+
+
+class ChunkReEmbedResponseSerializer(serializers.Serializer):
+    """Response serializer for POST /chunks/{chunk_id}/re-embed.
+
+    Indicates whether the chunk's embedding was successfully regenerated.
+    """
+
+    chunk_id = serializers.UUIDField(
+        help_text="UUID of the chunk that was re-embedded.",
+    )
+    embedding_updated = serializers.BooleanField(
+        help_text="Whether the embedding was successfully updated.",
+    )
