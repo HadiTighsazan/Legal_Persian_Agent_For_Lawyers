@@ -8,7 +8,7 @@
 | E01 | Project Scaffolding & DevOps | Initialize monorepo, Docker Compose setup (Django, PostgreSQL+pgvector, Redis, Celery, Nginx), environment config, CI skeleton | ✅ Done |
 | E02 | Authentication & User Management | JWT-based register/login/refresh/logout, user model, profile endpoints, middleware guards | ✅ Done |
 | E03 | Document Upload & Storage | File upload endpoint, S3/local storage abstraction, document metadata model, file validation (type, size) | ✅ Done |
-| E04 | Document Processing Pipeline | Celery tasks for text extraction (PyMuPDF), chunking strategy, processing_tasks status tracking, error handling | ⏳ Todo |
+| E04 | Document Processing Pipeline | Celery tasks for text extraction (PyMuPDF), chunking strategy, processing_tasks status tracking, error handling | ✅ Done |
 | E05 | Embedding & Vector Storage | OpenAI embedding generation per chunk, pgvector storage, batch processing, re-embedding support | ⏳ Todo |
 | E06 | Semantic Search & Retrieval | Vector similarity search endpoint, relevance scoring, top-k retrieval, metadata filtering | ⏳ Todo |
 | E07 | Conversation & Q&A Engine | LangChain RAG chain, conversation/message models, context injection, citation tracking, hallucination mitigation | ⏳ Todo |
