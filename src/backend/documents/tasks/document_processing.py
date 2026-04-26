@@ -366,3 +366,55 @@ def _handle_chain_error(self, document_id: str, task_type: str = "extract") -> N
             or "Chain-level failure: the Celery pipeline encountered an unrecoverable error"
         )
         document.save(update_fields=["processing_status", "processing_error"])
+
+
+# ---------------------------------------------------------------------------
+# Subtask 4d — Embed document chunks
+# ---------------------------------------------------------------------------
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(IntegrityError, OperationalError, ConnectionError, TimeoutError),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+)
+def embed_document(self, document_id: str, processing_task_id: str) -> None:
+    """Generate embeddings for all un-embedded chunks of a document.
+
+    This task is dispatched by :class:`~documents.views.DocumentEmbedView`
+    and delegates to :func:`~documents.services.embedding_service.generate_embeddings_for_document`.
+
+    Transient database/storage errors are automatically retried up to 3 times
+    with exponential backoff.
+
+    Args:
+        document_id: The UUID (as a string) of the :class:`Document` to process.
+        processing_task_id: The UUID (as a string) of the
+            :class:`~tasks.models.ProcessingTask` tracking this embed operation.
+    """
+    log_milestone(logger, document_id, "Starting embedding")
+
+    try:
+        processing_task = ProcessingTask.objects.get(id=processing_task_id)
+    except ProcessingTask.DoesNotExist:
+        logger.error(
+            "embed_document: ProcessingTask %s not found for document %s",
+            processing_task_id,
+            document_id,
+        )
+        return
+
+    # Update the ProcessingTask with the Celery task ID and mark as running.
+    processing_task.celery_task_id = self.request.id
+    processing_task.status = "running"
+    processing_task.started_at = timezone.now()
+    processing_task.save(update_fields=["celery_task_id", "status", "started_at"])
+
+    # Delegate to the embedding service.
+    # generate_embeddings_for_document handles its own ProcessingTask management
+    # internally via get_or_create. Since we already created the ProcessingTask
+    # in the view, the service function will find it and use it.
+    generate_embeddings_for_document(document_id)

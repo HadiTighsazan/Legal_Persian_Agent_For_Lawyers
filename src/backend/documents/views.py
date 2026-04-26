@@ -7,6 +7,12 @@ Also provides ``DocumentProcessView`` and ``DocumentProcessingStatusView``
 for the document processing pipeline (Epic E-04, Task 5), and
 ``DocumentChunksListView`` for retrieving paginated document chunks
 (Epic E-04, Task 6).
+
+Epic E-05 (Task 4) adds four new embedding views:
+- ``DocumentEmbedView`` — trigger embedding for a document
+- ``ChunkBatchEmbedView`` — batch-embed chunks by ID
+- ``ChunkReEmbedView`` — re-embed a single chunk
+- ``TaskStatusView`` — retrieve processing task status
 """
 
 import logging
@@ -20,10 +26,18 @@ from rest_framework.views import APIView
 
 from documents.models import Document, DocumentChunk
 from documents.serializers import (
+    ChunkBatchEmbedRequestSerializer,
+    ChunkBatchEmbedResponseSerializer,
+    ChunkReEmbedResponseSerializer,
     DocumentChunkSerializer,
+    DocumentEmbedResponseSerializer,
     DocumentResponseSerializer,
     DocumentUploadSerializer,
     ProcessingStatusSerializer,
+)
+from documents.services.embedding_service import (
+    batch_embed_chunks,
+    reembed_chunk,
 )
 from documents.services.processing_service import (
     build_task_data,
@@ -32,7 +46,7 @@ from documents.services.processing_service import (
 )
 from documents.services.upload_service import upload_document
 from documents.storage.base import StorageError
-from documents.tasks import process_document
+from documents.tasks import embed_document, process_document
 from tasks.models import ProcessingTask
 
 logger = logging.getLogger(__name__)
@@ -399,6 +413,191 @@ class DocumentChunksListView(APIView):
                 "next": page + 1 if page < total_pages else None,
                 "previous": page - 1 if page > 1 else None,
                 "results": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Embedding Views (Epic E-05, Task 4)
+# ---------------------------------------------------------------------------
+
+
+class DocumentEmbedView(APIView):
+    """Trigger embedding for all un-embedded chunks of a document.
+
+    **Endpoint:** ``POST /documents/<uuid:document_id>/embed/``
+
+    **Authentication:** Required.
+
+    **Responses:**
+        - ``202 Accepted`` — Embedding task created successfully.
+        - ``403 Forbidden`` — Document belongs to another user.
+        - ``404 Not Found`` — Document does not exist.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, document_id: str) -> Response:
+        try:
+            document = Document.objects.get(id=document_id)
+        except Document.DoesNotExist:
+            return Response(
+                {"error": "not_found", "message": "Document not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if document.user != request.user:
+            return Response(
+                {"error": "permission_denied", "message": "You do not have permission to embed this document."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Count un-embedded chunks.
+        total_chunks = DocumentChunk.objects.filter(
+            document=document,
+            embedding__isnull=True,
+        ).count()
+
+        # Create a ProcessingTask record.
+        processing_task = ProcessingTask.objects.create(
+            document=document,
+            task_type="embed",
+            status="pending",
+        )
+
+        # Dispatch the Celery task.
+        embed_document.delay(str(document.id), str(processing_task.id))
+
+        logger.info(
+            "Embedding triggered for document %s (task_id=%s, chunks=%d)",
+            document.id,
+            processing_task.id,
+            total_chunks,
+        )
+
+        # Build response using the existing serializer.
+        serializer = DocumentEmbedResponseSerializer(data={
+            "task_id": processing_task.id,
+            "task_type": "embed",
+            "status": "pending",
+            "document_id": document.id,
+            "total_chunks": total_chunks,
+        })
+        serializer.is_valid(raise_exception=True)
+
+        return Response(serializer.validated_data, status=status.HTTP_202_ACCEPTED)
+
+
+class ChunkBatchEmbedView(APIView):
+    """Embed a batch of chunks by their IDs.
+
+    **Endpoint:** ``POST /chunks/batch-embed/``
+
+    **Authentication:** Required.
+
+    **Request body:**
+        ``{"chunk_ids": ["<uuid>", "<uuid>", ...]}``
+
+    **Responses:**
+        - ``200 OK`` — Batch embedding completed.
+        - ``400 Bad Request`` — Invalid chunk_ids.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request) -> Response:
+        serializer = ChunkBatchEmbedRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        chunk_ids = [str(cid) for cid in serializer.validated_data["chunk_ids"]]
+        result = batch_embed_chunks(chunk_ids)
+
+        response_serializer = ChunkBatchEmbedResponseSerializer(data=result)
+        response_serializer.is_valid(raise_exception=True)
+
+        return Response(response_serializer.validated_data, status=status.HTTP_200_OK)
+
+
+class ChunkReEmbedView(APIView):
+    """Re-embed a single chunk by regenerating its embedding.
+
+    **Endpoint:** ``POST /chunks/<uuid:chunk_id>/re-embed/``
+
+    **Authentication:** Required.
+
+    **Responses:**
+        - ``200 OK`` — Re-embedding completed.
+        - ``403 Forbidden`` — Chunk belongs to another user's document.
+        - ``404 Not Found`` — Chunk does not exist.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, chunk_id: str) -> Response:
+        try:
+            chunk = DocumentChunk.objects.get(id=chunk_id)
+        except DocumentChunk.DoesNotExist:
+            return Response(
+                {"error": "not_found", "message": "Chunk not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if chunk.document.user != request.user:
+            return Response(
+                {"error": "permission_denied", "message": "You do not have permission to re-embed this chunk."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        result = reembed_chunk(str(chunk.id))
+
+        response_serializer = ChunkReEmbedResponseSerializer(data=result)
+        response_serializer.is_valid(raise_exception=True)
+
+        return Response(response_serializer.validated_data, status=status.HTTP_200_OK)
+
+
+class TaskStatusView(APIView):
+    """Retrieve the status of a processing task.
+
+    **Endpoint:** ``GET /tasks/<uuid:task_id>/``
+
+    **Authentication:** Required.
+
+    **Responses:**
+        - ``200 OK`` — Task status returned successfully.
+        - ``403 Forbidden`` — Task belongs to another user.
+        - ``404 Not Found`` — Task does not exist.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, task_id: str) -> Response:
+        try:
+            task = ProcessingTask.objects.get(id=task_id)
+        except ProcessingTask.DoesNotExist:
+            return Response(
+                {"error": "not_found", "message": "Task not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if task.document.user != request.user:
+            return Response(
+                {"error": "permission_denied", "message": "You do not have permission to view this task."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return Response(
+            {
+                "id": str(task.id),
+                "document_id": str(task.document.id),
+                "task_type": task.task_type,
+                "status": task.status,
+                "progress": task.progress,
+                "result": task.result,
+                "error_message": task.error_message,
+                "started_at": task.started_at.isoformat() if task.started_at else None,
+                "completed_at": task.completed_at.isoformat() if task.completed_at else None,
             },
             status=status.HTTP_200_OK,
         )

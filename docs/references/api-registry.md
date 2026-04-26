@@ -510,6 +510,118 @@ Both fields are optional. At least one should be provided for meaningful updates
 
 ---
 
+### ✅ Implemented Endpoints — Embedding Views (Epic E-05, Task 4)
+
+#### POST /documents/{document_id}/embed/
+**Description:** Trigger embedding for all un-embedded chunks of a document
+**Auth Required:** Yes
+**View:** `DocumentEmbedView`
+**Response:** `202 Accepted`
+```json
+{
+  "task_id": "uuid",
+  "task_type": "embed",
+  "status": "pending",
+  "document_id": "uuid",
+  "total_chunks": 5
+}
+```
+**Error Responses:**
+- `403 Forbidden`: Document belongs to another user
+- `404 Not Found`: Document does not exist
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies document ownership via `document.user != request.user`
+- Counts un-embedded chunks via `DocumentChunk.objects.filter(document=document, embedding__isnull=True).count()`
+- Creates a `ProcessingTask` with `task_type='embed'` and `status='pending'`
+- Dispatches `embed_document.delay(str(document.id), str(processing_task.id))` Celery task
+- Uses `DocumentEmbedResponseSerializer` for response validation
+
+---
+
+#### POST /chunks/batch-embed/
+**Description:** Embed a batch of chunks by their IDs
+**Auth Required:** Yes
+**View:** `ChunkBatchEmbedView`
+**Request Body:**
+```json
+{
+  "chunk_ids": ["<uuid>", "<uuid>"]
+}
+```
+**Response:** `200 OK`
+```json
+{
+  "processed": 3,
+  "skipped": 1,
+  "failed": 0
+}
+```
+**Error Responses:**
+- `400 Bad Request`: Invalid chunk_ids
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Validates request body with `ChunkBatchEmbedRequestSerializer`
+- Calls `batch_embed_chunks(chunk_ids)` from the embedding service
+- Uses `ChunkBatchEmbedResponseSerializer` for response validation
+
+---
+
+#### POST /chunks/{chunk_id}/re-embed/
+**Description:** Re-embed a single chunk by regenerating its embedding
+**Auth Required:** Yes
+**View:** `ChunkReEmbedView`
+**Response:** `200 OK`
+```json
+{
+  "chunk_id": "uuid",
+  "embedding_updated": true
+}
+```
+**Error Responses:**
+- `403 Forbidden`: Chunk belongs to another user's document
+- `404 Not Found`: Chunk does not exist
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies chunk ownership via `chunk.document.user != request.user`
+- Calls `reembed_chunk(str(chunk.id))` from the embedding service
+- Uses `ChunkReEmbedResponseSerializer` for response validation
+
+---
+
+#### GET /tasks/{task_id}/
+**Description:** Retrieve the status of a processing task
+**Auth Required:** Yes
+**View:** `TaskStatusView`
+**Response:** `200 OK`
+```json
+{
+  "id": "uuid",
+  "document_id": "uuid",
+  "task_type": "embed",
+  "status": "running",
+  "progress": 75,
+  "result": null,
+  "error_message": null,
+  "started_at": "2026-04-18T10:00:00Z",
+  "completed_at": null
+}
+```
+**Error Responses:**
+- `403 Forbidden`: Task belongs to another user
+- `404 Not Found`: Task does not exist
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies task ownership via `task.document.user != request.user`
+- Returns all task fields including `id`, `document_id`, `task_type`, `status`, `progress`, `result`, `error_message`, `started_at`, `completed_at`
+- Timestamps are ISO 8601 formatted
+
+---
+
 ## Conversations
 
 #### POST /conversations
