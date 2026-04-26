@@ -200,6 +200,14 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 - Use CASCADE delete for related records
 - JSONB for flexible metadata storage
 
+### Migration 0004 (E05-T1 — pgvector Embedding Support)
+- **File:** `src/backend/documents/migrations/0004_alter_documentchunk_embedding.py`
+- **Changes:**
+  - Added `pgvector.django` to `INSTALLED_APPS`
+  - Changed `embedding` column in `document_chunks` table from `TEXT` to `VECTOR(1536)` via `VectorField`
+  - Created `idx_chunks_embedding` ivfflat index on `embedding` for cosine similarity search
+  - Added `openai>=1.0.0` and `pgvector>=0.2.0` to `requirements.txt`
+
 ### Migration 0002 (E04-T4-T5 Bug Fixes)
 - **File:** `src/backend/users/migrations/0002_rename_password_hash_to_password.py`
 - **Changes:**

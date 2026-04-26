@@ -5,6 +5,7 @@ import uuid
 
 from django.db import models
 from django.utils import timezone
+from pgvector.django import VectorField
 
 from users.models import User
 
@@ -87,9 +88,7 @@ class DocumentChunk(models.Model):
     page_end = models.IntegerField()
     content = models.TextField()
     token_count = models.IntegerField(null=True, blank=True)
-    # Note: For pgvector support, we'll need django-pgvector or similar
-    # embedding = VectorField(dimension=1536, null=True, blank=True)
-    embedding = models.TextField(null=True, blank=True)  # Temporary until pgvector is set up
+    embedding = VectorField(dimensions=1536, null=True, blank=True)
     metadata = models.JSONField(default=dict)
     created_at = models.DateTimeField(default=timezone.now)
     

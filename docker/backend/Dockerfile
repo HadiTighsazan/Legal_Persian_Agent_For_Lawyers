@@ -12,9 +12,13 @@ ENV PIP_NO_CACHE_DIR=1
 # Set working directory
 WORKDIR /app
 
-# Configure Iranian PyPI mirror (fallback mirror)
+# Configure Iranian PyPI mirror with official PyPI as fallback
+# (django-pgvector is not available on the Liara mirror)
 RUN pip config set global.index-url https://package-mirror.liara.ir/repository/pypi/simple && \
+    pip config set global.extra-index-url https://pypi.org/simple && \
     pip config set global.trusted-host package-mirror.liara.ir && \
+    pip config set global.trusted-host pypi.org && \
+    pip config set global.trusted-host files.pythonhosted.org && \
     pip config set global.timeout 60 && \
     pip config set global.retries 5
 
