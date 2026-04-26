@@ -21,6 +21,7 @@ from django.utils import timezone
 from documents.models import Document, DocumentChunk
 from documents.services.chunking_service import ChunkingService
 from documents.tasks.document_processing import (
+    _handle_chain_error,
     chunk_document,
     extract_text_from_pdf,
     process_document,
@@ -178,8 +179,8 @@ class ExtractTextFromPdfTests(TestCase):
         self._run_task()
         self.document.refresh_from_db()
 
-        # The task sets processing_status='processing' at start.
-        self.assertEqual(self.document.processing_status, "processing")
+        # Bug #1 fix: extraction now sets processing_status to "completed" on success.
+        self.assertEqual(self.document.processing_status, "completed")
         self.assertGreater(self.document.extracted_text_length, 0)
         self.assertEqual(self.document.total_pages, 2)
 
@@ -354,6 +355,72 @@ class ChunkDocumentTests(TestCase):
         self.assertEqual(chunk_task.status, "failed")
         self.assertIn("Simulated failure", chunk_task.error_message)
 
+    # -- Bug #2 protection: chunk_document must not overwrite "failed" status --
+
+    def test_does_not_overwrite_failed_status_on_empty_text(self) -> None:
+        """If document is already 'failed', chunk_document must not overwrite to 'completed'."""
+        # Simulate a document that was already marked as failed by extraction.
+        self.document.processing_status = "failed"
+        self.document.processing_error = "PDF file is corrupted or unreadable"
+        self.document.save(update_fields=["processing_status", "processing_error"])
+
+        # Run chunk_document with empty text (as would happen after a failed extract).
+        self._run_task("")
+
+        self.document.refresh_from_db()
+        # Bug #2: processing_status must remain "failed", not be overwritten to "completed".
+        self.assertEqual(self.document.processing_status, "failed")
+        self.assertEqual(self.document.processing_error, "PDF file is corrupted or unreadable")
+
+        # The chunk ProcessingTask should still be marked completed (it handled empty text).
+        chunk_task = ProcessingTask.objects.get(
+            document=self.document,
+            task_type="chunk",
+        )
+        self.assertEqual(chunk_task.status, "completed")
+
+    def test_does_not_overwrite_failed_status_on_successful_chunking(self) -> None:
+        """If document is already 'failed', chunk_document must not overwrite even on success."""
+        self.document.processing_status = "failed"
+        self.document.processing_error = "Previous error"
+        self.document.save(update_fields=["processing_status", "processing_error"])
+
+        # Run chunk_document with valid text (would succeed normally).
+        self._run_task("[PAGE 1]\nSome text here.")
+
+        self.document.refresh_from_db()
+        # Must remain "failed" — the chunk task succeeded but the overall pipeline failed.
+        self.assertEqual(self.document.processing_status, "failed")
+        self.assertEqual(self.document.processing_error, "Previous error")
+
+    # -- Test Gap #1: extract-success + chunk-failure scenario (Bug #1) --
+
+    def test_extract_success_then_chunk_failure_sets_failed_status(self) -> None:
+        """If extraction succeeds but chunking fails, document should be 'failed', not 'processing'."""
+        # First, simulate a successful extraction by setting processing_status to "completed".
+        self.document.processing_status = "completed"
+        self.document.total_chunks = 0
+        self.document.save(update_fields=["processing_status", "total_chunks"])
+
+        # Now run chunk_document with a mocked ChunkingService that raises.
+        with patch.object(
+            ChunkingService, "chunk_text", side_effect=ValueError("Chunking failed")
+        ):
+            self._run_task("[PAGE 1]\nSome text to chunk.")
+
+        self.document.refresh_from_db()
+        # The document should be "failed", not stuck at "processing" or "completed".
+        self.assertEqual(self.document.processing_status, "failed")
+        self.assertIn("Chunking failed", self.document.processing_error)
+
+        # The chunk task should be marked as failed.
+        chunk_task = ProcessingTask.objects.get(
+            document=self.document,
+            task_type="chunk",
+        )
+        self.assertEqual(chunk_task.status, "failed")
+        self.assertIn("Chunking failed", chunk_task.error_message)
+
     # -- Document not found -----------------------------------------------
 
     def test_nonexistent_document_does_not_raise(self) -> None:
@@ -455,3 +522,110 @@ class ProcessDocumentTests(TestCase):
         """If the document does not exist, return None."""
         result = process_document("00000000-0000-0000-0000-000000000000")
         self.assertIsNone(result)
+
+    def test_passes_link_error_to_apply_async(self) -> None:
+        """The chain should be submitted with a link_error callback."""
+        with patch("documents.tasks.document_processing.chain") as mock_chain:
+            mock_result = MagicMock()
+            mock_result.id = "chain-celery-id-link-error"
+            mock_chain_obj = MagicMock()
+            mock_chain_obj.apply_async.return_value = mock_result
+            mock_chain.return_value = mock_chain_obj
+
+            process_document(str(self.document.id))
+
+            # Verify apply_async was called with link_error.
+            mock_chain_obj.apply_async.assert_called_once()
+            _call_kwargs = mock_chain_obj.apply_async.call_args.kwargs
+            self.assertIn("link_error", _call_kwargs)
+            self.assertEqual(len(_call_kwargs["link_error"]), 1)
+
+
+# ---------------------------------------------------------------------------
+# Tests — _handle_chain_error (link_error callback)
+# ---------------------------------------------------------------------------
+
+
+class HandleChainErrorTests(TestCase):
+    """Tests for the :func:`_handle_chain_error` error callback."""
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(
+            email="chain-error@example.com",
+            password="testpass123",
+        )
+        self.document = Document.objects.create(
+            user=self.user,
+            title="Chain Error Test",
+            filename="chain_error.pdf",
+            original_filename="chain_error.pdf",
+            file_path="/tmp/fake.pdf",
+            file_size=500,
+            mime_type="application/pdf",
+            processing_status="processing",
+        )
+
+    def _run_callback(self, document_id: str | None = None, task_type: str = "extract") -> None:
+        """Run _handle_chain_error synchronously with a mock Celery request."""
+        with _mock_celery_request(_handle_chain_error):
+            _handle_chain_error(document_id or str(self.document.id), task_type=task_type)
+
+    def test_marks_pending_task_as_failed(self) -> None:
+        """A pending ProcessingTask should be marked as failed."""
+        ProcessingTask.objects.create(
+            document=self.document,
+            task_type="extract",
+            status="pending",
+        )
+        self._run_callback()
+
+        task = ProcessingTask.objects.get(document=self.document, task_type="extract")
+        self.assertEqual(task.status, "failed")
+        self.assertIsNotNone(task.completed_at)
+        self.assertIn("Chain-level failure", task.error_message)
+
+    def test_marks_running_task_as_failed(self) -> None:
+        """A running ProcessingTask should be marked as failed."""
+        ProcessingTask.objects.create(
+            document=self.document,
+            task_type="extract",
+            status="running",
+            started_at=timezone.now(),
+        )
+        self._run_callback()
+
+        task = ProcessingTask.objects.get(document=self.document, task_type="extract")
+        self.assertEqual(task.status, "failed")
+
+    def test_marks_document_as_failed(self) -> None:
+        """The document should be marked as failed if not already terminal."""
+        ProcessingTask.objects.create(
+            document=self.document,
+            task_type="extract",
+            status="pending",
+        )
+        self._run_callback()
+
+        self.document.refresh_from_db()
+        self.assertEqual(self.document.processing_status, "failed")
+        self.assertIn("Chain-level failure", self.document.processing_error)
+
+    def test_does_not_overwrite_terminal_document_status(self) -> None:
+        """If document is already 'completed', _handle_chain_error should not change it."""
+        self.document.processing_status = "completed"
+        self.document.save(update_fields=["processing_status"])
+
+        ProcessingTask.objects.create(
+            document=self.document,
+            task_type="extract",
+            status="pending",
+        )
+        self._run_callback()
+
+        self.document.refresh_from_db()
+        self.assertEqual(self.document.processing_status, "completed")
+
+    def test_nonexistent_document_does_not_raise(self) -> None:
+        """If the document does not exist, the callback should return gracefully."""
+        # Should not raise.
+        self._run_callback(document_id="00000000-0000-0000-0000-000000000000")

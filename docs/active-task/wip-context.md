@@ -2,39 +2,74 @@
 
 ## What Was Just Completed
 
-Applied comprehensive bug fixes to Tasks 4 (Celery Tasks) and 5 (Processing Status API) of Epic E-04. All 12 identified bugs were addressed across 3 phases.
+Applied the 6 issues identified in the Task 4 code review to [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py) and [`src/backend/documents/tests/test_tasks.py`](src/backend/documents/tests/test_tasks.py).
+
+### 🔴 Bug #1 Fixed: `extract_text_from_pdf` now sets `processing_status = "completed"` on success
+
+**File:** [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py:149-153)
+
+**Change:** Added `document.processing_status = "completed"` to the `save(update_fields=...)` call at line 152-153 (both the normal extraction path and the empty-PDF path at line 131). Previously, extraction only set `processing_status = "processing"` at start and never updated it to `"completed"`, which meant that if chunking subsequently failed, the document would remain stuck at `"processing"`.
+
+### 🔴 Bug #2 Fixed: `chunk_document` no longer overwrites `"failed"` status
+
+**File:** [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py:231-278)
+
+**Change:** Both the empty-text handler (line 234) and the successful-chunking path (line 274) now check `if document.processing_status != "failed"` before setting `processing_status = "completed"`. If the document was already marked as `"failed"` by `_fail_extract()` (e.g., corrupted PDF), the failed status is preserved and only `total_chunks` is saved.
+
+### 🟡 Design Concern #1 Fixed: `link_error` callback on the Celery chain
+
+**File:** [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py:314-421)
+
+**Change:**
+- Added a new [`_handle_chain_error`](src/backend/documents/tasks/document_processing.py:314) shared task that acts as a `link_error` callback. It finds the most recent `pending`/`running` `ProcessingTask` for the document and marks it as `"failed"`, and also marks the document as `"failed"` if not already in a terminal state.
+- [`process_document`](src/backend/documents/tasks/document_processing.py:364) now passes `link_error=[_handle_chain_error.s(document_id, task_type="extract")]` to `chain_obj.apply_async()`.
+
+### 🟡 Design Concern #2 Fixed: Retry mechanism for transient failures
+
+**File:** [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py:41-48, 187-194)
+
+**Change:** Both [`extract_text_from_pdf`](src/backend/documents/tasks/document_processing.py:41) and [`chunk_document`](src/backend/documents/tasks/document_processing.py:187) now use:
+```python
+@shared_task(
+    bind=True,
+    autoretry_for=(IntegrityError, OperationalError, ConnectionError, TimeoutError),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+)
+```
+Transient DB/storage errors are retried up to 3 times with exponential backoff (max 60s). Permanent PDF errors (corrupted, password-protected) are still caught and fail immediately without retry.
+
+### 🟡 Test Gap #1 Filled: Extract-success + chunk-failure scenario
+
+**File:** [`src/backend/documents/tests/test_tasks.py`](src/backend/documents/tests/test_tasks.py:398-422)
+
+**Test:** [`test_extract_success_then_chunk_failure_sets_failed_status`](src/backend/documents/tests/test_tasks.py:398) — Sets `processing_status = "completed"` (simulating successful extraction), then runs `chunk_document` with a mocked `ChunkingService` that raises. Verifies the document ends up as `"failed"` (not stuck at `"processing"` or incorrectly `"completed"`).
+
+### 🟡 Test Gap #2 Filled: Extract-fail + chunk-on-empty scenario
+
+**File:** [`src/backend/documents/tests/test_tasks.py`](src/backend/documents/tests/test_tasks.py:360-394)
+
+**Tests:**
+- [`test_does_not_overwrite_failed_status_on_empty_text`](src/backend/documents/tests/test_tasks.py:360) — Sets `processing_status = "failed"`, runs `chunk_document("")`, verifies status remains `"failed"` and `processing_error` is preserved.
+- [`test_does_not_overwrite_failed_status_on_successful_chunking`](src/backend/documents/tests/test_tasks.py:382) — Same setup but with valid text; verifies `"failed"` status is preserved even when chunking succeeds.
+
+### Additional Test Coverage
+
+- [`test_passes_link_error_to_apply_async`](src/backend/documents/tests/test_tasks.py:526) — Verifies `process_document` passes `link_error` to `chain_obj.apply_async()`.
+- **`HandleChainErrorTests`** class (6 tests) — Comprehensive tests for the `_handle_chain_error` callback: marks pending/running tasks as failed, marks document as failed, does not overwrite terminal document status, handles nonexistent document gracefully.
+
+### Updated Existing Test
+
+- [`test_updates_document_fields`](src/backend/documents/tests/test_tasks.py:174) — Now expects `processing_status = "completed"` (was `"processing"`) after successful extraction, reflecting Bug #1 fix.
 
 ### Files Modified
 
-1. **`src/backend/documents/tasks/document_processing.py`** — Major refactor:
-   - **Bug #2**: Removed `@shared_task(bind=True)` from `process_document` — it's now a regular Python function called directly from the view, eliminating the deadlock risk of a Celery task submitting `apply_async()`.
-   - **Bug #3**: `chunk_document` now creates its own `ProcessingTask` with `task_type="chunk"` instead of reusing/modifying the "extract" task's status.
-   - **Bug #6**: PDF path resolution now checks `os.path.isabs()` first before joining with `MEDIA_ROOT`, fixing the issue for absolute paths returned by local storage.
-   - **Bug #5**: `process_document` now checks for both `"processing"` AND `"completed"` status to prevent duplicate processing.
-   - **Bug #12**: Improved error message for corrupted PDFs to "PDF file is corrupted or unreadable".
-
-2. **`src/backend/documents/views.py`** — Major refactor:
-   - **Bug #4**: Removed `.delay()` call since `process_document` is no longer a Celery task. Now calls `process_document()` directly and uses its return value (the chain's task ID).
-   - **Bug #5**: Added check for `"completed"` status alongside `"processing"` to prevent re-processing.
-   - **Bug #7**: Added Celery `AsyncResult` healing mechanism — checks real-time Celery state for tasks stuck at "running"/"pending" and updates DB accordingly.
-   - **Bug #8**: Status view now returns `"pending"` when no ProcessingTasks exist (document hasn't been processed yet), vs using `document.processing_status` directly.
-   - **Bug #10**: Replaced `get_object_or_404` with explicit `try/except Document.DoesNotExist` returning proper JSON error responses.
-   - **Bug #11**: Standardized all error responses to `{"error": "error_code", "message": "..."}` format matching the API registry.
-
-3. **`src/backend/documents/tests/test_tasks.py`** — Updated tests:
-   - **Bug #1**: Fixed `chunk_document` test calls to match the correct argument order: `chunk_document(extracted_text, document_id)`.
-   - **Bug #3**: Added `test_creates_chunk_processing_task` to verify a "chunk" ProcessingTask is created.
-   - **Bug #5**: Added `test_skips_if_already_completed` test.
-   - Updated `process_document` tests since it's no longer a Celery task (no `.delay()` mock needed).
-
-4. **`src/backend/tasks/models.py`** — **Bug #9**: Removed `unique=True` from `celery_task_id`, replaced with `db_index=True`.
-
-5. **`src/backend/tasks/migrations/0002_alter_celery_task_id_unique.py`** — New migration for the `celery_task_id` constraint change.
-
-### Reference Documentation Updated
-
-6. **`docs/references/database-schema.md`** — Updated `celery_task_id` description to reflect removed UNIQUE constraint.
-7. **`docs/references/api-registry.md`** — Updated implementation notes for `POST /documents/{id}/process/` to reflect new behavior.
+| File | Change |
+|------|--------|
+| `src/backend/documents/tasks/document_processing.py` | Bug #1, Bug #2, Design #1 (link_error), Design #2 (retry) |
+| `src/backend/documents/tests/test_tasks.py` | Test Gap #1, Test Gap #2, link_error tests, `_handle_chain_error` tests, updated existing test |
 
 ---
 
@@ -44,7 +79,7 @@ Applied comprehensive bug fixes to Tasks 4 (Celery Tasks) and 5 (Processing Stat
 
 #### Bug #1 (Critical): Password field/property setter in `users/models.py`
 - **Problem**: The `User` model used a custom `password_hash` field with a `@property password` getter/setter that bypassed Django's native password hashing. The setter had flawed logic that couldn't reliably detect raw vs. already-hashed passwords.
-- **Fix**: 
+- **Fix**:
   - Removed `password_hash = models.CharField(max_length=255)` field
   - Removed `@property password` getter and `@password.setter`
   - Removed custom `set_password()` method
@@ -107,6 +142,10 @@ Applied comprehensive bug fixes to Tasks 4 (Celery Tasks) and 5 (Processing Stat
 - `chunk_document` creates its own `ProcessingTask` with `task_type="chunk"` and manages its own lifecycle
 - `extract_text_from_pdf` manages the "extract" ProcessingTask as before
 - The Celery chain still works: `extract_text_from_pdf → chunk_document`, with extracted text passed as first arg
+- **Bug #1 fixed**: `extract_text_from_pdf` now sets `document.processing_status = "completed"` on success
+- **Bug #2 fixed**: `chunk_document` preserves `processing_status = "failed"` if extraction already failed
+- **Design #1 fixed**: `_handle_chain_error` callback catches chain-level failures via `link_error`
+- **Design #2 fixed**: Both tasks have `autoretry_for` with exponential backoff for transient DB/storage errors
 - Error responses follow the API registry format
 - Celery `AsyncResult` healing prevents stale "running" statuses
 - PDF path resolution works for both relative and absolute paths
@@ -114,8 +153,10 @@ Applied comprehensive bug fixes to Tasks 4 (Celery Tasks) and 5 (Processing Stat
 - JWT authentication is handled entirely by DRF's `JWTAuthentication` (no custom middleware)
 - Refresh token rotation is fully implemented (old token revoked, new token issued on each refresh)
 - Refresh token lifetime is configurable via `SIMPLE_JWT['REFRESH_TOKEN_LIFETIME']`
-- All 117 tests pass
 
 ## Exact Next Step
 
-No pending steps. All bugs are fixed and all tests pass.
+Run the tests to verify all changes pass. Expected command:
+```
+docker-compose exec backend python -m pytest documents/tests/test_tasks.py --ds=config.settings --reuse-db -v
+```

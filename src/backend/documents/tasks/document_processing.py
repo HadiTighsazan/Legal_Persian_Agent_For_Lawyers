@@ -19,7 +19,7 @@ import traceback
 import os
 
 from celery import chain, shared_task
-from django.db import transaction
+from django.db import transaction, IntegrityError, OperationalError
 from django.utils import timezone
 
 import fitz  # PyMuPDF
@@ -38,12 +38,23 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-@shared_task(bind=True)
+@shared_task(
+    bind=True,
+    autoretry_for=(IntegrityError, OperationalError, ConnectionError, TimeoutError),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+)
 def extract_text_from_pdf(self, document_id: str) -> str:
     """Open a PDF, extract text page-by-page, and return text with page markers.
 
     The returned string uses ``[PAGE N]`` markers so that downstream tasks
     (chunking) can track which pages each chunk spans.
+
+    Transient database/storage errors are automatically retried up to 3 times
+    with exponential backoff. Permanent PDF errors (corrupted, password-protected)
+    are caught and marked as failed without retry.
 
     Args:
         document_id: The UUID (as a string) of the :class:`Document` to process.
@@ -117,7 +128,8 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         logger.info("extract_text_from_pdf: Document %s has 0 pages — returning empty string", document_id)
         pdf_document.close()
         document.extracted_text_length = 0
-        document.save(update_fields=["extracted_text_length"])
+        document.processing_status = "completed"
+        document.save(update_fields=["extracted_text_length", "processing_status"])
         processing_task.status = "completed"
         processing_task.completed_at = timezone.now()
         processing_task.save(update_fields=["status", "completed_at"])
@@ -134,10 +146,11 @@ def extract_text_from_pdf(self, document_id: str) -> str:
 
     extracted_text = "\n".join(page_texts)
 
-    # Update document metadata.
+    # Update document metadata and mark as completed at the extraction level.
     document.extracted_text_length = len(extracted_text)
     document.total_pages = num_pages
-    document.save(update_fields=["extracted_text_length", "total_pages"])
+    document.processing_status = "completed"
+    document.save(update_fields=["extracted_text_length", "total_pages", "processing_status"])
 
     # Mark the ProcessingTask as completed.
     processing_task.status = "completed"
@@ -171,12 +184,22 @@ def _fail_extract(processing_task: ProcessingTask, document: Document, error_mes
 # ---------------------------------------------------------------------------
 
 
-@shared_task(bind=True)
+@shared_task(
+    bind=True,
+    autoretry_for=(IntegrityError, OperationalError, ConnectionError, TimeoutError),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+)
 def chunk_document(self, extracted_text: str, document_id: str) -> None:
     """Split ``extracted_text`` into chunks and persist them to the database.
 
     This task is designed to be the second link in a Celery chain, receiving
     ``extracted_text`` from :func:`extract_text_from_pdf`.
+
+    Transient database/storage errors are automatically retried up to 3 times
+    with exponential backoff.
 
     Args:
         extracted_text: The full extracted text (with page markers) returned by
@@ -204,8 +227,15 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
     if not extracted_text or not extracted_text.strip():
         logger.info("chunk_document: Document %s has no extracted text — skipping chunking", document_id)
         document.total_chunks = 0
-        document.processing_status = "completed"
-        document.save(update_fields=["total_chunks", "processing_status"])
+
+        # Bug #2 fix: Don't overwrite processing_status if extraction already failed.
+        # If the document is already in a "failed" state (e.g., corrupted PDF),
+        # preserve that status rather than overwriting it to "completed".
+        if document.processing_status != "failed":
+            document.processing_status = "completed"
+            document.save(update_fields=["total_chunks", "processing_status"])
+        else:
+            document.save(update_fields=["total_chunks"])
 
         chunk_task.status = "completed"
         chunk_task.completed_at = timezone.now()
@@ -239,8 +269,13 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
 
         # Update document metadata.
         document.total_chunks = len(chunks_to_create)
-        document.processing_status = "completed"
-        document.save(update_fields=["total_chunks", "processing_status"])
+
+        # Bug #2 fix: Don't overwrite processing_status if extraction already failed.
+        if document.processing_status != "failed":
+            document.processing_status = "completed"
+            document.save(update_fields=["total_chunks", "processing_status"])
+        else:
+            document.save(update_fields=["total_chunks"])
 
         # Mark the chunk ProcessingTask as completed.
         chunk_task.status = "completed"
@@ -276,6 +311,56 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
 # a Celery task submitting more Celery tasks via apply_async().
 
 
+@shared_task(bind=True)
+def _handle_chain_error(self, document_id: str, task_type: str = "extract") -> None:
+    """Error callback for the Celery chain.
+
+    When the chain fails (e.g., worker crash, unhandled exception), this task
+    is triggered via ``link_error`` to update the ``ProcessingTask`` status
+    to ``"failed"`` so it doesn't remain stuck at ``"pending"`` forever.
+
+    Args:
+        document_id: The UUID (as a string) of the :class:`Document`.
+        task_type: The ``ProcessingTask.task_type`` to mark as failed
+            (default ``"extract"``).
+    """
+    logger.info(
+        "_handle_chain_error: Chain failed for document %s — marking %s task as failed",
+        document_id,
+        task_type,
+    )
+    try:
+        document = Document.objects.get(id=document_id)
+    except Document.DoesNotExist:
+        logger.error("_handle_chain_error: Document %s not found", document_id)
+        return
+
+    # Find the most recent pending/running ProcessingTask of the given type.
+    processing_task = ProcessingTask.objects.filter(
+        document=document,
+        task_type=task_type,
+        status__in=("pending", "running"),
+    ).order_by("-created_at").first()
+
+    if processing_task:
+        processing_task.status = "failed"
+        processing_task.error_message = (
+            processing_task.error_message
+            or "Chain-level failure: the Celery pipeline encountered an unrecoverable error"
+        )
+        processing_task.completed_at = timezone.now()
+        processing_task.save(update_fields=["status", "error_message", "completed_at"])
+
+    # Also mark the document as failed if it's not already in a terminal state.
+    if document.processing_status not in ("completed", "failed"):
+        document.processing_status = "failed"
+        document.processing_error = (
+            document.processing_error
+            or "Chain-level failure: the Celery pipeline encountered an unrecoverable error"
+        )
+        document.save(update_fields=["processing_status", "processing_error"])
+
+
 def process_document(document_id: str) -> str | None:
     """Orchestrate the full document processing pipeline via a Celery chain.
 
@@ -283,6 +368,10 @@ def process_document(document_id: str) -> str | None:
     ``status='pending'``, then builds and executes the chain::
 
         extract_text_from_pdf → chunk_document
+
+    A ``link_error`` callback is attached to the chain so that chain-level
+    failures (e.g. worker crash) are caught and the ``ProcessingTask`` status
+    is updated to ``"failed"`` rather than remaining stuck at ``"pending"``.
 
     This is a **regular Python function** (not a Celery task). It is called
     directly from the API view.
@@ -317,7 +406,7 @@ def process_document(document_id: str) -> str | None:
         status="pending",
     )
 
-    # Build the Celery chain.
+    # Build the Celery chain with a link_error callback.
     # The chain passes the return value of extract_text_from_pdf (extracted text)
     # as the first positional argument to chunk_document.
     chain_obj = chain(
@@ -325,8 +414,11 @@ def process_document(document_id: str) -> str | None:
         chunk_document.s(document_id),
     )
 
-    # Execute the chain.
-    result = chain_obj.apply_async()
+    # Attach a link_error callback so chain-level failures are caught.
+    error_callback = _handle_chain_error.s(document_id, task_type="extract")
+
+    # Execute the chain with the error callback.
+    result = chain_obj.apply_async(link_error=[error_callback])
 
     # Update the ProcessingTask with the Celery task ID.
     processing_task.celery_task_id = result.id
