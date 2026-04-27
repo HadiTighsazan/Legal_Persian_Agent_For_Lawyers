@@ -25,6 +25,8 @@ env = environ.Env(
     DATABASE_URL=(str, 'postgresql://docuchat:docuchat@localhost:5432/docuchat'),
     REDIS_URL=(str, 'redis://localhost:6379/0'),
     OPENAI_API_KEY=(str, ''),
+    OLLAMA_BASE_URL=(str, 'http://localhost:11434'),
+    EMBEDDING_PROVIDER=(str, 'ollama'),
 )
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -229,6 +231,10 @@ CELERY_TASK_RETRY_JITTER = True        # Add randomness to backoff
 
 # OpenAI Configuration
 OPENAI_API_KEY = env('OPENAI_API_KEY', default='')
+
+# Ollama Configuration (development embedding provider)
+OLLAMA_BASE_URL = env('OLLAMA_BASE_URL', default='http://host.docker.internal:11434')
+EMBEDDING_PROVIDER = env('EMBEDDING_PROVIDER', default='ollama')
 
 # Storage Configuration
 STORAGE_TYPE = env('STORAGE_TYPE', default='local')

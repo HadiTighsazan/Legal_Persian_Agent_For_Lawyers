@@ -59,7 +59,7 @@
 | page_end | INTEGER | NOT NULL | Ending page number |
 | content | TEXT | NOT NULL | Extracted text content |
 | token_count | INTEGER | NULL | Token count for LLM |
-| embedding | VECTOR(1536) | NULL | OpenAI embedding vector |
+| embedding | VECTOR(768) | NULL | Ollama nomic-embed-text embedding vector |
 | metadata | JSONB | DEFAULT '{}' | Additional metadata |
 | created_at | TIMESTAMP | DEFAULT NOW() | Creation timestamp |
 

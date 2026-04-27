@@ -1,7 +1,7 @@
 """
 Embedding service for generating and managing vector embeddings.
 
-Provides functions that wrap OpenAI's ``text-embedding-3-small`` model for
+Provides functions that wrap the Ollama ``nomic-embed-text`` model for
 generating embeddings on individual texts, batches, and full documents.
 Follows the existing service-layer pattern (standalone functions, not classes).
 
@@ -20,9 +20,9 @@ import logging
 import time
 from typing import Any
 
+import requests
 from django.conf import settings
 from django.utils import timezone
-import openai
 
 from documents.models import Document, DocumentChunk
 from tasks.models import ProcessingTask
@@ -33,17 +33,20 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-EMBEDDING_MODEL: str = "text-embedding-3-small"
-"""The OpenAI embedding model identifier."""
+EMBEDDING_MODEL: str = "nomic-embed-text"
+"""The Ollama embedding model identifier."""
 
-EMBEDDING_DIMENSIONS: int = 1536
-"""The number of dimensions returned by ``text-embedding-3-small``."""
+EMBEDDING_DIMENSIONS: int = 768
+"""The number of dimensions returned by ``nomic-embed-text``."""
 
 SUB_BATCH_SIZE: int = 50
-"""Maximum number of texts to send in a single OpenAI API call."""
+"""Maximum number of texts to send in a single Ollama API call."""
 
 _MAX_RETRIES: int = 3
-"""Number of retry attempts for rate-limited API calls."""
+"""Number of retry attempts for failed API calls."""
+
+_TIMEOUT_SECONDS: int = 60
+"""HTTP request timeout for Ollama API calls."""
 
 
 # ---------------------------------------------------------------------------
@@ -51,13 +54,9 @@ _MAX_RETRIES: int = 3
 # ---------------------------------------------------------------------------
 
 
-def _get_openai_client() -> openai.OpenAI:
-    """Return a new :class:`openai.OpenAI` client instance.
-
-    The client is created per-call (not cached globally) to avoid issues
-    with Django settings not being fully loaded at import time.
-    """
-    return openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+def _get_ollama_base_url() -> str:
+    """Return the Ollama base URL from Django settings."""
+    return settings.OLLAMA_BASE_URL.rstrip("/")
 
 
 # ---------------------------------------------------------------------------
@@ -68,36 +67,41 @@ def _get_openai_client() -> openai.OpenAI:
 def generate_embedding(text: str) -> list[float] | None:
     """Generate an embedding vector for a single text string.
 
+    Calls ``POST /api/embeddings`` on the Ollama server.
+
     Args:
         text: The text to embed.
 
     Returns:
-        A list of 1536 floats, or ``None`` if the text is empty or an API
+        A list of 768 floats, or ``None`` if the text is empty or an API
         error occurs.
     """
     if not text or not text.strip():
         return None
 
-    client = _get_openai_client()
+    base_url = _get_ollama_base_url()
+    url = f"{base_url}/api/embeddings"
 
     for attempt in range(_MAX_RETRIES):
         try:
-            response = client.embeddings.create(
-                model=EMBEDDING_MODEL,
-                input=text,
+            response = requests.post(
+                url,
+                json={"model": EMBEDDING_MODEL, "prompt": text},
+                timeout=_TIMEOUT_SECONDS,
             )
-            embedding: list[float] = response.data[0].embedding
+            response.raise_for_status()
+            embedding: list[float] = response.json()["embedding"]
             logger.info(
                 "generate_embedding: Generated embedding (dimensions=%d)",
                 len(embedding),
             )
             return embedding
 
-        except openai.RateLimitError:
+        except requests.exceptions.Timeout:
             if attempt < _MAX_RETRIES - 1:
                 sleep_time: float = 2.0 ** attempt
                 logger.warning(
-                    "generate_embedding: Rate limited, retrying in %.0fs "
+                    "generate_embedding: Timeout, retrying in %.0fs "
                     "(attempt %d/%d)",
                     sleep_time,
                     attempt + 1,
@@ -106,14 +110,30 @@ def generate_embedding(text: str) -> list[float] | None:
                 time.sleep(sleep_time)
             else:
                 logger.error(
-                    "generate_embedding: Rate limit exceeded after %d retries",
+                    "generate_embedding: Timeout after %d retries",
                     _MAX_RETRIES,
                 )
                 return None
 
-        except (openai.APIError, openai.APIConnectionError, openai.AuthenticationError) as e:
-            logger.error("generate_embedding: API error — %s", e)
-            return None
+        except requests.exceptions.RequestException as e:
+            if attempt < _MAX_RETRIES - 1:
+                sleep_time = 2.0 ** attempt
+                logger.warning(
+                    "generate_embedding: Request failed (%s), retrying in "
+                    "%.0fs (attempt %d/%d)",
+                    e,
+                    sleep_time,
+                    attempt + 1,
+                    _MAX_RETRIES,
+                )
+                time.sleep(sleep_time)
+            else:
+                logger.error(
+                    "generate_embedding: Request failed after %d retries — %s",
+                    _MAX_RETRIES,
+                    e,
+                )
+                return None
 
     return None
 
@@ -121,21 +141,23 @@ def generate_embedding(text: str) -> list[float] | None:
 def batch_generate_embeddings(texts: list[str]) -> list[list[float] | None]:
     """Generate embeddings for a list of texts, handling sub-batching.
 
-    Splits *texts* into sub-batches of :data:`SUB_BATCH_SIZE` (50) and calls
-    the OpenAI API once per sub-batch.  Results are returned in the same order
-    as the input list.  Items that fail (empty text, API error) get ``None``
-    at the corresponding position.
+    Uses Ollama's ``/api/embed`` endpoint which accepts multiple inputs in a
+    single call.  Splits *texts* into sub-batches of :data:`SUB_BATCH_SIZE`
+    (50).  Results are returned in the same order as the input list.  Items
+    that fail (empty text, API error) get ``None`` at the corresponding
+    position.
 
     Args:
         texts: The list of texts to embed.
 
     Returns:
         A list of the same length as *texts*, where each element is either a
-        list of 1536 floats or ``None``.
+        list of 768 floats or ``None``.
     """
     results: list[list[float] | None] = [None] * len(texts)
 
-    client = _get_openai_client()
+    base_url = _get_ollama_base_url()
+    url = f"{base_url}/api/embed"
 
     for batch_start in range(0, len(texts), SUB_BATCH_SIZE):
         batch_end = min(batch_start + SUB_BATCH_SIZE, len(texts))
@@ -159,33 +181,37 @@ def batch_generate_embeddings(texts: list[str]) -> list[list[float] | None]:
         if not valid_texts:
             continue
 
-        # Send the sub-batch to OpenAI with retry logic.
+        # Send the sub-batch to Ollama with retry logic.
         for attempt in range(_MAX_RETRIES):
             try:
-                response = client.embeddings.create(
-                    model=EMBEDDING_MODEL,
-                    input=valid_texts,
+                response = requests.post(
+                    url,
+                    json={"model": EMBEDDING_MODEL, "input": valid_texts},
+                    timeout=_TIMEOUT_SECONDS,
                 )
+                response.raise_for_status()
+                data = response.json()
+                embeddings: list[list[float]] = data["embeddings"]
 
                 # Map results back by index within the sub-batch.
-                for resp_idx, data_item in enumerate(response.data):
+                for resp_idx, embedding in enumerate(embeddings):
                     original_idx = valid_indices[resp_idx]
-                    results[original_idx] = data_item.embedding
+                    results[original_idx] = embedding
 
                 logger.info(
                     "batch_generate_embeddings: Sub-batch %d–%d complete "
                     "(embeddings=%d)",
                     batch_start,
                     batch_end,
-                    len(response.data),
+                    len(embeddings),
                 )
                 break  # Success — exit retry loop.
 
-            except openai.RateLimitError:
+            except requests.exceptions.Timeout:
                 if attempt < _MAX_RETRIES - 1:
                     sleep_time = 2.0 ** attempt
                     logger.warning(
-                        "batch_generate_embeddings: Rate limited, retrying "
+                        "batch_generate_embeddings: Timeout, retrying "
                         "in %.0fs (attempt %d/%d)",
                         sleep_time,
                         attempt + 1,
@@ -194,23 +220,34 @@ def batch_generate_embeddings(texts: list[str]) -> list[list[float] | None]:
                     time.sleep(sleep_time)
                 else:
                     logger.error(
-                        "batch_generate_embeddings: Rate limit exceeded "
-                        "after %d retries for sub-batch %d–%d",
+                        "batch_generate_embeddings: Timeout after %d retries "
+                        "for sub-batch %d–%d",
                         _MAX_RETRIES,
                         batch_start,
                         batch_end,
                     )
-                    # All items in this sub-batch remain None.
 
-            except (openai.APIError, openai.APIConnectionError, openai.AuthenticationError) as e:
-                logger.error(
-                    "batch_generate_embeddings: API error for sub-batch "
-                    "%d–%d — %s",
-                    batch_start,
-                    batch_end,
-                    e,
-                )
-                break  # No retry for non-rate-limit errors.
+            except requests.exceptions.RequestException as e:
+                if attempt < _MAX_RETRIES - 1:
+                    sleep_time = 2.0 ** attempt
+                    logger.warning(
+                        "batch_generate_embeddings: Request failed (%s), "
+                        "retrying in %.0fs (attempt %d/%d)",
+                        e,
+                        sleep_time,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                    )
+                    time.sleep(sleep_time)
+                else:
+                    logger.error(
+                        "batch_generate_embeddings: Request failed after "
+                        "%d retries for sub-batch %d–%d — %s",
+                        _MAX_RETRIES,
+                        batch_start,
+                        batch_end,
+                        e,
+                    )
 
     return results
 

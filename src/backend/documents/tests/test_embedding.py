@@ -12,7 +12,6 @@ from __future__ import annotations
 import uuid
 from unittest.mock import ANY, MagicMock, patch
 
-import openai
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -37,30 +36,34 @@ from users.models import User
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_embedding(dim: int = 1536) -> list[float]:
+def _make_fake_embedding(dim: int = 768) -> list[float]:
     """Return a fake embedding vector of *dim* floats (all 0.1)."""
     return [0.1] * dim
 
 
-def _mock_openai_response(
+def _mock_ollama_embed_response(
     texts: list[str],
-    dim: int = 1536,
-) -> MagicMock:
-    """Build a mock OpenAI embeddings response for the given *texts*.
+    dim: int = 768,
+) -> dict:
+    """Build a mock Ollama /api/embed response dict for the given *texts*.
 
     Each text gets a unique embedding where the first element equals the
     index of the text in the list (to verify ordering).
     """
-    mock_data = []
+    embeddings = []
     for idx, _text in enumerate(texts):
         embedding = [float(idx + 1)] + [0.0] * (dim - 1)
-        mock_item = MagicMock()
-        mock_item.embedding = embedding
-        mock_data.append(mock_item)
+        embeddings.append(embedding)
+    return {"model": "nomic-embed-text", "embeddings": embeddings}
 
-    mock_response = MagicMock()
-    mock_response.data = mock_data
-    return mock_response
+
+def _mock_ollama_single_response(
+    text: str,
+    dim: int = 768,
+) -> dict:
+    """Build a mock Ollama /api/embeddings response dict for a single text."""
+    embedding = [0.1] * dim
+    return {"model": "nomic-embed-text", "embedding": embedding}
 
 
 def _auth_header(user: User) -> dict[str, str]:
@@ -107,27 +110,28 @@ def _mock_celery_request(task_func, celery_task_id: str = "test-celery-id"):
 class GenerateEmbeddingTests(TestCase):
     """Tests for :func:`generate_embedding`."""
 
-    @patch("documents.services.embedding_service._get_openai_client")
-    def test_generate_embedding_returns_1536_floats(self, mock_get_client: MagicMock) -> None:
-        """A valid text should return a 1536-dim embedding vector."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-
+    @patch("documents.services.embedding_service.requests.post")
+    def test_generate_embedding_returns_768_floats(self, mock_post: MagicMock) -> None:
+        """A valid text should return a 768-dim embedding vector."""
         fake_embedding = _make_fake_embedding()
         mock_response = MagicMock()
-        mock_response.data = [MagicMock(embedding=fake_embedding)]
-        mock_client.embeddings.create.return_value = mock_response
+        mock_response.json.return_value = {
+            "model": "nomic-embed-text",
+            "embedding": fake_embedding,
+        }
+        mock_post.return_value = mock_response
 
         result = generate_embedding("Hello world")
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(len(result), 1536)
+        self.assertEqual(len(result), 768)
         self.assertEqual(result, fake_embedding)
 
-        mock_client.embeddings.create.assert_called_once_with(
-            model="text-embedding-3-small",
-            input="Hello world",
+        mock_post.assert_called_once_with(
+            "http://host.docker.internal:11434/api/embeddings",
+            json={"model": "nomic-embed-text", "prompt": "Hello world"},
+            timeout=60,
         )
 
     def test_generate_embedding_empty_text_returns_none(self) -> None:
@@ -136,30 +140,23 @@ class GenerateEmbeddingTests(TestCase):
         self.assertIsNone(generate_embedding("   "))
         self.assertIsNone(generate_embedding("\n\t"))
 
-    @patch("documents.services.embedding_service._get_openai_client")
-    def test_generate_embedding_handles_rate_limit(
+    @patch("documents.services.embedding_service.requests.post")
+    def test_generate_embedding_handles_timeout_retry(
         self,
-        mock_get_client: MagicMock,
+        mock_post: MagicMock,
     ) -> None:
-        """RateLimitError on first 2 calls should retry; 3rd should succeed."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-
+        """Timeout on first 2 calls should retry; 3rd should succeed."""
         fake_embedding = _make_fake_embedding()
         mock_response = MagicMock()
-        mock_response.data = [MagicMock(embedding=fake_embedding)]
+        mock_response.json.return_value = {
+            "model": "nomic-embed-text",
+            "embedding": fake_embedding,
+        }
 
-        mock_client.embeddings.create.side_effect = [
-            openai.RateLimitError(
-                "rate_limited",
-                response=MagicMock(),
-                body=None,
-            ),
-            openai.RateLimitError(
-                "rate_limited",
-                response=MagicMock(),
-                body=None,
-            ),
+        from requests.exceptions import Timeout
+        mock_post.side_effect = [
+            Timeout("timeout"),
+            Timeout("timeout"),
             mock_response,
         ]
 
@@ -168,85 +165,52 @@ class GenerateEmbeddingTests(TestCase):
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(len(result), 1536)
+        self.assertEqual(len(result), 768)
         self.assertEqual(mock_sleep.call_count, 2)
         mock_sleep.assert_any_call(1.0)
         mock_sleep.assert_any_call(2.0)
 
-    @patch("documents.services.embedding_service._get_openai_client")
-    def test_generate_embedding_rate_limit_exhausted(
+    @patch("documents.services.embedding_service.requests.post")
+    def test_generate_embedding_retry_exhausted(
         self,
-        mock_get_client: MagicMock,
+        mock_post: MagicMock,
     ) -> None:
-        """All retries exhausted on RateLimitError should return None."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-
-        mock_client.embeddings.create.side_effect = openai.RateLimitError(
-            "rate_limited",
-            response=MagicMock(),
-            body=None,
-        )
+        """All retries exhausted on timeout should return None."""
+        from requests.exceptions import Timeout
+        mock_post.side_effect = Timeout("timeout")
 
         with patch("documents.services.embedding_service.time.sleep"):
             result = generate_embedding("Hello world")
 
         self.assertIsNone(result)
 
-    @patch("documents.services.embedding_service._get_openai_client")
-    def test_generate_embedding_api_error(
+    @patch("documents.services.embedding_service.requests.post")
+    def test_generate_embedding_request_exception(
         self,
-        mock_get_client: MagicMock,
+        mock_post: MagicMock,
     ) -> None:
-        """An APIError should return None without retry."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
+        """A RequestException after retries should return None."""
+        from requests.exceptions import ConnectionError
+        mock_post.side_effect = ConnectionError("connection refused")
 
-        mock_client.embeddings.create.side_effect = openai.APIError(
-            "api_error",
-            request=MagicMock(),
-            body=None,
-        )
-
-        result = generate_embedding("Hello world")
-
-        self.assertIsNone(result)
-        mock_client.embeddings.create.assert_called_once()
-
-    @patch("documents.services.embedding_service._get_openai_client")
-    def test_generate_embedding_authentication_error(
-        self,
-        mock_get_client: MagicMock,
-    ) -> None:
-        """An AuthenticationError should return None."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-
-        mock_client.embeddings.create.side_effect = openai.AuthenticationError(
-            "auth_error",
-            response=MagicMock(),
-            body=None,
-        )
-
-        result = generate_embedding("Hello world")
+        with patch("documents.services.embedding_service.time.sleep"):
+            result = generate_embedding("Hello world")
 
         self.assertIsNone(result)
 
-    @patch("documents.services.embedding_service._get_openai_client")
-    def test_generate_embedding_connection_error(
+    @patch("documents.services.embedding_service.requests.post")
+    def test_generate_embedding_http_error(
         self,
-        mock_get_client: MagicMock,
+        mock_post: MagicMock,
     ) -> None:
-        """An APIConnectionError should return None."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
+        """An HTTP error response should return None after retries."""
+        from requests.exceptions import HTTPError
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = HTTPError("HTTP 500")
+        mock_post.return_value = mock_response
 
-        mock_client.embeddings.create.side_effect = openai.APIConnectionError(
-            message="connection_error",
-            request=MagicMock(),
-        )
-
-        result = generate_embedding("Hello world")
+        with patch("documents.services.embedding_service.time.sleep"):
+            result = generate_embedding("Hello world")
 
         self.assertIsNone(result)
 
@@ -254,18 +218,16 @@ class GenerateEmbeddingTests(TestCase):
 class BatchGenerateEmbeddingsTests(TestCase):
     """Tests for :func:`batch_generate_embeddings`."""
 
-    @patch("documents.services.embedding_service._get_openai_client")
+    @patch("documents.services.embedding_service.requests.post")
     def test_batch_generate_embeddings_returns_in_order(
         self,
-        mock_get_client: MagicMock,
+        mock_post: MagicMock,
     ) -> None:
         """3 texts should return 3 embeddings in the correct order."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-
         texts = ["First text", "Second text", "Third text"]
-        mock_response = _mock_openai_response(texts)
-        mock_client.embeddings.create.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.json.return_value = _mock_ollama_embed_response(texts)
+        mock_post.return_value = mock_response
 
         results = batch_generate_embeddings(texts)
 
@@ -274,21 +236,19 @@ class BatchGenerateEmbeddingsTests(TestCase):
             self.assertIsNotNone(result)
             assert result is not None
             self.assertEqual(result[0], float(idx + 1))
-            self.assertEqual(len(result), 1536)
+            self.assertEqual(len(result), 768)
 
-    @patch("documents.services.embedding_service._get_openai_client")
+    @patch("documents.services.embedding_service.requests.post")
     def test_batch_generate_embeddings_handles_partial_failure(
         self,
-        mock_get_client: MagicMock,
+        mock_post: MagicMock,
     ) -> None:
         """Empty texts in the batch should produce None at correct positions."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-
         texts = ["Valid text", "", "Another valid", "   "]
         valid_texts = ["Valid text", "Another valid"]
-        mock_response = _mock_openai_response(valid_texts)
-        mock_client.embeddings.create.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.json.return_value = _mock_ollama_embed_response(valid_texts)
+        mock_post.return_value = mock_response
 
         results = batch_generate_embeddings(texts)
 
@@ -298,35 +258,33 @@ class BatchGenerateEmbeddingsTests(TestCase):
         self.assertIsNotNone(results[2])
         self.assertIsNone(results[3])
 
-    @patch("documents.services.embedding_service._get_openai_client")
+    @patch("documents.services.embedding_service.requests.post")
     def test_batch_generate_embeddings_sub_batch_splitting(
         self,
-        mock_get_client: MagicMock,
+        mock_post: MagicMock,
     ) -> None:
         """120 texts should split into 3 sub-batches (50, 50, 20)."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-
         texts = [f"Text {i}" for i in range(120)]
 
         global_idx = 0
 
-        def side_effect(*args: object, **kwargs: object) -> MagicMock:
+        def side_effect(url: str, **kwargs: object) -> MagicMock:
             nonlocal global_idx
-            input_texts = kwargs.get("input", [])
+            input_texts = kwargs.get("json", {}).get("input", [])
             assert isinstance(input_texts, list)
-            mock_data = []
+            embeddings = []
             for _ in input_texts:
-                embedding = [float(global_idx + 1)] + [0.0] * 1535
-                mock_item = MagicMock()
-                mock_item.embedding = embedding
-                mock_data.append(mock_item)
+                embedding = [float(global_idx + 1)] + [0.0] * 767
+                embeddings.append(embedding)
                 global_idx += 1
             mock_response = MagicMock()
-            mock_response.data = mock_data
+            mock_response.json.return_value = {
+                "model": "nomic-embed-text",
+                "embeddings": embeddings,
+            }
             return mock_response
 
-        mock_client.embeddings.create.side_effect = side_effect
+        mock_post.side_effect = side_effect
 
         results = batch_generate_embeddings(texts)
 
@@ -336,43 +294,35 @@ class BatchGenerateEmbeddingsTests(TestCase):
             assert result is not None
             self.assertEqual(result[0], float(idx + 1))
 
-        self.assertEqual(mock_client.embeddings.create.call_count, 3)
+        self.assertEqual(mock_post.call_count, 3)
 
-    @patch("documents.services.embedding_service._get_openai_client")
+    @patch("documents.services.embedding_service.requests.post")
     def test_batch_generate_embeddings_all_empty(
         self,
-        mock_get_client: MagicMock,
+        mock_post: MagicMock,
     ) -> None:
         """All empty texts should return all Nones without API calls."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-
         results = batch_generate_embeddings(["", "   ", ""])
 
         self.assertEqual(len(results), 3)
         self.assertIsNone(results[0])
         self.assertIsNone(results[1])
         self.assertIsNone(results[2])
-        mock_client.embeddings.create.assert_not_called()
+        mock_post.assert_not_called()
 
-    @patch("documents.services.embedding_service._get_openai_client")
-    def test_batch_generate_embeddings_rate_limit_retry(
+    @patch("documents.services.embedding_service.requests.post")
+    def test_batch_generate_embeddings_retry_on_failure(
         self,
-        mock_get_client: MagicMock,
+        mock_post: MagicMock,
     ) -> None:
-        """RateLimitError on sub-batch should retry with backoff."""
-        mock_client = MagicMock()
-        mock_get_client.return_value = mock_client
-
+        """Transient failure on sub-batch should retry with backoff."""
         texts = ["Hello", "World"]
-        mock_response = _mock_openai_response(texts)
+        mock_response = MagicMock()
+        mock_response.json.return_value = _mock_ollama_embed_response(texts)
 
-        mock_client.embeddings.create.side_effect = [
-            openai.RateLimitError(
-                "rate_limited",
-                response=MagicMock(),
-                body=None,
-            ),
+        from requests.exceptions import Timeout
+        mock_post.side_effect = [
+            Timeout("timeout"),
             mock_response,
         ]
 
@@ -435,7 +385,7 @@ class GenerateEmbeddingsForDocumentTests(TestCase):
         for chunk in chunks:
             chunk.refresh_from_db()
             self.assertIsNotNone(chunk.embedding)
-            self.assertEqual(len(chunk.embedding), 1536)
+            self.assertEqual(len(chunk.embedding), 768)
 
         task = ProcessingTask.objects.get(
             document=self.document,
@@ -678,7 +628,7 @@ class ReembedChunkTests(TestCase):
             embedding=_make_fake_embedding(),
         )
 
-        new_embedding = [0.5] * 1536
+        new_embedding = [0.5] * 768
         mock_generate.return_value = new_embedding
 
         result = reembed_chunk(str(chunk.id))
@@ -827,7 +777,7 @@ class DocumentEmbedViewTests(TestCase):
             content="Embedded chunk",
             token_count=50,
             metadata={},
-            embedding=[0.1] * 1536,
+            embedding=[0.1] * 768,
         )
         DocumentChunk.objects.create(
             document=self.document,
@@ -1110,7 +1060,7 @@ class EmbeddingCeleryTaskTests(TestCase):
                 page_end=1,
                 content=f"Test chunk content {i}." * 20,
                 token_count=50,
-                embedding=None if not has_embedding else [0.1] * 1536,
+                embedding=None if not has_embedding else [0.1] * 768,
             )
             chunks.append(chunk)
         return chunks
@@ -1123,7 +1073,7 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
-            return_value=[[0.1] * 1536, [0.2] * 1536, [0.3] * 1536],
+            return_value=[[0.1] * 768, [0.2] * 768, [0.3] * 768],
         ):
             self._run_task()
 
@@ -1135,7 +1085,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         chunks = DocumentChunk.objects.filter(document=self.document).order_by("chunk_index")
         for chunk in chunks:
             self.assertIsNotNone(chunk.embedding)
-            self.assertEqual(len(chunk.embedding), 1536)
+            self.assertEqual(len(chunk.embedding), 768)
 
     def test_no_unembedded_chunks(self) -> None:
         """All chunks already embedded -> task completes immediately."""
@@ -1189,7 +1139,7 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
-            return_value=[[0.1] * 1536, None, [0.3] * 1536],
+            return_value=[[0.1] * 768, None, [0.3] * 768],
         ):
             self._run_task()
 
@@ -1202,19 +1152,19 @@ class EmbeddingCeleryTaskTests(TestCase):
         self.assertIsNone(chunks[1].embedding)
         self.assertIsNotNone(chunks[2].embedding)
 
-    def test_embed_document_handles_openai_failure(self) -> None:
+    def test_embed_document_handles_api_failure(self) -> None:
         """API error -> task marked as failed with error_message."""
         self._create_chunks(2)
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
-            side_effect=ValueError("OpenAI API connection failed"),
+            side_effect=ValueError("Ollama API connection failed"),
         ):
             self._run_task()
 
         self.processing_task.refresh_from_db()
         self.assertEqual(self.processing_task.status, "failed")
-        self.assertIn("OpenAI API connection failed", self.processing_task.error_message)
+        self.assertIn("Ollama API connection failed", self.processing_task.error_message)
         self.assertIsNotNone(self.processing_task.completed_at)
 
     # -- Progress tracking ------------------------------------------------
@@ -1223,7 +1173,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         """Verify progress goes from 0 -> 50 -> 100 for 2 batches of 50 chunks each."""
         self._create_chunks(100)
 
-        embeddings = [[float(i)] * 1536 for i in range(100)]
+        embeddings = [[float(i)] * 768 for i in range(100)]
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
@@ -1247,7 +1197,7 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
-            return_value=[[0.1] * 1536] * 25,
+            return_value=[[0.1] * 768] * 25,
         ):
             self._run_task()
 
@@ -1263,7 +1213,7 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
-            return_value=[[0.1] * 1536],
+            return_value=[[0.1] * 768],
         ):
             self._run_task()
 
@@ -1276,7 +1226,7 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
-            return_value=[[0.1] * 1536],
+            return_value=[[0.1] * 768],
         ):
             self._run_task()
 
@@ -1291,7 +1241,7 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
-            return_value=[[0.1] * 1536] * 50,
+            return_value=[[0.1] * 768] * 50,
         ) as mock_embed:
             self._run_task()
 
@@ -1307,7 +1257,7 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
-            return_value=[[0.1] * 1536] * 75,
+            return_value=[[0.1] * 768] * 75,
         ) as mock_embed:
             self._run_task()
 
