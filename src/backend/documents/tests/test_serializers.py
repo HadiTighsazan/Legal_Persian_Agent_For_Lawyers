@@ -30,6 +30,9 @@ from documents.serializers import (
     DocumentUploadSerializer,
     ProcessingStatusSerializer,
     ProcessingTaskSerializer,
+    SearchRequestSerializer,
+    SearchResultSerializer,
+    SearchResponseSerializer,
 )
 
 
@@ -584,3 +587,43 @@ class ChunkReEmbedResponseSerializerTests(TestCase):
                     field.help_text,
                     f"Field '{field_name}' is missing help_text",
                 )
+
+
+# ---------------------------------------------------------------------------
+# Tests — SearchRequestSerializer
+# ---------------------------------------------------------------------------
+
+
+class SearchRequestSerializerTests(TestCase):
+    """Validate the search request serializer for POST /documents/{id}/search."""
+
+    def test_search_request_defaults(self) -> None:
+        """Omitting ``top_k`` and ``min_score`` gives defaults 10 and 0.0."""
+        serializer = SearchRequestSerializer(data={"query": "test query"})
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["top_k"], 10)
+        self.assertEqual(serializer.validated_data["min_score"], 0.0)
+
+    def test_search_request_top_k_max_validation(self) -> None:
+        """``top_k=51`` fails validation (max is 50)."""
+        serializer = SearchRequestSerializer(
+            data={"query": "test", "top_k": 51}
+        )
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("top_k", serializer.errors)
+
+    def test_search_request_min_score_range(self) -> None:
+        """``min_score`` values outside [0.0, 1.0] fail validation."""
+        for score in (-0.1, 1.1):
+            with self.subTest(score=score):
+                serializer = SearchRequestSerializer(
+                    data={"query": "test", "min_score": score}
+                )
+                self.assertFalse(serializer.is_valid())
+                self.assertIn("min_score", serializer.errors)
+
+    def test_search_request_empty_query(self) -> None:
+        """Empty string fails validation (``required=True``, ``min_length`` implied)."""
+        serializer = SearchRequestSerializer(data={"query": ""})
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("query", serializer.errors)

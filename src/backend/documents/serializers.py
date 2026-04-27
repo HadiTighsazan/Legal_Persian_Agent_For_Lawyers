@@ -190,3 +190,93 @@ class ChunkReEmbedResponseSerializer(serializers.Serializer):
     embedding_updated = serializers.BooleanField(
         help_text="Whether the embedding was successfully updated.",
     )
+
+
+class SearchRequestSerializer(serializers.Serializer):
+    """Validate the incoming search request body.
+
+    Fields:
+        query (str): Required search query text, max 1000 characters.
+        top_k (int): Optional max results (default 10, range 1–50).
+        min_score (float): Optional minimum relevance threshold
+            (default 0.0, range 0.0–1.0).
+    """
+
+    query = serializers.CharField(
+        required=True,
+        max_length=1000,
+        help_text="Natural language search query.",
+    )
+    top_k = serializers.IntegerField(
+        required=False,
+        default=10,
+        min_value=1,
+        max_value=50,
+        help_text="Maximum number of search results to return (1–50).",
+    )
+    min_score = serializers.FloatField(
+        required=False,
+        default=0.0,
+        min_value=0.0,
+        max_value=1.0,
+        help_text="Minimum relevance score threshold (0.0–1.0).",
+    )
+
+
+class SearchResultSerializer(serializers.Serializer):
+    """Serialize a single search result chunk.
+
+    Mirrors the dict returned by
+    :func:`~documents.services.search_service.search_chunks`.
+    """
+
+    chunk_id = serializers.UUIDField(
+        help_text="Unique identifier of the matching chunk.",
+    )
+    chunk_index = serializers.IntegerField(
+        help_text="Sequential index of the chunk within the document.",
+    )
+    page_start = serializers.IntegerField(
+        help_text="Starting page number for this chunk.",
+    )
+    page_end = serializers.IntegerField(
+        help_text="Ending page number for this chunk.",
+    )
+    content = serializers.CharField(
+        help_text="Text content of the chunk.",
+    )
+    relevance_score = serializers.FloatField(
+        help_text="Cosine similarity score (0.0–1.0, higher is more relevant).",
+    )
+    token_count = serializers.IntegerField(
+        allow_null=True,
+        help_text="Number of tokens in the chunk, or null if not computed.",
+    )
+    metadata = serializers.JSONField(
+        help_text="Additional metadata associated with the chunk.",
+    )
+
+
+class SearchResponseSerializer(serializers.Serializer):
+    """Serialize the full search response.
+
+    Wraps a list of :class:`SearchResultSerializer` instances along with
+    the original request parameters and result count.
+    """
+
+    results = SearchResultSerializer(
+        many=True,
+        help_text="List of matching chunks ordered by relevance.",
+    )
+    query = serializers.CharField(
+        help_text="The original search query.",
+    )
+    top_k = serializers.IntegerField(
+        help_text="Maximum number of results requested.",
+    )
+    min_score = serializers.FloatField(
+        help_text="Minimum relevance score threshold used.",
+    )
+    total_results = serializers.IntegerField(
+        help_text="Total number of results returned.",
+    )

@@ -1,47 +1,44 @@
-# WIP Context — Task 2: `search_chunks()` Implementation
+# WIP Context — Task 3: Search Request/Response Serializers
 
 ## What Was Just Completed
 
-Implemented `search_chunks()` — a pure service function for cosine similarity search against `DocumentChunk` embeddings using pgvector's `CosineDistance` annotation. Followed TDD flow:
+Implemented 3 new serializers (`SearchRequestSerializer`, `SearchResultSerializer`, `SearchResponseSerializer`) and 4 test methods following the implementation plan.
 
-### RED Phase
-- Created [`src/backend/documents/tests/test_search_service.py`](src/backend/documents/tests/test_search_service.py) with 5 test methods:
-  1. `test_search_chunks_returns_top_k` — verifies `top_k` limits results
-  2. `test_search_chunks_filters_by_min_score` — verifies `min_score` threshold filtering
-  3. `test_search_chunks_excludes_unembedded_chunks` — verifies NULL embeddings are excluded
-  4. `test_search_chunks_orders_by_relevance` — verifies descending `relevance_score` ordering
-  5. `test_search_chunks_empty_result` — verifies empty document returns `[]`
-- Confirmed tests failed to collect with `ModuleNotFoundError` (service module didn't exist)
+### Serializers Added
 
-### GREEN Phase
-- Created [`src/backend/documents/services/search_service.py`](src/backend/documents/services/search_service.py) with `search_chunks()` function
-- Uses pgvector's `CosineDistance` annotation (no raw SQL)
-- Computes `relevance_score = 1 - distance` via Django `F` expressions
-- Filters by `relevance_score__gte=min_score`, orders by `distance ASC`, limits via `[:top_k]`
-- Returns `list[dict]` with keys: `chunk_id`, `chunk_index`, `page_start`, `page_end`, `content`, `relevance_score`, `token_count`, `metadata`
-- All 5 tests passed on first run after fixing test vector math (collinear vectors gave distance=0)
+1. **`SearchRequestSerializer`** — Validates incoming search request body:
+   - `query` (required, max 1000 chars)
+   - `top_k` (optional, default 10, range 1–50)
+   - `min_score` (optional, default 0.0, range 0.0–1.0)
 
-### REFACTOR Phase
-- Test vectors use two non-zero components for predictable cosine distances (documented with full math)
-- Service function is clean, well-documented, follows existing service-layer pattern (standalone functions)
-- No HTTP `request` object dependency — pure service function
+2. **`SearchResultSerializer`** — Serializes a single search result chunk with 8 fields:
+   - `chunk_id` (UUIDField), `chunk_index` (IntegerField), `page_start` (IntegerField), `page_end` (IntegerField)
+   - `content` (CharField), `relevance_score` (FloatField), `token_count` (IntegerField, allow_null), `metadata` (JSONField)
+
+3. **`SearchResponseSerializer`** — Wraps `SearchResultSerializer(many=True)` with request metadata:
+   - `results`, `query`, `top_k`, `min_score`, `total_results`
+
+### Tests Added
+
+Added `SearchRequestSerializerTests` class with 4 test methods:
+1. `test_search_request_defaults` — verifies `top_k` defaults to 10, `min_score` defaults to 0.0
+2. `test_search_request_top_k_max_validation` — verifies `top_k=51` fails
+3. `test_search_request_min_score_range` — verifies `min_score=-0.1` and `min_score=1.1` fail (using `subTest`)
+4. `test_search_request_empty_query` — verifies empty string fails validation
 
 ## Current State of Code
 
-- [`src/backend/documents/services/search_service.py`](src/backend/documents/services/search_service.py) — New file with `search_chunks()` function
-- [`src/backend/documents/tests/test_search_service.py`](src/backend/documents/tests/test_search_service.py) — New file with 5 test methods
-- All 205 document tests pass (5 new + 200 existing) — no regressions
+- [`src/backend/documents/serializers.py`](src/backend/documents/serializers.py) — 3 new serializer classes added at end of file (after `ChunkReEmbedResponseSerializer`)
+- [`src/backend/documents/tests/test_serializers.py`](src/backend/documents/tests/test_serializers.py) — Updated imports (added 3 new serializers) + new `SearchRequestSerializerTests` class at end of file
+- All **59 serializer tests pass** (55 existing + 4 new) — no regressions
 
 ## Next Step
 
 No further steps for this task. The implementation is complete and all acceptance criteria are met:
 
-- [x] `search_chunks()` is a pure function with no HTTP `request` object
-- [x] Uses pgvector `CosineDistance` annotation (not raw SQL)
-- [x] NULL embeddings are excluded from results
-- [x] Results are ordered by `relevance_score` descending (highest first)
-- [x] `top_k` limits the number of results
-- [x] `min_score` filters out low-relevance chunks
-- [x] Empty results return `[]` (not `None`)
-- [x] All 5 tests pass
-- [x] No regressions in existing test suite (205 passed, 0 failed)
+- [x] `SearchRequestSerializer` validates `query` (required, max 1000), `top_k` (optional, default 10, range 1–50), `min_score` (optional, default 0.0, range 0.0–1.0)
+- [x] `SearchResultSerializer` accepts all 8 fields with correct types (UUIDField, IntegerField, CharField, FloatField, JSONField)
+- [x] `SearchResponseSerializer` nests `SearchResultSerializer(many=True)` and includes `query`, `top_k`, `min_score`, `total_results`
+- [x] All 4 test methods pass
+- [x] No regressions in existing serializer tests (59 passed, 0 failed)
+- [x] All serializers have `help_text` on every field (matching project convention)
