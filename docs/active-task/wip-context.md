@@ -1,4 +1,4 @@
-# WIP Context — Task 7 of Epic E-05 (pgvector Index Verification)
+# WIP Context — Task 8 of Epic E-05 (Re-embed Script)
 
 ## Status: ✅ COMPLETED
 
@@ -6,47 +6,60 @@
 
 ### New Files Created
 
-1. **`src/backend/documents/checks.py`** (NEW FILE) — Django system check for pgvector index verification:
-   - `pgvector_index_check()` registered with `@register()` decorator (auto-discovered)
-   - Queries `pg_indexes` for `idx_chunks_embedding` on `document_chunks`
-   - Returns `documents.E001` (Critical) if database is unreachable
-   - Returns `documents.E002` (Error) if index is missing
-   - Returns `documents.E003` (Error) if index type is not `ivfflat`
-   - Returns `documents.E004` (Error) if operator class is not `vector_cosine_ops`
-   - Short-circuits on wrong index type (no redundant operator class check)
+1. **`src/backend/scripts/__init__.py`** (NEW FILE) — Empty init file to make `scripts` a Python package.
 
-2. **`src/backend/documents/tests/test_pgvector_checks.py`** (NEW FILE) — Tests for the system check:
-   - `PgvectorIndexCheckUnitTests(SimpleTestCase)` — 5 unit tests with mocked `connection.cursor()`:
-     - `test_index_exists_and_is_ivfflat` — Happy path, no errors
-     - `test_index_missing` — Returns `E002`
-     - `test_wrong_index_type` — Returns `E003`
-     - `test_wrong_operator_class` — Returns `E004`
-     - `test_database_unreachable` — Returns `E001`
-   - `PgvectorIndexCheckIntegrationTests(TestCase)` — 1 integration test:
-     - `test_integration_with_real_database` — Runs against real PostgreSQL
+2. **`src/backend/scripts/reembed_all.py`** (NEW FILE) — Standalone Django script that clears all chunk embeddings and re-triggers the `embed_document` Celery task for every document.
 
-### Source Code Modified
+### Script Logic
 
-3. **`docs/references/database-schema.md`** — Added system check note in Migration Notes section:
-   - Check IDs `documents.E001`–`E004`
-   - Purpose and trigger information
-   - Test file reference
+The script follows this flow:
 
-### Infrastructure Fixes (Post-Task 7)
+1. **Count total chunks** — `DocumentChunk.objects.count()`. If 0, logs "No chunks found" and exits cleanly.
+2. **Clear all embeddings** — Single `UPDATE` query via `DocumentChunk.objects.update(embedding=None)`. Logs "Cleared embeddings for X chunks".
+3. **Collect unique document IDs** — Uses `DocumentChunk.objects.values_list("document_id", flat=True).iterator(chunk_size=500)` to stream results in memory-efficient batches. Logs progress every 500 chunks (e.g., "Scanning chunks... 500/50000 (1%)").
+4. **Queue embed_document per document** — For each unique document ID:
+   - Verifies the Document still exists (catches `Document.DoesNotExist`)
+   - Creates a `ProcessingTask` with `task_type="embed"`, `status="pending"`
+   - Calls `embed_document.delay(doc_id, str(processing_task.id))`
+   - Logs "Queued re-embed for document {doc_id} (task={task_id})"
+   - Catches any exception, logs it, increments `failed_count`, continues
+5. **Summary** — Logs "Re-embedding complete: X documents queued, Y failed (Z total chunks)". Exits with code 1 if any failures, else 0.
 
-4. **`src/backend/pytest.ini`** (NEW FILE) — pytest-django configuration:
-   - Sets `DJANGO_SETTINGS_MODULE = config.settings` so pytest can find Django settings without needing the `--ds` flag
-   - Fixes `ImproperlyConfigured: Requested setting INSTALLED_APPS, but settings are not configured` error when running `docker-compose exec backend python -m pytest ...`
+### Key Design Decisions
 
-5. **`src/backend/documents/tests/test_pgvector_checks.py`** — Enhanced `test_wrong_index_type`:
-   - Added defensive assertion `self.assertNotIn("documents.E004", error_ids)` to verify the short-circuit logic prevents redundant operator class check when index type is wrong
+- **Standalone script (not a management command):** The PRD specifies `scripts/reembed_all.py`. It runs outside the Django request/response cycle as an admin utility.
+- **Django setup:** Calls `django.setup()` after setting `DJANGO_SETTINGS_MODULE` so Django ORM is available.
+- **Memory efficiency:** Uses `.iterator(chunk_size=500)` to stream chunk IDs rather than loading all into memory.
+- **Reuses existing infrastructure:** Delegates actual embedding to the existing `embed_document` Celery task, avoiding duplication of embedding logic.
+- **Error resilience:** Catches `Document.DoesNotExist` (document deleted between scan and queue) and generic exceptions per document, continuing to process remaining documents.
 
-## Test Results
+### Logging Configuration
+- Logger name: `"reembed_all"`
+- Level: `INFO`
+- Handler: `StreamHandler(sys.stdout)`
+- Format: `"[reembed_all] %(message)s"`
 
-- **Unit tests:** 5/5 passed (mocked DB)
-- **Integration test:** 1/1 passed (real PostgreSQL via Docker)
-- **System check:** `python manage.py check` → "System check identified no issues (0 silenced)"
-- **Full documents test suite:** 85/85 passed (without `--ds` flag, using `pytest.ini`)
+## Usage
+
+```bash
+docker-compose exec backend python scripts/reembed_all.py
+```
+
+## Verification
+
+After running, verify:
+1. Logs show the expected progress and summary
+2. `docker-compose exec db psql -U docuchat -d docuchat -c "SELECT COUNT(*) FROM document_chunks WHERE embedding IS NULL;"` returns the total chunk count
+3. Celery worker logs show `embed_document` tasks being executed
+
+## Edge Cases Handled
+- **No chunks exist:** Script logs "No chunks found" and exits cleanly (exit 0)
+- **Document deleted between scan and queue:** Catches `Document.DoesNotExist` and logs a warning
+- **Celery unavailable:** `embed_document.delay()` raises an exception; script catches it and logs the error
+- **Very large dataset (100k+ chunks):** Uses `iterator()` to stream results, so memory stays constant
 
 ## Next Steps
-- Proceed to Task 8 (Error Handling & Edge Cases) or next planned task
+
+- Run the script against a development database to verify behavior
+- Monitor Celery worker logs to confirm tasks are dispatched and executed
+- Optionally add a `--dry-run` flag for safe preview mode
