@@ -793,6 +793,8 @@ class EmbedDocumentTaskTests(TestCase):
             chunk = DocumentChunk.objects.create(
                 document=self.document,
                 chunk_index=i,
+                page_start=1,
+                page_end=1,
                 content=f"Test chunk content {i}." * 20,
                 token_count=50,
                 embedding=None if not has_embedding else [0.1] * 1536,

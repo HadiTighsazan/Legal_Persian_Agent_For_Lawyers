@@ -272,10 +272,10 @@ class DocumentUploadIntegrationTests(TestCase):
             msg=f"Expected 401 for unauthenticated request, got {response.status_code}",
         )
 
-        # The middleware returns JSON with an 'error' key
+        # DRF's JWTAuthentication returns JSON with a 'detail' key
         data = response.json()
         self.assertIn(
-            "error",
+            "detail",
             data,
-            msg="Response should contain an 'error' key for unauthenticated requests.",
+            msg="Response should contain a 'detail' key for unauthenticated requests.",
         )
