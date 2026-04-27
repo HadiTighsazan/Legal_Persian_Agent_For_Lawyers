@@ -208,6 +208,13 @@ CREATE EXTENSION IF NOT EXISTS "vector";
   - Created `idx_chunks_embedding` ivfflat index on `embedding` for cosine similarity search
   - Added `openai>=1.0.0` and `pgvector>=0.2.0` to `requirements.txt`
 
+### System Check: pgvector Index Verification (Task 7)
+- **File:** `src/backend/documents/checks.py`
+- **Check IDs:** `documents.E001`–`E004`
+- **Purpose:** Verifies `idx_chunks_embedding` ivfflat index exists on `document_chunks.embedding`
+- **Trigger:** Runs automatically on `python manage.py check`, `runserver`, `migrate`
+- **Test file:** `src/backend/documents/tests/test_pgvector_checks.py`
+
 ### Migration 0002 (E04-T4-T5 Bug Fixes)
 - **File:** `src/backend/users/migrations/0002_rename_password_hash_to_password.py`
 - **Changes:**
