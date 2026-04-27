@@ -795,9 +795,12 @@ Both fields are optional. At least one should be provided for meaningful updates
 
 ## Search & Retrieval
 
-#### POST /documents/{document_id}/search
-**Description:** Semantic search in document chunks  
-**Auth Required:** Yes  
+#### POST /documents/{document_id}/search/
+**Description:** Semantic search in document chunks
+**Auth Required:** Yes
+**Implementation Date:** 2026-04-27
+**Test Coverage:** 7 view tests (DocumentSearchViewTests)
+**View Class:** `DocumentSearchView`
 **Request Body:**
 ```json
 {
@@ -812,15 +815,27 @@ Both fields are optional. At least one should be provided for meaningful updates
   "results": [
     {
       "chunk_id": "uuid",
+      "chunk_index": 0,
       "page_start": 120,
       "page_end": 122,
       "content": "Machine learning algorithms are...",
       "relevance_score": 0.93,
+      "token_count": 150,
       "metadata": {}
     }
-  ]
+  ],
+  "query": "machine learning algorithms",
+  "top_k": 10,
+  "min_score": 0.7,
+  "total_results": 1
 }
 ```
+**Error Responses:**
+- `400 Bad Request` — Invalid request body (DRF validation)
+- `403 Forbidden` — Document belongs to another user
+- `404 Not Found` — Document does not exist
+- `422 Unprocessable Entity` — Document processing is not complete
+- `500 Internal Server Error` — Embedding generation failed
 
 ---
 

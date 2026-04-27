@@ -902,3 +902,156 @@ class ProcessingServiceUnitTests(TestCase):
         self.assertEqual(compute_overall_progress([]), 0)
 
 
+# ---------------------------------------------------------------------------
+# Tests — DocumentSearchView (POST /documents/<uuid>/search/)
+# ---------------------------------------------------------------------------
+
+
+class DocumentSearchViewTests(TestCase):
+    """Tests for the :class:`DocumentSearchView` endpoint."""
+
+    def setUp(self) -> None:
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="search-test@example.com",
+            password="testpass123",
+        )
+        self.other_user = User.objects.create_user(
+            email="other-search@example.com",
+            password="testpass123",
+        )
+        self.document = _create_document(self.user, processing_status="completed")
+        self.url = reverse(
+            "documents:document-search",
+            kwargs={"document_id": self.document.id},
+        )
+
+    # -- 401 Unauthenticated -----------------------------------------------
+
+    def test_search_requires_auth(self) -> None:
+        """POST without auth should return 401."""
+        response = self.client.post(self.url, {"query": "test"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    # -- 404 Not Found -----------------------------------------------------
+
+    def test_search_document_not_found(self) -> None:
+        """POST to a non-existent document ID should return 404."""
+        url = reverse(
+            "documents:document-search",
+            kwargs={"document_id": uuid.uuid4()},
+        )
+        response = self.client.post(
+            url, {"query": "test"}, format="json", **_auth_header(self.user)
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["error"], "not_found")
+
+    # -- 403 Forbidden -----------------------------------------------------
+
+    def test_search_document_wrong_user(self) -> None:
+        """POST to another user's document should return 403."""
+        response = self.client.post(
+            self.url, {"query": "test"}, format="json", **_auth_header(self.other_user)
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data["error"], "permission_denied")
+
+    # -- 422 Document Not Ready ------------------------------------------------
+
+    def test_search_document_not_completed(self) -> None:
+        """POST to a document that hasn't finished processing should return 422."""
+        doc = _create_document(
+            self.user,
+            filename="unprocessed.pdf",
+            processing_status="processing",
+        )
+        url = reverse(
+            "documents:document-search",
+            kwargs={"document_id": doc.id},
+        )
+        response = self.client.post(
+            url, {"query": "test"}, format="json", **_auth_header(self.user)
+        )
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertEqual(response.data["error"], "document_not_ready")
+
+    # -- 200 Valid Search ------------------------------------------------------
+
+    @patch("documents.views.embed_query")
+    @patch("documents.views.search_chunks")
+    def test_search_valid_request(
+        self,
+        mock_search_chunks: MagicMock,
+        mock_embed_query: MagicMock,
+    ) -> None:
+        """POST with valid query should return 200 with search results."""
+        mock_embed_query.return_value = [0.1] * 768
+        mock_search_chunks.return_value = [
+            {
+                "chunk_id": str(uuid.uuid4()),
+                "chunk_index": 0,
+                "page_start": 1,
+                "page_end": 1,
+                "content": "Relevant chunk content",
+                "relevance_score": 0.95,
+                "token_count": 50,
+                "metadata": {},
+            },
+            {
+                "chunk_id": str(uuid.uuid4()),
+                "chunk_index": 1,
+                "page_start": 2,
+                "page_end": 2,
+                "content": "Another relevant chunk",
+                "relevance_score": 0.85,
+                "token_count": 60,
+                "metadata": {},
+            },
+        ]
+
+        response = self.client.post(
+            self.url, {"query": "test query"}, format="json", **_auth_header(self.user)
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_embed_query.assert_called_once_with("test query")
+        mock_search_chunks.assert_called_once()
+        self.assertIn("results", response.data)
+        self.assertIn("total_results", response.data)
+        self.assertEqual(response.data["total_results"], 2)
+        self.assertEqual(len(response.data["results"]), 2)
+        self.assertEqual(response.data["results"][0]["relevance_score"], 0.95)
+
+    # -- 400 Invalid top_k -----------------------------------------------------
+
+    def test_search_invalid_top_k(self) -> None:
+        """POST with top_k=0 should return 400."""
+        response = self.client.post(
+            self.url,
+            {"query": "test", "top_k": 0},
+            format="json",
+            **_auth_header(self.user),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # -- 200 Empty Results -----------------------------------------------------
+
+    @patch("documents.views.embed_query")
+    @patch("documents.views.search_chunks")
+    def test_search_empty_results(
+        self,
+        mock_search_chunks: MagicMock,
+        mock_embed_query: MagicMock,
+    ) -> None:
+        """POST with valid query but no matching chunks should return 200 with empty list."""
+        mock_embed_query.return_value = [0.1] * 768
+        mock_search_chunks.return_value = []
+
+        response = self.client.post(
+            self.url, {"query": "unique query"}, format="json", **_auth_header(self.user)
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["results"], [])
+        self.assertEqual(response.data["total_results"], 0)

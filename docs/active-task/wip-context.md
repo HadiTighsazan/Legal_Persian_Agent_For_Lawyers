@@ -1,44 +1,55 @@
-# WIP Context — Task 3: Search Request/Response Serializers
+# WIP Context — Task 4: Search View + URL Registration
 
 ## What Was Just Completed
 
-Implemented 3 new serializers (`SearchRequestSerializer`, `SearchResultSerializer`, `SearchResponseSerializer`) and 4 test methods following the implementation plan.
+Implemented `DocumentSearchView` (APIView), registered its URL pattern, and wrote 7 test methods following TDD (RED → GREEN → REFACTOR).
 
-### Serializers Added
+### View Added
 
-1. **`SearchRequestSerializer`** — Validates incoming search request body:
-   - `query` (required, max 1000 chars)
-   - `top_k` (optional, default 10, range 1–50)
-   - `min_score` (optional, default 0.0, range 0.0–1.0)
+1. **`DocumentSearchView`** in [`src/backend/documents/views.py`](src/backend/documents/views.py) — `POST /documents/<uuid:document_id>/search/`:
+   - **Authentication:** `IsAuthenticated`
+   - **Step 1:** Fetch document by ID → 404 `not_found` if missing
+   - **Step 2:** Ownership check → 403 `permission_denied` if mismatch
+   - **Step 3:** Processing status check → 422 `document_not_ready` if not `completed`
+   - **Step 4:** Validate request body via `SearchRequestSerializer` → 400 on DRF validation failure
+   - **Step 5:** Call `embed_query()` → 500 `embedding_failed` on `EmbeddingError`
+   - **Step 6:** Call `search_chunks()` with `document_id`, `query_vector`, `top_k`, `min_score`
+   - **Step 7:** Serialize response via `SearchResponseSerializer`
+   - **Step 8:** Return 200 OK with results
 
-2. **`SearchResultSerializer`** — Serializes a single search result chunk with 8 fields:
-   - `chunk_id` (UUIDField), `chunk_index` (IntegerField), `page_start` (IntegerField), `page_end` (IntegerField)
-   - `content` (CharField), `relevance_score` (FloatField), `token_count` (IntegerField, allow_null), `metadata` (JSONField)
+### URL Registered
 
-3. **`SearchResponseSerializer`** — Wraps `SearchResultSerializer(many=True)` with request metadata:
-   - `results`, `query`, `top_k`, `min_score`, `total_results`
+- [`src/backend/documents/urls.py`](src/backend/documents/urls.py) — Added:
+  ```python
+  path("<uuid:document_id>/search/", DocumentSearchView.as_view(), name="document-search")
+  ```
 
 ### Tests Added
 
-Added `SearchRequestSerializerTests` class with 4 test methods:
-1. `test_search_request_defaults` — verifies `top_k` defaults to 10, `min_score` defaults to 0.0
-2. `test_search_request_top_k_max_validation` — verifies `top_k=51` fails
-3. `test_search_request_min_score_range` — verifies `min_score=-0.1` and `min_score=1.1` fail (using `subTest`)
-4. `test_search_request_empty_query` — verifies empty string fails validation
+Added `DocumentSearchViewTests` class in [`src/backend/documents/tests/test_views.py`](src/backend/documents/tests/test_views.py) with 7 test methods:
+
+1. `test_search_requires_auth` — POST without auth → 401
+2. `test_search_document_not_found` — POST to non-existent UUID → 404 `not_found`
+3. `test_search_document_wrong_user` — POST as other user → 403 `permission_denied`
+4. `test_search_document_not_completed` — Document with `processing_status='processing'` → 422 `document_not_ready`
+5. `test_search_valid_request` — Mock `embed_query` + `search_chunks`, assert 200 with correct response shape
+6. `test_search_invalid_top_k` — `top_k=0` → 400 (DRF validation)
+7. `test_search_empty_results` — Mock returns empty list → 200 with `results=[]` and `total_results=0`
 
 ## Current State of Code
 
-- [`src/backend/documents/serializers.py`](src/backend/documents/serializers.py) — 3 new serializer classes added at end of file (after `ChunkReEmbedResponseSerializer`)
-- [`src/backend/documents/tests/test_serializers.py`](src/backend/documents/tests/test_serializers.py) — Updated imports (added 3 new serializers) + new `SearchRequestSerializerTests` class at end of file
-- All **59 serializer tests pass** (55 existing + 4 new) — no regressions
+- [`src/backend/documents/views.py`](src/backend/documents/views.py) — Added imports (`SearchRequestSerializer`, `SearchResponseSerializer`, `EmbeddingError`, `embed_query`, `search_chunks`) + `DocumentSearchView` class at end of file
+- [`src/backend/documents/urls.py`](src/backend/documents/urls.py) — Added `DocumentSearchView` import + URL pattern
+- [`src/backend/documents/tests/test_views.py`](src/backend/documents/tests/test_views.py) — Added `DocumentSearchViewTests` class with 7 test methods
+- All **55 view tests pass** (48 existing + 7 new) — no regressions
 
 ## Next Step
 
 No further steps for this task. The implementation is complete and all acceptance criteria are met:
 
-- [x] `SearchRequestSerializer` validates `query` (required, max 1000), `top_k` (optional, default 10, range 1–50), `min_score` (optional, default 0.0, range 0.0–1.0)
-- [x] `SearchResultSerializer` accepts all 8 fields with correct types (UUIDField, IntegerField, CharField, FloatField, JSONField)
-- [x] `SearchResponseSerializer` nests `SearchResultSerializer(many=True)` and includes `query`, `top_k`, `min_score`, `total_results`
-- [x] All 4 test methods pass
-- [x] No regressions in existing serializer tests (59 passed, 0 failed)
-- [x] All serializers have `help_text` on every field (matching project convention)
+- [x] `DocumentSearchView` implemented with all 8 steps (fetch, ownership, processing check, validation, embed, search, serialize, return)
+- [x] Error handling matrix: 404 (not_found), 403 (permission_denied), 422 (document_not_ready), 400 (DRF validation), 500 (embedding_failed)
+- [x] URL registered at `POST /documents/<uuid:document_id>/search/` with name `document-search`
+- [x] All 7 test methods pass
+- [x] No regressions in existing view tests (55 passed, 0 failed)
+- [x] `docs/references/api-registry.md` updated with new endpoint

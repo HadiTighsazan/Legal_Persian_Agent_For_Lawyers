@@ -34,10 +34,17 @@ from documents.serializers import (
     DocumentResponseSerializer,
     DocumentUploadSerializer,
     ProcessingStatusSerializer,
+    SearchRequestSerializer,
+    SearchResponseSerializer,
 )
 from documents.services.embedding_service import (
+    EmbeddingError,
     batch_embed_chunks,
+    embed_query,
     reembed_chunk,
+)
+from documents.services.search_service import (
+    search_chunks,
 )
 from documents.services.processing_service import (
     build_task_data,
@@ -601,3 +608,96 @@ class TaskStatusView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class DocumentSearchView(APIView):
+    """Semantic search within a document's chunks.
+
+    **Endpoint:** ``POST /documents/<uuid:document_id>/search/``
+
+    **Authentication:** Required.
+
+    **Request body:**
+        ``{"query": "...", "top_k": 10, "min_score": 0.0}``
+
+    **Responses:**
+        - ``200 OK`` — Search results returned successfully.
+        - ``400 Bad Request`` — Invalid request body (DRF validation).
+        - ``403 Forbidden`` — Document belongs to another user.
+        - ``404 Not Found`` — Document does not exist.
+        - ``422 Unprocessable Entity`` — Document processing is not complete.
+        - ``500 Internal Server Error`` — Embedding generation failed.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, document_id: str) -> Response:
+        """Handle the search POST request."""
+        # 1. Fetch document (404 if not found)
+        try:
+            document = Document.objects.get(id=document_id)
+        except Document.DoesNotExist:
+            return Response(
+                {"error": "not_found", "message": "Document not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # 2. Ownership check (403 if mismatch)
+        if document.user != request.user:
+            return Response(
+                {
+                    "error": "permission_denied",
+                    "message": "You do not have permission to search this document.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # 3. Processing status check (422 if not 'completed')
+        if document.processing_status != "completed":
+            return Response(
+                {
+                    "error": "document_not_ready",
+                    "message": "Document processing is not complete yet.",
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        # 4. Validate request body with SearchRequestSerializer (400 on failure)
+        serializer = SearchRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        query: str = serializer.validated_data["query"]
+        top_k: int = serializer.validated_data["top_k"]
+        min_score: float = serializer.validated_data["min_score"]
+
+        # 5. Call embed_query() to get query vector
+        try:
+            query_vector = embed_query(query)
+        except EmbeddingError:
+            logger.exception("Embedding failed for query on document %s", document_id)
+            return Response(
+                {"error": "embedding_failed", "message": "Failed to generate query embedding."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # 6. Call search_chunks() to get results
+        results = search_chunks(
+            document_id=str(document.id),
+            query_vector=query_vector,
+            top_k=top_k,
+            min_score=min_score,
+        )
+
+        # 7. Serialize response with SearchResponseSerializer
+        response_data = {
+            "results": results,
+            "query": query,
+            "top_k": top_k,
+            "min_score": min_score,
+            "total_results": len(results),
+        }
+        response_serializer = SearchResponseSerializer(data=response_data)
+        response_serializer.is_valid(raise_exception=True)
+
+        # 8. Return 200 OK
+        return Response(response_serializer.validated_data, status=status.HTTP_200_OK)

@@ -14,6 +14,7 @@ from documents.views import (
     DocumentEmbedView,
     DocumentProcessView,
     DocumentProcessingStatusView,
+    DocumentSearchView,
     DocumentUploadView,
     ProcessingTaskRetryView,
 )
@@ -41,6 +42,11 @@ urlpatterns = [
         "<uuid:document_id>/embed/",
         DocumentEmbedView.as_view(),
         name="document-embed",
+    ),
+    path(
+        "<uuid:document_id>/search/",
+        DocumentSearchView.as_view(),
+        name="document-search",
     ),
     path(
         "processing-tasks/<uuid:task_id>/retry/",
