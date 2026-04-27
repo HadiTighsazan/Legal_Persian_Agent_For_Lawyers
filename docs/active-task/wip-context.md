@@ -1,65 +1,59 @@
-# WIP Context — Task 8 of Epic E-05 (Re-embed Script)
+# WIP Context — Task 9 of Epic E-05 (Consolidated Embedding Tests)
 
 ## Status: ✅ COMPLETED
 
 ## What Was Completed
 
-### New Files Created
+### New File Created
 
-1. **`src/backend/scripts/__init__.py`** (NEW FILE) — Empty init file to make `scripts` a Python package.
+1. **`src/backend/documents/tests/test_embedding.py`** (NEW FILE — 1318 lines) — Consolidated test file containing ALL embedding-related tests moved from three source files into one single source of truth.
 
-2. **`src/backend/scripts/reembed_all.py`** (NEW FILE) — Standalone Django script that clears all chunk embeddings and re-triggers the `embed_document` Celery task for every document.
+### Test Structure (11 top-level TestCase classes, 57 tests total)
 
-### Script Logic
+#### Embedding Service Unit Tests (24 tests)
+| Class | Tests | Description |
+|-------|-------|-------------|
+| `GenerateEmbeddingTests` | 7 | Tests for `generate_embedding()` — returns 1536-dim vector, empty text returns None, rate limit retry with backoff, rate limit exhausted, API error, auth error, connection error |
+| `BatchGenerateEmbeddingsTests` | 5 | Tests for `batch_generate_embeddings()` — returns in order, partial failure (None at correct positions), sub-batch splitting (120 texts → 3 batches of 50/50/20), all empty texts, rate limit retry |
+| `GenerateEmbeddingsForDocumentTests` | 6 | Tests for `generate_embeddings_for_document()` — success with 3 chunks, no chunks, all already embedded, document not found, partial failures, batch progress tracking |
+| `BatchEmbedChunksTests` | 3 | Tests for `batch_embed_chunks()` — mixed state (2 already embedded, 2 succeed, 1 fails), invalid IDs, skips existing embeddings |
+| `ReembedChunkTests` | 3 | Tests for `reembed_chunk()` — overwrites existing embedding, chunk not found, failure returns embedding_updated=False |
 
-The script follows this flow:
+#### Embedding View Tests (19 tests)
+| Class | Tests | Description |
+|-------|-------|-------------|
+| `DocumentEmbedViewTests` | 6 | Tests for `DocumentEmbedView` — nonexistent doc (404), other user's doc (403), unauthenticated (401), returns 202 with task_id, creates ProcessingTask, counts unembedded chunks, skips already embedded chunks |
+| `ChunkBatchEmbedViewTests` | 4 | Tests for `ChunkBatchEmbedView` — unauthenticated (401), validates chunk IDs (400), successful batch returns 200, **NEW: handles up to 100 chunks** (boundary test) |
+| `ChunkReEmbedViewTests` | 4 | Tests for `ChunkReEmbedView` — nonexistent chunk (404), other user's chunk (403), unauthenticated (401), successful re-embed returns 200 |
+| `TaskStatusViewTests` | 5 | Tests for `TaskStatusView` — nonexistent task (404), other user's task (403), unauthenticated (401), returns correct state, returns all expected fields |
 
-1. **Count total chunks** — `DocumentChunk.objects.count()`. If 0, logs "No chunks found" and exits cleanly.
-2. **Clear all embeddings** — Single `UPDATE` query via `DocumentChunk.objects.update(embedding=None)`. Logs "Cleared embeddings for X chunks".
-3. **Collect unique document IDs** — Uses `DocumentChunk.objects.values_list("document_id", flat=True).iterator(chunk_size=500)` to stream results in memory-efficient batches. Logs progress every 500 chunks (e.g., "Scanning chunks... 500/50000 (1%)").
-4. **Queue embed_document per document** — For each unique document ID:
-   - Verifies the Document still exists (catches `Document.DoesNotExist`)
-   - Creates a `ProcessingTask` with `task_type="embed"`, `status="pending"`
-   - Calls `embed_document.delay(doc_id, str(processing_task.id))`
-   - Logs "Queued re-embed for document {doc_id} (task={task_id})"
-   - Catches any exception, logs it, increments `failed_count`, continues
-5. **Summary** — Logs "Re-embedding complete: X documents queued, Y failed (Z total chunks)". Exits with code 1 if any failures, else 0.
+#### Embedding Celery Task Tests (13 tests)
+| Class | Tests | Description |
+|-------|-------|-------------|
+| `EmbeddingCeleryTaskTests` | 13 | Tests for `embed_document` Celery task — creates embeddings for all chunks, no unembedded chunks, empty document, processing task not found, document not found, partial batch failures, handles OpenAI failure, updates task progress (0→50→100), single batch progress, sets celery_task_id, sets started_at, exactly one batch (50 chunks), uneven batch (75 chunks) |
 
 ### Key Design Decisions
 
-- **Standalone script (not a management command):** The PRD specifies `scripts/reembed_all.py`. It runs outside the Django request/response cycle as an admin utility.
-- **Django setup:** Calls `django.setup()` after setting `DJANGO_SETTINGS_MODULE` so Django ORM is available.
-- **Memory efficiency:** Uses `.iterator(chunk_size=500)` to stream chunk IDs rather than loading all into memory.
-- **Reuses existing infrastructure:** Delegates actual embedding to the existing `embed_document` Celery task, avoiding duplication of embedding logic.
-- **Error resilience:** Catches `Document.DoesNotExist` (document deleted between scan and queue) and generic exceptions per document, continuing to process remaining documents.
+- **Flattened structure:** All 11 test classes are top-level `TestCase` subclasses (not nested), because pytest does not discover nested `TestCase` classes.
+- **Shared helpers:** `_make_fake_embedding()`, `_mock_openai_response()`, `_auth_header()`, `_create_document()`, `_mock_celery_request()` defined at module level for reuse across all test classes.
+- **Naming convention:** All test methods renamed to match the Task 9 spec (e.g., `test_generate_embedding_returns_1536_floats` instead of `test_returns_1536_floats`).
+- **One new test:** `test_batch_embed_handles_up_to_100_chunks` added to `ChunkBatchEmbedViewTests` — verifies POST with 100 chunk IDs is accepted.
 
-### Logging Configuration
-- Logger name: `"reembed_all"`
-- Level: `INFO`
-- Handler: `StreamHandler(sys.stdout)`
-- Format: `"[reembed_all] %(message)s"`
+### Files Modified
 
-## Usage
+1. **`src/backend/documents/tests/test_embedding_service.py`** — **DELETED** (732 lines). All tests moved to `test_embedding.py`.
 
-```bash
-docker-compose exec backend python scripts/reembed_all.py
-```
+2. **`src/backend/documents/tests/test_views.py`** — **MODIFIED**. Removed 4 embedding view test classes (DocumentEmbedViewTests, ChunkBatchEmbedViewTests, ChunkReEmbedViewTests, TaskStatusViewTests) and their header comment. Remaining tests: DocumentProcessViewTests, ProcessingTaskRetryViewTests, DocumentProcessingStatusViewTests, DocumentUploadViewSmokeTests, DocumentChunksListViewTests, ProcessingServiceUnitTests.
 
-## Verification
+3. **`src/backend/documents/tests/test_tasks.py`** — **MODIFIED**. Removed EmbedDocumentTaskTests class (13 tests, lines 748-1015). Remaining tests: ExtractTextFromPdfTests, ChunkDocumentTests, ProcessDocumentTests, HandleChainErrorTests.
 
-After running, verify:
-1. Logs show the expected progress and summary
-2. `docker-compose exec db psql -U docuchat -d docuchat -c "SELECT COUNT(*) FROM document_chunks WHERE embedding IS NULL;"` returns the total chunk count
-3. Celery worker logs show `embed_document` tasks being executed
+### Test Results
 
-## Edge Cases Handled
-- **No chunks exist:** Script logs "No chunks found" and exits cleanly (exit 0)
-- **Document deleted between scan and queue:** Catches `Document.DoesNotExist` and logs a warning
-- **Celery unavailable:** `embed_document.delay()` raises an exception; script catches it and logs the error
-- **Very large dataset (100k+ chunks):** Uses `iterator()` to stream results, so memory stays constant
+- **All 57 embedding tests pass** (verified with `docker-compose exec backend pytest -v --tb=short`)
+- **Full test suite: 336 passed, 0 failed, 5 warnings** (verified with `docker-compose exec backend pytest -v --tb=short`)
+- Warnings are pre-existing (deprecation warnings for STATICFILES_STORAGE, drf_yasg, middleware, and pytest return values)
 
 ## Next Steps
 
-- Run the script against a development database to verify behavior
-- Monitor Celery worker logs to confirm tasks are dispatched and executed
-- Optionally add a `--dry-run` flag for safe preview mode
+- No further steps required for this task.
+- Future work could include adding integration tests that verify end-to-end embedding flow with a real Celery worker.
