@@ -50,6 +50,16 @@ _TIMEOUT_SECONDS: int = 60
 
 
 # ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class EmbeddingError(Exception):
+    """Raised when embedding generation fails."""
+    pass
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -136,6 +146,85 @@ def generate_embedding(text: str) -> list[float] | None:
                 return None
 
     return None
+
+
+def embed_query(text: str) -> list[float]:
+    """Convert a search query string into a 768-dim embedding vector.
+
+    Calls ``POST /api/embeddings`` on the Ollama server.  Unlike
+    :func:`generate_embedding`, this function **raises** on failure so the
+    view layer can return proper error responses.
+
+    Args:
+        text: The search query text (must be non-empty).
+
+    Returns:
+        A list of 768 floats representing the query embedding.
+
+    Raises:
+        EmbeddingError: If the Ollama API call fails or returns invalid data.
+        ValueError: If *text* is empty or whitespace-only.
+    """
+    if not text or not text.strip():
+        raise ValueError("text must be non-empty")
+
+    base_url = _get_ollama_base_url()
+    url = f"{base_url}/api/embeddings"
+
+    for attempt in range(_MAX_RETRIES):
+        try:
+            response = requests.post(
+                url,
+                json={"model": EMBEDDING_MODEL, "prompt": text},
+                timeout=_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            embedding: list[float] = response.json()["embedding"]
+            logger.info(
+                "embed_query: Generated embedding (dimensions=%d)",
+                len(embedding),
+            )
+            return embedding
+
+        except requests.exceptions.Timeout:
+            if attempt < _MAX_RETRIES - 1:
+                sleep_time: float = 2.0 ** attempt
+                logger.warning(
+                    "embed_query: Timeout, retrying in %.0fs "
+                    "(attempt %d/%d)",
+                    sleep_time,
+                    attempt + 1,
+                    _MAX_RETRIES,
+                )
+                time.sleep(sleep_time)
+            else:
+                logger.error(
+                    "embed_query: Timeout after %d retries",
+                    _MAX_RETRIES,
+                )
+                raise EmbeddingError("Ollama embedding request timed out after retries")
+
+        except requests.exceptions.RequestException as e:
+            if attempt < _MAX_RETRIES - 1:
+                sleep_time = 2.0 ** attempt
+                logger.warning(
+                    "embed_query: Request failed (%s), retrying in "
+                    "%.0fs (attempt %d/%d)",
+                    e,
+                    sleep_time,
+                    attempt + 1,
+                    _MAX_RETRIES,
+                )
+                time.sleep(sleep_time)
+            else:
+                logger.error(
+                    "embed_query: Request failed after %d retries — %s",
+                    _MAX_RETRIES,
+                    e,
+                )
+                raise EmbeddingError(f"Ollama embedding request failed: {e}")
+
+    raise EmbeddingError("Unexpected error in embed_query")
 
 
 def batch_generate_embeddings(texts: list[str]) -> list[list[float] | None]:

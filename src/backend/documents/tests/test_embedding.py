@@ -21,8 +21,10 @@ from rest_framework.test import APIClient
 from documents.models import Document, DocumentChunk
 from documents.services.embedding_service import (
     SUB_BATCH_SIZE,
+    EmbeddingError,
     batch_embed_chunks,
     batch_generate_embeddings,
+    embed_query,
     generate_embedding,
     generate_embeddings_for_document,
     reembed_chunk,
@@ -213,6 +215,56 @@ class GenerateEmbeddingTests(TestCase):
             result = generate_embedding("Hello world")
 
         self.assertIsNone(result)
+
+
+class EmbedQueryTests(TestCase):
+    """Tests for :func:`embed_query`."""
+
+    @patch("documents.services.embedding_service.requests.post")
+    def test_embed_query_returns_768_floats(self, mock_post: MagicMock) -> None:
+        """A valid query should return a 768-dim embedding vector."""
+        fake_embedding = _make_fake_embedding()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "model": "nomic-embed-text",
+            "embedding": fake_embedding,
+        }
+        mock_post.return_value = mock_response
+
+        result = embed_query("hello world")
+
+        self.assertEqual(len(result), 768)
+        self.assertEqual(result, fake_embedding)
+
+        mock_post.assert_called_once_with(
+            "http://host.docker.internal:11434/api/embeddings",
+            json={"model": "nomic-embed-text", "prompt": "hello world"},
+            timeout=60,
+        )
+
+    @patch("documents.services.embedding_service.requests.post")
+    def test_embed_query_raises_on_ollama_failure(self, mock_post: MagicMock) -> None:
+        """All retries exhausted should raise EmbeddingError."""
+        from requests.exceptions import ConnectionError
+        mock_post.side_effect = ConnectionError("connection refused")
+
+        with patch("documents.services.embedding_service.time.sleep"):
+            with self.assertRaises(EmbeddingError) as ctx:
+                embed_query("hello world")
+
+        self.assertIn("connection refused", str(ctx.exception).lower())
+
+    @patch("documents.services.embedding_service.requests.post")
+    def test_embed_query_raises_on_empty_text(self, mock_post: MagicMock) -> None:
+        """Empty or whitespace-only input should raise ValueError."""
+        with self.assertRaises(ValueError):
+            embed_query("")
+        with self.assertRaises(ValueError):
+            embed_query("   ")
+        with self.assertRaises(ValueError):
+            embed_query("\n\t")
+
+        mock_post.assert_not_called()
 
 
 class BatchGenerateEmbeddingsTests(TestCase):
