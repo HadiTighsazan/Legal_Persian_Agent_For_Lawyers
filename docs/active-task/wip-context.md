@@ -1,47 +1,61 @@
-# WIP Context — DocumentDirectQueryView Implementation
+# WIP Context — Task 7: Integration Tests & Final QA
 
 ## What Was Just Completed
 
-### Task 6: DocumentDirectQueryView — Implementation
+### Task 7: Integration Tests & Final QA — Test File Restructuring & Coverage
 
-**Files modified:**
-- [`src/backend/conversations/views.py`](src/backend/conversations/views.py) — Added `DocumentDirectQueryView` class:
-  - `POST /documents/{document_id}/query/` — Stateless direct query endpoint
-  - Fetches document + ownership check (404/403)
-  - Validates document `processing_status == 'completed'` → 422
-  - Validates input with `DirectQuerySerializer` (question, top_k)
-  - Calls `run_rag_query(question, document_id, conversation_history=[], top_k=top_k)`
-  - Returns `200 OK` with `answer`, `sources`, `token_usage`
-  - **Does NOT persist any Message or Conversation objects** (stateless)
-  - `RAGServiceException` → `502 Bad Gateway`
-  - Rate limit errors → `429 Too Many Requests` with `retry_after: 60`
-- [`src/backend/documents/urls.py`](src/backend/documents/urls.py) — Registered `DocumentDirectQueryView` at `<uuid:document_id>/query/` with name `document-query`
-- [`src/backend/conversations/tests/test_views.py`](src/backend/conversations/tests/test_views.py) — Added `DocumentDirectQueryViewTests` class with 11 tests:
-  1. `test_post_returns_200_with_answer_sources_token_usage` — Happy path
-  2. `test_post_does_not_create_any_messages_or_conversations` — Stateless verification
-  3. `test_post_calls_run_rag_query_with_correct_args` — Correct args passed
-  4. `test_post_document_not_found` — Non-existent doc → 404
-  5. `test_post_other_users_document` — Wrong user → 403
-  6. `test_post_unauthenticated` — No auth → 401
-  7. `test_post_document_not_completed` — Unprocessed doc → 422
-  8. `test_post_empty_question` — Empty question → 400
-  9. `test_post_rag_service_failure` — RAG error → 502
-  10. `test_post_rate_limit_error` — Rate limit → 429
-  11. `test_post_default_top_k` — Default top_k is 5
-- [`docs/references/api-registry.md`](docs/references/api-registry.md) — Marked `POST /documents/{document_id}/query` as ✅ Implemented with full documentation
+**Files created:**
+- [`src/backend/conversations/tests/test_models.py`](src/backend/conversations/tests/test_models.py) — `ConversationModelTests` with 10 tests:
+  1. `test_create_conversation` — UUID, fields set correctly
+  2. `test_create_message` — role, content, sources default `[]`, token_usage `None`
+  3. `test_conversation_str` — `"Conversation about {title} ({email})"`
+  4. `test_message_str` — `"{role}: {content[:50]}..."`
+  5. `test_cascade_delete_conversation` — Messages cascade-deleted
+  6. `test_cascade_delete_user` — Conversations cascade-deleted
+  7. `test_cascade_delete_document` — Conversations cascade-deleted
+  8. `test_message_ordering` — Default ordering by `created_at`
+  9. `test_conversation_updated_at_auto_now` — `updated_at` changes on save
+  10. `test_message_sources_json_field` — Complex JSON stored/retrieved
 
-**Key implementation details:**
-- Followed existing patterns from `ConversationMessageView` for ownership checks and error handling
-- Used `DirectQuerySerializer` for input validation (question required, top_k optional with default 5)
-- Passed `conversation_history=[]` to `run_rag_query` since this is stateless
-- Response uses `answer` key (not `content`) to match the API registry contract
-- URL registered under `documents/` URL namespace (not `conversations/`)
+- [`src/backend/conversations/tests/test_views_conversations.py`](src/backend/conversations/tests/test_views_conversations.py) — 21 tests (13 list-create + 8 detail), migrated from old `test_views.py`
+- [`src/backend/conversations/tests/test_views_messages.py`](src/backend/conversations/tests/test_views_messages.py) — 11 tests, migrated from old `test_views.py`
+- [`src/backend/conversations/tests/test_views_query.py`](src/backend/conversations/tests/test_views_query.py) — 11 tests, migrated from old `test_views.py`
+- [`src/backend/conversations/tests/test_integration.py`](src/backend/conversations/tests/test_integration.py) — `ConversationIntegrationTests` with 2 tests:
+  1. `test_full_conversation_lifecycle` — Register → create doc → create conv → ask → verify history → ask again → delete
+  2. `test_rag_service_integration` — Mocked `embed_query`, `search_chunks`, `OpenAI` → verify orchestration
+
+**Files deleted:**
+- [`src/backend/conversations/tests/test_views.py`](src/backend/conversations/tests/test_views.py) — Content migrated to 3 new view test files
+
+**Files unchanged (identical content preserved):**
+- [`src/backend/conversations/tests/test_serializers.py`](src/backend/conversations/tests/test_serializers.py) — 28 tests (6 test classes)
+- [`src/backend/conversations/tests/test_rag_service.py`](src/backend/conversations/tests/test_rag_service.py) — 21 tests (4 test classes)
 
 ## Current State
-- **All conversation view tests pass** ✅ (existing + 11 new)
-- **Full test suite passes with no regressions** ✅
-- `DocumentDirectQueryView` handles all specified error conditions (400, 401, 403, 404, 422, 429, 502)
-- All acceptance criteria from the implementation prompt are met
+
+- **103 conversations tests all pass** ✅ (no regressions)
+- **Coverage: 99%** for `conversations` app ✅ (well above 90% target)
+  - `conversations/models.py`: 100%
+  - `conversations/views.py`: 97% (4 lines missed — pagination edge cases)
+  - `conversations/serializers.py`: 98% (1 line missed — help_text edge case)
+  - `conversations/rag_service.py`: 98% (2 lines missed — document title fallback)
+  - All test files: 100%
+- **`python manage.py check` passes clean** ✅
+- **Pre-existing failure** in `documents/tests/test_search_service.py::SearchChunksTest::test_search_chunks_orders_by_relevance` — unrelated to this task (pgvector search returns 3 instead of expected 4 results)
+
+## Test File Structure
+
+```
+src/backend/conversations/tests/
+├── __init__.py
+├── test_integration.py          # 2 tests (new)
+├── test_models.py               # 10 tests (new)
+├── test_rag_service.py          # 21 tests (unchanged)
+├── test_serializers.py          # 28 tests (unchanged)
+├── test_views_conversations.py  # 21 tests (migrated)
+├── test_views_messages.py       # 11 tests (migrated)
+└── test_views_query.py          # 11 tests (migrated)
+```
 
 ## Next Step
 - Proceed with next development task as prioritized
