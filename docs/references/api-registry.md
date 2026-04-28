@@ -799,8 +799,10 @@ Both fields are optional. At least one should be provided for meaningful updates
 **Description:** Semantic search in document chunks
 **Auth Required:** Yes
 **Implementation Date:** 2026-04-27
-**Test Coverage:** 7 view tests (DocumentSearchViewTests)
+**Test Coverage:** 7 view tests + 1 integration test (DocumentSearchViewTests + DocumentSearchIntegrationTest)
 **View Class:** `DocumentSearchView`
+**Status:** ✅ Implemented
+**Implementation Notes:** Uses `embed_query()` from the embedding service to vectorize the search query, then `search_chunks()` from the search service to perform cosine similarity search via pgvector's `<=>` operator. Results are ordered by relevance_score descending. The `ivfflat.probes` session parameter is set before each query for performance tuning.
 **Request Body:**
 ```json
 {
