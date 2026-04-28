@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 """
-Simple test script to verify Django project can start.
+Simple verification script to check Django project can start.
+
+This is a startup verification script, not a pytest test file.
+It was moved from the backend root (test_django.py) to avoid
+confusing test discovery.
 """
 import os
 import sys
@@ -87,7 +91,7 @@ def test_health_endpoint():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("DocuChat Django Project Test")
+    print("DocuChat Django Project Verification")
     print("=" * 60)
     
     success = True
@@ -102,8 +106,8 @@ if __name__ == "__main__":
     
     print("\n" + "=" * 60)
     if success:
-        print("✅ ALL TESTS PASSED - Django project is ready!")
+        print("✅ ALL CHECKS PASSED - Django project is ready!")
         sys.exit(0)
     else:
-        print("❌ SOME TESTS FAILED - Check errors above")
+        print("❌ SOME CHECKS FAILED - Check errors above")
         sys.exit(1)

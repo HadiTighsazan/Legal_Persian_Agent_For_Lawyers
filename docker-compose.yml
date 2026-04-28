@@ -1,4 +1,27 @@
 services:
+  # Test Runner (isolated, profile-gated)
+  test:
+    build:
+      context: .
+      dockerfile: ./docker/backend/Dockerfile
+    container_name: docuchat_test
+    profiles:
+      - test  # Only starts with --profile test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://docuchat_user:changeme@postgres:5432/docuchat_db}
+      DJANGO_SETTINGS_MODULE: config.settings
+      DJANGO_DEBUG: "True"
+    volumes:
+      - ./src/backend:/app
+    command: pytest -v --reuse-db --nomigrations
+    networks:
+      - docuchat_network
+
   # PostgreSQL Database with pgvector extension
   postgres:
     image: pgvector/pgvector:pg16

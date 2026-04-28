@@ -1,16 +1,30 @@
-# WIP Context — Task 2: Serializers for Conversations & Messages
+# WIP Context — Test Structure Remediation + pgvector Fix
 
 ## What Was Just Completed
-- Refactored `ConversationListSerializer` and `ConversationDetailSerializer` based on DRF best-practice review:
-  1. **N+1 Query Fix**: Changed `message_count` from `SerializerMethodField` (which triggers `.count()` per instance) to `IntegerField(read_only=True)`. The view is now responsible for annotating the queryset with `Count('messages', distinct=True)`.
-  2. **ModelSerializer Base Class**: Changed both serializers from `serializers.Serializer` to `serializers.ModelSerializer` with proper `Meta` classes, reducing boilerplate and adhering to DRF standards.
-  3. **Context User Validation**: Confirmed `ConversationCreateSerializer.validate_document_id()` already extracts the user securely via `self.context['request'].user` and checks `document.user != request.user`.
-- Updated tests to annotate conversations with `Count('messages')` before passing to serializers, matching the expected view behavior.
-- All 28 tests pass.
+
+### Phase 1: Test Structure Remediation (All 5 Steps)
+Applied the full **Test Structure Remediation Plan** from [`plans/test-structure-remediation-plan.md`](plans/test-structure-remediation-plan.md):
+
+1. **Added `__init__.py` to `users/tests/`** — [`src/backend/users/tests/__init__.py`](src/backend/users/tests/__init__.py)
+2. **Created root `conftest.py`** — [`src/backend/conftest.py`](src/backend/conftest.py) (simplified to just `DJANGO_SETTINGS_MODULE` fallback after removing broken `pytest.TestCase` fixture)
+3. **Enhanced `pytest.ini`** — Added `testpaths`, `python_files`, `addopts`; removed `--nomigrations` since real migrations now work with pgvector
+4. **Moved orphaned `test_django.py`** → [`src/backend/scripts/verify_django.py`](src/backend/scripts/verify_django.py)
+5. **Added Docker test service** — `docker-compose --profile test run --rm test`
+
+### Phase 2: pgvector Test Database Fix
+**Root cause:** Django's test runner creates databases by cloning PostgreSQL's `template1`, which lacked the `vector` extension. With `--nomigrations`, tables are created via `sync_apps` which bypasses migration 0004's `CREATE EXTENSION IF NOT EXISTS vector`.
+
+**Fix applied:**
+- Ensured `ALTER DATABASE template1 CREATE EXTENSION IF NOT EXISTS vector` runs in [`docker/postgres/init.sql`](docker/postgres/init.sql) (already existed)
+- Executed the SQL against the running PostgreSQL container to enable `vector` in `template1`
+- Dropped the stale `test_docuchat_db` that was created before the fix
+- Removed `--nomigrations` from `pytest.ini` so real migrations run, creating the ivfflat index
 
 ## Current State
-- `src/backend/conversations/serializers.py` — Refactored with all 6 serializers using proper base classes
-- `src/backend/conversations/tests/test_serializers.py` — Updated tests use `_get_annotated_conversation()` helper to simulate view-level annotation
+- **382 tests pass, 0 failures** — full green suite
+- All test files discovered across all 4 test paths
+- No `ModuleNotFoundError`, no `type "vector" does not exist`, no `AttributeError`
+- `--reuse-db` retained for faster subsequent runs
 
 ## Next Step
-- Proceed to implement views/URLs for the conversations endpoints.
+- Proceed with next development task as prioritized

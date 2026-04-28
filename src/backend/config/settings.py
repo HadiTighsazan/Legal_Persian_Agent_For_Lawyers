@@ -246,6 +246,14 @@ EMBEDDING_PROVIDER = env('EMBEDDING_PROVIDER', default='google')
 # pgvector ivfflat index probe count
 VECTOR_SEARCH_PROBES = env("VECTOR_SEARCH_PROBES")
 
+# OpenAI Chat Configuration
+OPENAI_CHAT_MODEL = env("OPENAI_CHAT_MODEL", default="gpt-4o-mini")
+OPENAI_CHAT_MAX_TOKENS = env.int("OPENAI_CHAT_MAX_TOKENS", default=1000)
+
+# RAG Configuration
+RAG_MAX_HISTORY_TURNS = env.int("RAG_MAX_HISTORY_TURNS", default=10)
+RAG_CONTEXT_TOKEN_BUDGET = env.int("RAG_CONTEXT_TOKEN_BUDGET", default=4000)
+
 # Storage Configuration
 STORAGE_TYPE = env('STORAGE_TYPE', default='local')
 LOCAL_STORAGE_PATH = env('LOCAL_STORAGE_PATH', default=os.path.join(BASE_DIR, 'media/documents'))
