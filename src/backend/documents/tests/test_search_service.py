@@ -23,7 +23,7 @@ from users.models import User
 # ---------------------------------------------------------------------------
 
 EMBEDDING_DIM: int = 768
-"""Standard embedding dimension for nomic-embed-text."""
+"""Standard embedding dimension (Gemini gemini-embedding-001)."""
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,55 +1,62 @@
-# WIP Context — Task 4: Search View + URL Registration
+# WIP Context — Switch Embedding Provider from Ollama to Google Gemini
 
 ## What Was Just Completed
 
-Implemented `DocumentSearchView` (APIView), registered its URL pattern, and wrote 7 test methods following TDD (RED → GREEN → REFACTOR).
+Replaced the Ollama-based embedding service (`nomic-embed-text`) with Google Gemini API (`gemini-embedding-001`). All 5 specified files were modified, tests pass (59/59), and a real API smoke test confirmed 768-dim embeddings are generated correctly.
 
-### View Added
+### Files Modified
 
-1. **`DocumentSearchView`** in [`src/backend/documents/views.py`](src/backend/documents/views.py) — `POST /documents/<uuid:document_id>/search/`:
-   - **Authentication:** `IsAuthenticated`
-   - **Step 1:** Fetch document by ID → 404 `not_found` if missing
-   - **Step 2:** Ownership check → 403 `permission_denied` if mismatch
-   - **Step 3:** Processing status check → 422 `document_not_ready` if not `completed`
-   - **Step 4:** Validate request body via `SearchRequestSerializer` → 400 on DRF validation failure
-   - **Step 5:** Call `embed_query()` → 500 `embedding_failed` on `EmbeddingError`
-   - **Step 6:** Call `search_chunks()` with `document_id`, `query_vector`, `top_k`, `min_score`
-   - **Step 7:** Serialize response via `SearchResponseSerializer`
-   - **Step 8:** Return 200 OK with results
+1. **`src/backend/config/settings.py`** — Added `GOOGLE_API_KEY` and `GEMINI_EMBEDDING_MODEL` env vars, changed `EMBEDDING_PROVIDER` default from `'ollama'` to `'google'`, updated comment from "Ollama Configuration" to "Embedding Provider Configuration". Default model: `gemini-embedding-001`.
 
-### URL Registered
+2. **`src/backend/documents/services/embedding_service.py`** — Complete rewrite from Ollama to Gemini API:
+   - Model: `gemini-embedding-001` (not `text-embedding-004` as originally planned — that model doesn't exist)
+   - Single endpoint: `POST :embedContent` with `outputDimensionality: 768`
+   - Batch endpoint: `POST :batchEmbedContents` with `outputDimensionality: 768` per request
+   - `SUB_BATCH_SIZE`: 100 (Gemini max)
+   - Retry logic preserved (3 attempts, exponential backoff)
 
-- [`src/backend/documents/urls.py`](src/backend/documents/urls.py) — Added:
-  ```python
-  path("<uuid:document_id>/search/", DocumentSearchView.as_view(), name="document-search")
-  ```
+3. **`.env.example`** — Added Google Gemini config section with `GOOGLE_API_KEY`, `GEMINI_EMBEDDING_MODEL=gemini-embedding-001`, `EMBEDDING_PROVIDER=google`. Updated `EMBEDDING_DIMENSION` comment.
 
-### Tests Added
+4. **`docker-compose.yml`** — Added `GOOGLE_API_KEY`, `GEMINI_EMBEDDING_MODEL`, `EMBEDDING_PROVIDER` to both `backend` and `celery_worker` services.
 
-Added `DocumentSearchViewTests` class in [`src/backend/documents/tests/test_views.py`](src/backend/documents/tests/test_views.py) with 7 test methods:
+5. **`src/backend/documents/tests/test_embedding.py`** — Replaced Ollama mock helpers with Gemini mock helpers, updated all URL assertions, request body assertions (added `outputDimensionality: 768`), sub-batch sizes from 50→100.
 
-1. `test_search_requires_auth` — POST without auth → 401
-2. `test_search_document_not_found` — POST to non-existent UUID → 404 `not_found`
-3. `test_search_document_wrong_user` — POST as other user → 403 `permission_denied`
-4. `test_search_document_not_completed` — Document with `processing_status='processing'` → 422 `document_not_ready`
-5. `test_search_valid_request` — Mock `embed_query` + `search_chunks`, assert 200 with correct response shape
-6. `test_search_invalid_top_k` — `top_k=0` → 400 (DRF validation)
-7. `test_search_empty_results` — Mock returns empty list → 200 with `results=[]` and `total_results=0`
+6. **`src/backend/documents/tests/test_search_service.py`** — Updated comment from "text-embedding-004" to "gemini-embedding-001".
+
+### Key Findings During Implementation
+
+- **Model name**: The originally specified `text-embedding-004` does not exist in the Gemini API. The correct model is `models/gemini-embedding-001`.
+- **Default dimension**: `gemini-embedding-001` returns 3072-dim vectors by default.
+- **`outputDimensionality`**: Supported in both `embedContent` (single) and `batchEmbedContents` (per-request) endpoints. Set to 768 to match the existing pgvector schema.
+- **Batch endpoint**: `outputDimensionality` must be passed inside each request object, not at the top level.
+
+### Test Results
+
+- **59/59 tests pass** in `test_embedding.py`
+- **Real API smoke test**: Successfully generated a 768-dim embedding vector via the live Gemini API
 
 ## Current State of Code
 
-- [`src/backend/documents/views.py`](src/backend/documents/views.py) — Added imports (`SearchRequestSerializer`, `SearchResponseSerializer`, `EmbeddingError`, `embed_query`, `search_chunks`) + `DocumentSearchView` class at end of file
-- [`src/backend/documents/urls.py`](src/backend/documents/urls.py) — Added `DocumentSearchView` import + URL pattern
-- [`src/backend/documents/tests/test_views.py`](src/backend/documents/tests/test_views.py) — Added `DocumentSearchViewTests` class with 7 test methods
-- All **55 view tests pass** (48 existing + 7 new) — no regressions
+- [`src/backend/documents/services/embedding_service.py`](src/backend/documents/services/embedding_service.py) — Gemini API implementation with `generate_embedding`, `embed_query`, `batch_generate_embeddings`, `generate_embeddings_for_document`, `batch_embed_chunks`, `reembed_chunk`
+- [`src/backend/config/settings.py`](src/backend/config/settings.py) — Google Gemini settings configured
+- [`src/backend/documents/tests/test_embedding.py`](src/backend/documents/tests/test_embedding.py) — All 59 tests updated for Gemini API
+- [`src/backend/documents/tests/test_search_service.py`](src/backend/documents/tests/test_search_service.py) — Comment updated
+- [`.env.example`](.env.example) — Google Gemini config documented
+- [`docker-compose.yml`](docker-compose.yml) — Environment variables propagated
 
 ## Next Step
 
-No further steps for this task. The implementation is complete and all acceptance criteria are met:
+No further steps. The migration is complete and verified.
 
-- [x] `DocumentSearchView` implemented with all 8 steps (fetch, ownership, processing check, validation, embed, search, serialize, return)
-- [x] Error handling matrix: 404 (not_found), 403 (permission_denied), 422 (document_not_ready), 400 (DRF validation), 500 (embedding_failed)
-- [x] URL registered at `POST /documents/<uuid:document_id>/search/` with name `document-search`
-- [x] All 7 test methods pass
-- [x] No regressions in existing view tests (55 passed, 0 failed)
-- [x] `docs/references/api-registry.md` updated with new endpoint
+### Acceptance Criteria
+
+- [x] Embedding service uses Google Gemini API instead of Ollama
+- [x] `generate_embedding()` calls `POST :embedContent` with `outputDimensionality: 768`
+- [x] `embed_query()` calls `POST :embedContent` with `outputDimensionality: 768`
+- [x] `batch_generate_embeddings()` calls `POST :batchEmbedContents` with `outputDimensionality: 768` per request
+- [x] `SUB_BATCH_SIZE` is 100 (Gemini max)
+- [x] All existing tests pass (59/59)
+- [x] Real API smoke test confirms 768-dim embeddings
+- [x] `.env.example` documents the new Google Gemini config
+- [x] `docker-compose.yml` propagates `GOOGLE_API_KEY` and `GEMINI_EMBEDDING_MODEL`
+- [x] No database migration needed (768-dim vectors unchanged)

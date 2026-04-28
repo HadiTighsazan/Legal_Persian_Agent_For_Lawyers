@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from unittest.mock import ANY, MagicMock, patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -43,11 +43,11 @@ def _make_fake_embedding(dim: int = 768) -> list[float]:
     return [0.1] * dim
 
 
-def _mock_ollama_embed_response(
+def _mock_gemini_batch_response(
     texts: list[str],
     dim: int = 768,
 ) -> dict:
-    """Build a mock Ollama /api/embed response dict for the given *texts*.
+    """Build a mock Gemini batchEmbedContents response dict.
 
     Each text gets a unique embedding where the first element equals the
     index of the text in the list (to verify ordering).
@@ -55,17 +55,17 @@ def _mock_ollama_embed_response(
     embeddings = []
     for idx, _text in enumerate(texts):
         embedding = [float(idx + 1)] + [0.0] * (dim - 1)
-        embeddings.append(embedding)
-    return {"model": "nomic-embed-text", "embeddings": embeddings}
+        embeddings.append({"values": embedding})
+    return {"embeddings": embeddings}
 
 
-def _mock_ollama_single_response(
+def _mock_gemini_single_response(
     text: str,
     dim: int = 768,
 ) -> dict:
-    """Build a mock Ollama /api/embeddings response dict for a single text."""
+    """Build a mock Gemini embedContent response dict for a single text."""
     embedding = [0.1] * dim
-    return {"model": "nomic-embed-text", "embedding": embedding}
+    return {"embedding": {"values": embedding}}
 
 
 def _auth_header(user: User) -> dict[str, str]:
@@ -109,6 +109,7 @@ def _mock_celery_request(task_func, celery_task_id: str = "test-celery-id"):
 # ============================================================================
 
 
+@override_settings(GOOGLE_API_KEY="test-key")
 class GenerateEmbeddingTests(TestCase):
     """Tests for :func:`generate_embedding`."""
 
@@ -118,8 +119,7 @@ class GenerateEmbeddingTests(TestCase):
         fake_embedding = _make_fake_embedding()
         mock_response = MagicMock()
         mock_response.json.return_value = {
-            "model": "nomic-embed-text",
-            "embedding": fake_embedding,
+            "embedding": {"values": fake_embedding},
         }
         mock_post.return_value = mock_response
 
@@ -131,8 +131,12 @@ class GenerateEmbeddingTests(TestCase):
         self.assertEqual(result, fake_embedding)
 
         mock_post.assert_called_once_with(
-            "http://host.docker.internal:11434/api/embeddings",
-            json={"model": "nomic-embed-text", "prompt": "Hello world"},
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=test-key",
+            json={
+                "model": "models/gemini-embedding-001",
+                "content": {"parts": [{"text": "Hello world"}]},
+                "outputDimensionality": 768,
+            },
             timeout=60,
         )
 
@@ -151,8 +155,7 @@ class GenerateEmbeddingTests(TestCase):
         fake_embedding = _make_fake_embedding()
         mock_response = MagicMock()
         mock_response.json.return_value = {
-            "model": "nomic-embed-text",
-            "embedding": fake_embedding,
+            "embedding": {"values": fake_embedding},
         }
 
         from requests.exceptions import Timeout
@@ -217,6 +220,7 @@ class GenerateEmbeddingTests(TestCase):
         self.assertIsNone(result)
 
 
+@override_settings(GOOGLE_API_KEY="test-key")
 class EmbedQueryTests(TestCase):
     """Tests for :func:`embed_query`."""
 
@@ -226,8 +230,7 @@ class EmbedQueryTests(TestCase):
         fake_embedding = _make_fake_embedding()
         mock_response = MagicMock()
         mock_response.json.return_value = {
-            "model": "nomic-embed-text",
-            "embedding": fake_embedding,
+            "embedding": {"values": fake_embedding},
         }
         mock_post.return_value = mock_response
 
@@ -237,13 +240,17 @@ class EmbedQueryTests(TestCase):
         self.assertEqual(result, fake_embedding)
 
         mock_post.assert_called_once_with(
-            "http://host.docker.internal:11434/api/embeddings",
-            json={"model": "nomic-embed-text", "prompt": "hello world"},
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=test-key",
+            json={
+                "model": "models/gemini-embedding-001",
+                "content": {"parts": [{"text": "hello world"}]},
+                "outputDimensionality": 768,
+            },
             timeout=60,
         )
 
     @patch("documents.services.embedding_service.requests.post")
-    def test_embed_query_raises_on_ollama_failure(self, mock_post: MagicMock) -> None:
+    def test_embed_query_raises_on_gemini_failure(self, mock_post: MagicMock) -> None:
         """All retries exhausted should raise EmbeddingError."""
         from requests.exceptions import ConnectionError
         mock_post.side_effect = ConnectionError("connection refused")
@@ -267,6 +274,7 @@ class EmbedQueryTests(TestCase):
         mock_post.assert_not_called()
 
 
+@override_settings(GOOGLE_API_KEY="test-key")
 class BatchGenerateEmbeddingsTests(TestCase):
     """Tests for :func:`batch_generate_embeddings`."""
 
@@ -278,7 +286,7 @@ class BatchGenerateEmbeddingsTests(TestCase):
         """3 texts should return 3 embeddings in the correct order."""
         texts = ["First text", "Second text", "Third text"]
         mock_response = MagicMock()
-        mock_response.json.return_value = _mock_ollama_embed_response(texts)
+        mock_response.json.return_value = _mock_gemini_batch_response(texts)
         mock_post.return_value = mock_response
 
         results = batch_generate_embeddings(texts)
@@ -299,7 +307,7 @@ class BatchGenerateEmbeddingsTests(TestCase):
         texts = ["Valid text", "", "Another valid", "   "]
         valid_texts = ["Valid text", "Another valid"]
         mock_response = MagicMock()
-        mock_response.json.return_value = _mock_ollama_embed_response(valid_texts)
+        mock_response.json.return_value = _mock_gemini_batch_response(valid_texts)
         mock_post.return_value = mock_response
 
         results = batch_generate_embeddings(texts)
@@ -315,23 +323,22 @@ class BatchGenerateEmbeddingsTests(TestCase):
         self,
         mock_post: MagicMock,
     ) -> None:
-        """120 texts should split into 3 sub-batches (50, 50, 20)."""
+        """120 texts should split into 2 sub-batches (100, 20)."""
         texts = [f"Text {i}" for i in range(120)]
 
         global_idx = 0
 
         def side_effect(url: str, **kwargs: object) -> MagicMock:
             nonlocal global_idx
-            input_texts = kwargs.get("json", {}).get("input", [])
-            assert isinstance(input_texts, list)
+            requests_payload = kwargs.get("json", {}).get("requests", [])
+            assert isinstance(requests_payload, list)
             embeddings = []
-            for _ in input_texts:
+            for req in requests_payload:
                 embedding = [float(global_idx + 1)] + [0.0] * 767
-                embeddings.append(embedding)
+                embeddings.append({"values": embedding})
                 global_idx += 1
             mock_response = MagicMock()
             mock_response.json.return_value = {
-                "model": "nomic-embed-text",
                 "embeddings": embeddings,
             }
             return mock_response
@@ -346,7 +353,7 @@ class BatchGenerateEmbeddingsTests(TestCase):
             assert result is not None
             self.assertEqual(result[0], float(idx + 1))
 
-        self.assertEqual(mock_post.call_count, 3)
+        self.assertEqual(mock_post.call_count, 2)
 
     @patch("documents.services.embedding_service.requests.post")
     def test_batch_generate_embeddings_all_empty(
@@ -370,7 +377,7 @@ class BatchGenerateEmbeddingsTests(TestCase):
         """Transient failure on sub-batch should retry with backoff."""
         texts = ["Hello", "World"]
         mock_response = MagicMock()
-        mock_response.json.return_value = _mock_ollama_embed_response(texts)
+        mock_response.json.return_value = _mock_gemini_batch_response(texts)
 
         from requests.exceptions import Timeout
         mock_post.side_effect = [
@@ -524,7 +531,7 @@ class GenerateEmbeddingsForDocumentTests(TestCase):
         mock_batch: MagicMock,
     ) -> None:
         """Progress should be updated correctly during batch processing."""
-        chunk_count = SUB_BATCH_SIZE + 10
+        chunk_count = SUB_BATCH_SIZE + 10  # 110 chunks, 2 batches of 100+10
         self._create_chunks(chunk_count)
 
         def side_effect(texts: list[str]) -> list[list[float] | None]:
@@ -1210,22 +1217,22 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
-            side_effect=ValueError("Ollama API connection failed"),
+            side_effect=ValueError("Gemini API connection failed"),
         ):
             self._run_task()
 
         self.processing_task.refresh_from_db()
         self.assertEqual(self.processing_task.status, "failed")
-        self.assertIn("Ollama API connection failed", self.processing_task.error_message)
+        self.assertIn("Gemini API connection failed", self.processing_task.error_message)
         self.assertIsNotNone(self.processing_task.completed_at)
 
     # -- Progress tracking ------------------------------------------------
 
     def test_embed_document_updates_task_progress(self) -> None:
-        """Verify progress goes from 0 -> 50 -> 100 for 2 batches of 50 chunks each."""
-        self._create_chunks(100)
+        """Verify progress goes from 0 -> 50 -> 100 for 2 batches of 100 chunks each."""
+        self._create_chunks(200)
 
-        embeddings = [[float(i)] * 768 for i in range(100)]
+        embeddings = [[float(i)] * 768 for i in range(200)]
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
@@ -1244,7 +1251,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         self.assertEqual(chunks.count(), 0)
 
     def test_single_batch_progress(self) -> None:
-        """A single batch (< 50 chunks) should go from 0 -> 100."""
+        """A single batch (< 100 chunks) should go from 0 -> 100."""
         self._create_chunks(25)
 
         with patch(
@@ -1288,12 +1295,12 @@ class EmbeddingCeleryTaskTests(TestCase):
     # -- Edge cases -------------------------------------------------------
 
     def test_exactly_one_batch(self) -> None:
-        """Exactly SUB_BATCH_SIZE (50) chunks -> processed in a single batch."""
-        self._create_chunks(50)
+        """Exactly SUB_BATCH_SIZE (100) chunks -> processed in a single batch."""
+        self._create_chunks(100)
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
-            return_value=[[0.1] * 768] * 50,
+            return_value=[[0.1] * 768] * 100,
         ) as mock_embed:
             self._run_task()
 
@@ -1304,12 +1311,12 @@ class EmbeddingCeleryTaskTests(TestCase):
         self.assertEqual(self.processing_task.progress, 100)
 
     def test_uneven_batch(self) -> None:
-        """75 chunks (1.5 batches) -> processed correctly with 2 batch calls."""
-        self._create_chunks(75)
+        """150 chunks (1.5 batches) -> processed correctly with 2 batch calls."""
+        self._create_chunks(150)
 
         with patch(
             "documents.tasks.embedding_tasks.batch_generate_embeddings",
-            return_value=[[0.1] * 768] * 75,
+            return_value=[[0.1] * 768] * 150,
         ) as mock_embed:
             self._run_task()
 

@@ -1,7 +1,45 @@
+# Implementation Prompt: Switch Embedding from Ollama to Google Gemini API
+
+## Task
+
+Replace the current Ollama-based embedding service (`nomic-embed-text`) with Google Gemini API (`text-embedding-004`) using the provided API key. This offloads computation from the laptop to Google's servers.
+
+**API Key:** `AIzaSyAUpCi6VZUFgvftRCVI-nq2k_i6gRbsLTU`
+
+## Key Facts
+
+- Both models output **768-dim** vectors → **no database migration needed**
+- Gemini API is REST-based (uses `requests` library already in `requirements.txt`)
+- Batch endpoint allows up to **100 texts per call** (vs 50 for Ollama)
+- Free tier: 1500 requests/min, 50,000 requests/day
+
+## Files to Modify (5 files)
+
+### 1. `src/backend/config/settings.py`
+
+Add these new env vars near line 27-29 (where `OPENAI_API_KEY` and `OLLAMA_BASE_URL` are):
+
+```python
+GOOGLE_API_KEY = env('GOOGLE_API_KEY', default='')
+GEMINI_EMBEDDING_MODEL = env('GEMINI_EMBEDDING_MODEL', default='text-embedding-004')
+```
+
+Change line 29:
+```python
+EMBEDDING_PROVIDER = env('EMBEDDING_PROVIDER', default='google'),
+```
+
+Also update the comment on line 235 from `# Ollama Configuration (development embedding provider)` to `# Embedding Provider Configuration`.
+
+### 2. `src/backend/documents/services/embedding_service.py` (MAIN CHANGE)
+
+Replace the entire file. Here's the complete new implementation:
+
+```python
 """
 Embedding service for generating and managing vector embeddings.
 
-Provides functions that wrap the Google Gemini ``gemini-embedding-001`` model for
+Provides functions that wrap the Google Gemini ``text-embedding-004`` model for
 generating embeddings on individual texts, batches, and full documents.
 Follows the existing service-layer pattern (standalone functions, not classes).
 
@@ -33,11 +71,11 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-EMBEDDING_MODEL: str = "gemini-embedding-001"
+EMBEDDING_MODEL: str = "text-embedding-004"
 """The Google Gemini embedding model identifier."""
 
 EMBEDDING_DIMENSIONS: int = 768
-"""The number of dimensions returned by ``gemini-embedding-001`` (with ``outputDimensionality=768``)."""
+"""The number of dimensions returned by ``text-embedding-004``."""
 
 SUB_BATCH_SIZE: int = 100
 """Maximum number of texts to send in a single Gemini API call (max 100)."""
@@ -108,7 +146,6 @@ def generate_embedding(text: str) -> list[float] | None:
                 json={
                     "model": f"models/{EMBEDDING_MODEL}",
                     "content": {"parts": [{"text": text}]},
-                    "outputDimensionality": EMBEDDING_DIMENSIONS,
                 },
                 timeout=_TIMEOUT_SECONDS,
             )
@@ -193,7 +230,6 @@ def embed_query(text: str) -> list[float]:
                 json={
                     "model": f"models/{EMBEDDING_MODEL}",
                     "content": {"parts": [{"text": text}]},
-                    "outputDimensionality": EMBEDDING_DIMENSIONS,
                 },
                 timeout=_TIMEOUT_SECONDS,
             )
@@ -297,7 +333,6 @@ def batch_generate_embeddings(texts: list[str]) -> list[list[float] | None]:
             requests_payload.append({
                 "model": f"models/{EMBEDDING_MODEL}",
                 "content": {"parts": [{"text": t}]},
-                "outputDimensionality": EMBEDDING_DIMENSIONS,
             })
 
         # Send the sub-batch to Gemini with retry logic.
@@ -558,3 +593,126 @@ def reembed_chunk(chunk_id: str) -> dict[str, Any]:
         "embedding_updated": False,
         "error": "Failed to generate embedding",
     }
+```
+
+### 3. `.env.example`
+
+Add/update these lines:
+
+```env
+# ============================================
+# Google Gemini API Configuration
+# ============================================
+
+# Google Gemini API Key (required for embeddings when EMBEDDING_PROVIDER=google)
+GOOGLE_API_KEY=AIzaSyAUpCi6VZUFgvftRCVI-nq2k_i6gRbsLTU
+
+# Gemini Embedding Model
+GEMINI_EMBEDDING_MODEL=text-embedding-004
+
+# Embedding Provider (google for Gemini, openai for OpenAI)
+EMBEDDING_PROVIDER=google
+```
+
+Also update the `EMBEDDING_DIMENSION` comment on line 167:
+```env
+# Embedding Dimension (Gemini text-embedding-004)
+EMBEDDING_DIMENSION=768
+```
+
+### 4. `docker-compose.yml`
+
+Add `GOOGLE_API_KEY` to both `backend` and `celery_worker` services (after the `OPENAI_API_KEY` line):
+
+For `backend` service (after line 61 `OPENAI_API_KEY: ${OPENAI_API_KEY}`):
+```yaml
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-google}
+```
+
+For `celery_worker` service (after line 98 `OPENAI_API_KEY: ${OPENAI_API_KEY}`):
+```yaml
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-google}
+```
+
+### 5. `src/backend/documents/tests/test_embedding.py`
+
+Update the mock helpers and all test assertions. Key changes:
+
+**Update `_make_fake_embedding`** — stays the same (768-dim).
+
+**Replace `_mock_ollama_embed_response` with `_mock_gemini_batch_response`:**
+```python
+def _mock_gemini_batch_response(
+    texts: list[str],
+    dim: int = 768,
+) -> dict:
+    """Build a mock Gemini batchEmbedContents response dict."""
+    embeddings = []
+    for idx, _text in enumerate(texts):
+        embedding = [float(idx + 1)] + [0.0] * (dim - 1)
+        embeddings.append({"values": embedding})
+    return {"embeddings": embeddings}
+```
+
+**Replace `_mock_ollama_single_response` with `_mock_gemini_single_response`:**
+```python
+def _mock_gemini_single_response(
+    text: str,
+    dim: int = 768,
+) -> dict:
+    """Build a mock Gemini embedContent response dict."""
+    embedding = [0.1] * dim
+    return {"embedding": {"values": embedding}}
+```
+
+**Update all test assertions:**
+
+In `GenerateEmbeddingTests.test_generate_embedding_returns_768_floats`:
+- Change mock response format to Gemini
+- Change URL assertion to Gemini endpoint
+- Change request body assertion
+
+In `EmbedQueryTests.test_embed_query_returns_768_floats`:
+- Same changes as above
+
+In `BatchGenerateEmbeddingsTests`:
+- Update mock response format
+- Update URL assertions
+- Update sub-batch size from 50 to 100 in relevant tests
+
+In `GenerateEmbeddingsForDocumentTests`:
+- Update `test_generate_embeddings_for_document_batch_progress` to use `SUB_BATCH_SIZE + 10` (101 chunks, 2 batches of 100+1)
+
+In `EmbeddingCeleryTaskTests`:
+- Update `test_exactly_one_batch` to use 100 chunks instead of 50
+- Update `test_uneven_batch` to use 150 chunks (1.5 batches of 100)
+
+## Verification
+
+After making all changes, run:
+```bash
+docker-compose exec backend pytest documents/tests/test_embedding.py -v
+```
+
+All tests should pass. Then do a quick smoke test:
+```bash
+docker-compose exec backend python -c "
+from documents.services.embedding_service import generate_embedding
+result = generate_embedding('Hello world')
+print(f'Embedding dimensions: {len(result) if result else 0}')
+print(f'First 5 values: {result[:5] if result else None}')
+"
+```
+
+## Important Notes
+
+1. **No migration needed** — both models output 768-dim vectors
+2. **No new dependencies** — Gemini uses REST API, `requests` is already installed
+3. **Existing embeddings remain valid** — they're still 768-dim vectors
+4. **The API key is already provided** — just add it to `.env`
+5. **Update `wip-context.md`** after completing the implementation
+6. **Update `api-registry.md`** if any endpoint behavior changes (it shouldn't)
