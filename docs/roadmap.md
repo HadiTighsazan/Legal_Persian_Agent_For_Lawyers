@@ -10,7 +10,7 @@
 | E03 | Document Upload & Storage | File upload endpoint, S3/local storage abstraction, document metadata model, file validation (type, size) | ✅ Done |
 | E04 | Document Processing Pipeline | Celery tasks for text extraction (PyMuPDF), chunking strategy, processing_tasks status tracking, error handling | ✅ Done |
 | E05 | Embedding & Vector Storage | OpenAI embedding generation per chunk, pgvector storage, batch processing, re-embedding support | ✅ Done |
-| E06 | Semantic Search & Retrieval | Vector similarity search endpoint, relevance scoring, top-k retrieval, metadata filtering | ⏳ Todo |
+| E06 | Semantic Search & Retrieval | Vector similarity search endpoint, relevance scoring, top-k retrieval, metadata filtering | ✅ Done |
 | E07 | Conversation & Q&A Engine | LangChain RAG chain, conversation/message models, context injection, citation tracking, hallucination mitigation | ⏳ Todo |
 | E08 | Frontend — Auth & Layout | React + Vite + TailwindCSS + shadcn/ui setup, auth pages (login/register), protected routes, layout shell | ⏳ Todo |
 | E09 | Frontend — Document Management | Upload UI, document list/detail views, processing status polling, delete flow | ⏳ Todo |
