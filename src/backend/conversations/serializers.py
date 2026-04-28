@@ -59,11 +59,17 @@ class MessageSerializer(serializers.ModelSerializer):
         ]
 
 
-class ConversationListSerializer(serializers.Serializer):
+class ConversationListSerializer(serializers.ModelSerializer):
     """Serialize a :class:`~conversations.models.Conversation` for list views.
 
     Includes ``document_id`` and ``document_title`` sourced from the related
-    :class:`~documents.models.Document`, and a computed ``message_count``.
+    :class:`~documents.models.Document`, and an annotated ``message_count``.
+
+    .. note::
+
+       ``message_count`` is an ``IntegerField(read_only=True)``. The view is
+       responsible for annotating the queryset with
+       ``Count('messages', distinct=True)`` to avoid N+1 queries.
     """
 
     id = serializers.UUIDField(
@@ -86,8 +92,9 @@ class ConversationListSerializer(serializers.Serializer):
         max_length=500,
         help_text="Human-readable title for the conversation.",
     )
-    message_count = serializers.SerializerMethodField(
-        help_text="Number of messages in the conversation.",
+    message_count = serializers.IntegerField(
+        read_only=True,
+        help_text="Number of messages in the conversation (annotated by the view).",
     )
     created_at = serializers.DateTimeField(
         read_only=True,
@@ -98,9 +105,17 @@ class ConversationListSerializer(serializers.Serializer):
         help_text="Timestamp when the conversation was last updated.",
     )
 
-    def get_message_count(self, obj: Conversation) -> int:
-        """Return the number of messages in the conversation."""
-        return obj.messages.count()
+    class Meta:
+        model = Conversation
+        fields = [
+            "id",
+            "document_id",
+            "document_title",
+            "title",
+            "message_count",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class ConversationDetailSerializer(ConversationListSerializer):
@@ -115,6 +130,9 @@ class ConversationDetailSerializer(ConversationListSerializer):
         read_only=True,
         help_text="List of messages in the conversation.",
     )
+
+    class Meta(ConversationListSerializer.Meta):
+        fields = ConversationListSerializer.Meta.fields + ["messages"]
 
 
 class ConversationCreateSerializer(serializers.Serializer):
@@ -139,6 +157,9 @@ class ConversationCreateSerializer(serializers.Serializer):
 
     def validate_document_id(self, value: uuid.UUID) -> Document:
         """Validate that the document exists, belongs to the user, and is processed.
+
+        Extracts the authenticated user from ``self.context['request'].user``
+        to verify document ownership.
 
         Args:
             value: The UUID of the document to validate.

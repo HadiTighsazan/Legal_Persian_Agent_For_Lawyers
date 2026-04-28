@@ -1,21 +1,16 @@
 # WIP Context — Task 2: Serializers for Conversations & Messages
 
 ## What Was Just Completed
-- Created `src/backend/conversations/serializers.py` with all 6 serializers:
-  - `MessageSerializer` — ModelSerializer for Message with read-only id, sources, token_usage, created_at
-  - `ConversationListSerializer` — Serializer for Conversation list view with document_id/document_title via source, message_count via SerializerMethodField
-  - `ConversationDetailSerializer` — Inherits from ConversationListSerializer, adds nested messages
-  - `ConversationCreateSerializer` — Validates document_id (exists, belongs to user, processing completed)
-  - `AskQuestionSerializer` — Validates content (min_length=1, max_length=10000)
-  - `DirectQuerySerializer` — Validates question (min_length=1) and top_k (default=5, range 1-20)
-- Created `src/backend/conversations/tests/__init__.py`
-- Created `src/backend/conversations/tests/test_serializers.py` with 6 test classes (28 tests total)
-- All 28 tests pass with `docker-compose exec backend pytest conversations/tests/test_serializers.py -v`
+- Refactored `ConversationListSerializer` and `ConversationDetailSerializer` based on DRF best-practice review:
+  1. **N+1 Query Fix**: Changed `message_count` from `SerializerMethodField` (which triggers `.count()` per instance) to `IntegerField(read_only=True)`. The view is now responsible for annotating the queryset with `Count('messages', distinct=True)`.
+  2. **ModelSerializer Base Class**: Changed both serializers from `serializers.Serializer` to `serializers.ModelSerializer` with proper `Meta` classes, reducing boilerplate and adhering to DRF standards.
+  3. **Context User Validation**: Confirmed `ConversationCreateSerializer.validate_document_id()` already extracts the user securely via `self.context['request'].user` and checks `document.user != request.user`.
+- Updated tests to annotate conversations with `Count('messages')` before passing to serializers, matching the expected view behavior.
+- All 28 tests pass.
 
 ## Current State
-- `src/backend/conversations/serializers.py` — Complete with all 6 serializers, help_text on every field, docstrings, type hints
-- `src/backend/conversations/tests/test_serializers.py` — Complete with all test classes covering valid/invalid inputs, read_only fields, help_text verification
-- `src/backend/conversations/tests/__init__.py` — Created (empty)
+- `src/backend/conversations/serializers.py` — Refactored with all 6 serializers using proper base classes
+- `src/backend/conversations/tests/test_serializers.py` — Updated tests use `_get_annotated_conversation()` helper to simulate view-level annotation
 
 ## Next Step
-- Proceed to implement views/URLs for the conversations endpoints, or move to the next task.
+- Proceed to implement views/URLs for the conversations endpoints.

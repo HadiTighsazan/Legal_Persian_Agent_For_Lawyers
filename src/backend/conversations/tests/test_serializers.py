@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import uuid
 
+from django.db.models import Count
 from django.test import TestCase
 from django.utils import timezone as tz_utils
 
@@ -131,9 +132,20 @@ class ConversationListSerializerTests(TestCase):
             content="Hi there!",
         )
 
+    def _get_annotated_conversation(self) -> Conversation:
+        """Return the conversation annotated with ``message_count``.
+
+        The view is expected to annotate the queryset with
+        ``Count('messages')`` to avoid N+1 queries.
+        """
+        return Conversation.objects.annotate(
+            message_count=Count("messages"),
+        ).get(pk=self.conversation.pk)
+
     def test_serializes_output(self) -> None:
         """The serializer should produce the expected output dict with correct types."""
-        serializer = ConversationListSerializer(instance=self.conversation)
+        conv = self._get_annotated_conversation()
+        serializer = ConversationListSerializer(instance=conv)
         output = serializer.data
         # UUID → str
         self.assertEqual(output["id"], str(self.conversation.id))
@@ -147,7 +159,8 @@ class ConversationListSerializerTests(TestCase):
 
     def test_document_title_from_source(self) -> None:
         """``document_title`` should come from the related document."""
-        serializer = ConversationListSerializer(instance=self.conversation)
+        conv = self._get_annotated_conversation()
+        serializer = ConversationListSerializer(instance=conv)
         output = serializer.data
         self.assertEqual(output["document_title"], self.document.title)
 
@@ -203,9 +216,16 @@ class ConversationDetailSerializerTests(TestCase):
             token_usage={"prompt_tokens": 10, "completion_tokens": 20},
         )
 
+    def _get_annotated_conversation(self) -> Conversation:
+        """Return the conversation annotated with ``message_count``."""
+        return Conversation.objects.annotate(
+            message_count=Count("messages"),
+        ).get(pk=self.conversation.pk)
+
     def test_serializes_output(self) -> None:
         """The serializer should produce the expected output with nested messages."""
-        serializer = ConversationDetailSerializer(instance=self.conversation)
+        conv = self._get_annotated_conversation()
+        serializer = ConversationDetailSerializer(instance=conv)
         output = serializer.data
         self.assertEqual(output["id"], str(self.conversation.id))
         self.assertEqual(output["document_title"], "test-doc.pdf")
@@ -222,11 +242,13 @@ class ConversationDetailSerializerTests(TestCase):
 
     def test_empty_messages_list(self) -> None:
         """A conversation with no messages should still serialize correctly."""
-        empty_conv = Conversation.objects.create(
+        empty_conv = Conversation.objects.annotate(
+            message_count=Count("messages"),
+        ).get(pk=Conversation.objects.create(
             user=self.user,
             document=self.document,
             title="Empty Conversation",
-        )
+        ).pk)
         serializer = ConversationDetailSerializer(instance=empty_conv)
         output = serializer.data
         self.assertEqual(output["messages"], [])
