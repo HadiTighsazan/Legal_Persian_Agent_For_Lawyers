@@ -19,12 +19,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from conversations.models import Conversation, Message
+from documents.models import Document
 from conversations.rag_service import RAGServiceException, run_rag_query
 from conversations.serializers import (
     AskQuestionSerializer,
     ConversationCreateSerializer,
     ConversationDetailSerializer,
     ConversationListSerializer,
+    DirectQuerySerializer,
     MessageSerializer,
 )
 
@@ -364,4 +366,112 @@ class ConversationMessageView(APIView):
         return Response(
             response_serializer.data,
             status=status.HTTP_201_CREATED,
+        )
+
+
+class DocumentDirectQueryView(APIView):
+    """Handle stateless direct queries against a document.
+
+    **Endpoint:** ``POST /documents/{document_id}/query``
+
+    **Authentication:** Required (JWT via ``rest_framework_simplejwt``).
+
+    **POST Responses:**
+        - ``200 OK`` — Query answered successfully.
+        - ``400 Bad Request`` — Validation error (empty question, invalid top_k, etc.).
+        - ``401 Unauthorized`` — Missing or invalid authentication.
+        - ``403 Forbidden`` — Document belongs to another user.
+        - ``404 Not Found`` — Document does not exist.
+        - ``422 Unprocessable Entity`` — Document processing is not complete.
+        - ``429 Too Many Requests`` — OpenAI API rate limit exceeded.
+        - ``502 Bad Gateway`` — RAG service error.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, document_id: str) -> Response:
+        """Handle the direct query POST request."""
+        # ------------------------------------------------------------------
+        # 1. Fetch document + ownership check
+        # ------------------------------------------------------------------
+        try:
+            document = Document.objects.get(id=document_id)
+        except Document.DoesNotExist:
+            return Response(
+                {"error": "not_found", "message": "Document not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if document.user != request.user:
+            return Response(
+                {
+                    "error": "permission_denied",
+                    "message": "You do not have permission to access this document.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # ------------------------------------------------------------------
+        # 2. Validate document processing status
+        # ------------------------------------------------------------------
+        if document.processing_status != "completed":
+            return Response(
+                {
+                    "error": "processing_incomplete",
+                    "message": "Document processing is not complete. Please wait for processing to finish.",
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        # ------------------------------------------------------------------
+        # 3. Validate input with DirectQuerySerializer
+        # ------------------------------------------------------------------
+        serializer = DirectQuerySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
+        question = validated_data["question"]
+        top_k = validated_data.get("top_k", 5)
+
+        # ------------------------------------------------------------------
+        # 4. Call run_rag_query (stateless — no conversation history)
+        # ------------------------------------------------------------------
+        try:
+            result = run_rag_query(
+                question=question,
+                document_id=str(document.id),
+                conversation_history=[],
+                top_k=top_k,
+            )
+        except RAGServiceException as e:
+            error_msg = str(e).lower()
+            if "rate limit" in error_msg or "429" in error_msg:
+                return Response(
+                    {
+                        "error": "rate_limit_exceeded",
+                        "message": "OpenAI API rate limit exceeded. Please try again later.",
+                        "retry_after": 60,
+                    },
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+            logger.error(
+                "Direct query RAG failed for document %s: %s",
+                document_id,
+                e,
+            )
+            return Response(
+                {"error": "rag_error", "message": str(e)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # ------------------------------------------------------------------
+        # 5. Return 200 OK with answer, sources, token_usage
+        #    NOTE: Do NOT persist any messages or conversations
+        # ------------------------------------------------------------------
+        return Response(
+            {
+                "answer": result["content"],
+                "sources": result["sources"],
+                "token_usage": result["token_usage"],
+            },
+            status=status.HTTP_200_OK,
         )

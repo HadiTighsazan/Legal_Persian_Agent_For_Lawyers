@@ -1,49 +1,47 @@
-# WIP Context — ConversationMessageView Implementation
+# WIP Context — DocumentDirectQueryView Implementation
 
 ## What Was Just Completed
 
-### Task 5: ConversationMessageView — Implementation
+### Task 6: DocumentDirectQueryView — Implementation
 
 **Files modified:**
-- [`src/backend/conversations/views.py`](src/backend/conversations/views.py) — Added `ConversationMessageView` class:
-  - `POST /conversations/{conversation_id}/messages/` — Ask a question in a conversation
-  - Fetches conversation + ownership check (404/403)
-  - Validates input with `AskQuestionSerializer`
-  - Persists user message before calling RAG
-  - Builds conversation history from all messages
-  - Calls `run_rag_query(question, document_id, conversation_history, top_k=5)`
-  - Persists assistant message with `sources` and `token_usage`
-  - Touches `conversation.updated_at` via `conversation.save()`
-  - Returns `201 Created` with `MessageSerializer` of assistant message
+- [`src/backend/conversations/views.py`](src/backend/conversations/views.py) — Added `DocumentDirectQueryView` class:
+  - `POST /documents/{document_id}/query/` — Stateless direct query endpoint
+  - Fetches document + ownership check (404/403)
+  - Validates document `processing_status == 'completed'` → 422
+  - Validates input with `DirectQuerySerializer` (question, top_k)
+  - Calls `run_rag_query(question, document_id, conversation_history=[], top_k=top_k)`
+  - Returns `200 OK` with `answer`, `sources`, `token_usage`
+  - **Does NOT persist any Message or Conversation objects** (stateless)
   - `RAGServiceException` → `502 Bad Gateway`
   - Rate limit errors → `429 Too Many Requests` with `retry_after: 60`
-- [`src/backend/conversations/urls.py`](src/backend/conversations/urls.py) — Registered `ConversationMessageView` at `<uuid:conversation_id>/messages/` with name `conversation-messages`
-- [`src/backend/conversations/tests/test_views.py`](src/backend/conversations/tests/test_views.py) — Added `ConversationMessageViewTests` class with 11 tests:
-  1. `test_post_creates_user_and_assistant_messages` — Happy path, 2 messages created
-  2. `test_post_returns_201_with_message_serializer` — Response shape matches `MessageSerializer`
-  3. `test_post_touches_conversation_updated_at` — `updated_at` changes after POST
-  4. `test_post_invalid_conversation_id` — Random UUID → 404
-  5. `test_post_other_users_conversation` — Different user → 403
+- [`src/backend/documents/urls.py`](src/backend/documents/urls.py) — Registered `DocumentDirectQueryView` at `<uuid:document_id>/query/` with name `document-query`
+- [`src/backend/conversations/tests/test_views.py`](src/backend/conversations/tests/test_views.py) — Added `DocumentDirectQueryViewTests` class with 11 tests:
+  1. `test_post_returns_200_with_answer_sources_token_usage` — Happy path
+  2. `test_post_does_not_create_any_messages_or_conversations` — Stateless verification
+  3. `test_post_calls_run_rag_query_with_correct_args` — Correct args passed
+  4. `test_post_document_not_found` — Non-existent doc → 404
+  5. `test_post_other_users_document` — Wrong user → 403
   6. `test_post_unauthenticated` — No auth → 401
-  7. `test_post_empty_content` — Empty content → 400
-  8. `test_post_rag_service_failure` — `RAGServiceException` → 502
-  9. `test_post_rate_limit_error` — Rate limit → 429
-  10. `test_post_conversation_history_includes_prior_messages` — History passed to RAG
-  11. `test_full_conversation_flow` — Integration: ask twice, verify messages + history
-- [`docs/references/api-registry.md`](docs/references/api-registry.md) — Marked `POST /conversations/{conversation_id}/messages/` as ✅ Implemented with full documentation
+  7. `test_post_document_not_completed` — Unprocessed doc → 422
+  8. `test_post_empty_question` — Empty question → 400
+  9. `test_post_rag_service_failure` — RAG error → 502
+  10. `test_post_rate_limit_error` — Rate limit → 429
+  11. `test_post_default_top_k` — Default top_k is 5
+- [`docs/references/api-registry.md`](docs/references/api-registry.md) — Marked `POST /documents/{document_id}/query` as ✅ Implemented with full documentation
 
 **Key implementation details:**
-- Followed existing patterns from `ConversationDetailView._get_conversation_or_error()` for ownership checks
-- Used `AskQuestionSerializer` for input validation (content required, 1–10,000 chars)
-- User message persisted **before** RAG call so it's included in conversation history
-- Rate limit detection checks for "rate limit" or "429" in `RAGServiceException` message
-- URL placed before the detail path to avoid any routing ambiguity
+- Followed existing patterns from `ConversationMessageView` for ownership checks and error handling
+- Used `DirectQuerySerializer` for input validation (question required, top_k optional with default 5)
+- Passed `conversation_history=[]` to `run_rag_query` since this is stateless
+- Response uses `answer` key (not `content`) to match the API registry contract
+- URL registered under `documents/` URL namespace (not `conversations/`)
 
 ## Current State
-- **All 32+ conversation view tests pass** ✅ (21 existing + 11 new)
+- **All conversation view tests pass** ✅ (existing + 11 new)
 - **Full test suite passes with no regressions** ✅
-- `ConversationMessageView` handles all specified error conditions (400, 401, 403, 404, 429, 502)
+- `DocumentDirectQueryView` handles all specified error conditions (400, 401, 403, 404, 422, 429, 502)
 - All acceptance criteria from the implementation prompt are met
 
 ## Next Step
-- Proceed with next development task as prioritized (Task 6: Integration Test Plan, or other pending tasks)
+- Proceed with next development task as prioritized

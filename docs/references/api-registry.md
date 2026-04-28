@@ -790,8 +790,13 @@ Both fields are optional. At least one should be provided for meaningful updates
 ---
 
 #### POST /documents/{document_id}/query
-**Description:** Direct query without conversation (stateless)  
-**Auth Required:** Yes  
+**Description:** Direct query without conversation (stateless)
+**Auth Required:** Yes
+**Status:** ✅ Implemented
+**Implementation Date:** 2026-04-28
+**View Class:** `DocumentDirectQueryView`
+**Test Coverage:** 11 tests in `DocumentDirectQueryViewTests`
+**Implementation Notes:** Stateless RAG query endpoint. Fetches document with ownership check (404/403), validates `processing_status == 'completed'` (422), validates input with `DirectQuerySerializer`, calls `run_rag_query` with `conversation_history=[]`, and returns `answer`, `sources`, `token_usage` without persisting any `Message` or `Conversation` objects. `RAGServiceException` → 502, rate limit → 429 with `retry_after: 60`.
 **Request Body:**
 ```json
 {

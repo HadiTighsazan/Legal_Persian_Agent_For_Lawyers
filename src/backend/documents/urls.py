@@ -7,6 +7,7 @@ Registers the ``upload/``, ``process/``, ``processing-status/``, ``chunks/``,
 
 from django.urls import path
 
+from conversations.views import DocumentDirectQueryView
 from documents.views import (
     ChunkBatchEmbedView,
     ChunkReEmbedView,
@@ -62,5 +63,10 @@ urlpatterns = [
         "chunks/<uuid:chunk_id>/re-embed/",
         ChunkReEmbedView.as_view(),
         name="chunk-re-embed",
+    ),
+    path(
+        "<uuid:document_id>/query/",
+        DocumentDirectQueryView.as_view(),
+        name="document-query",
     ),
 ]
