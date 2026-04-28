@@ -17,12 +17,29 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from django.conf import settings
+from django.db import connection
 from django.db.models import F, Value
 from pgvector.django import CosineDistance
 
 from documents.models import DocumentChunk
 
 logger = logging.getLogger(__name__)
+
+
+def _set_probes(probes: int | None = None) -> None:
+    """Set ivfflat.probes for the current database session.
+
+    This controls how many inverted lists are searched during an ivfflat
+    index scan.  Higher values improve recall at the cost of speed.
+
+    Args:
+        probes: Number of probes (1-100).  Falls back to
+            ``settings.VECTOR_SEARCH_PROBES`` if ``None``.
+    """
+    probes = probes if probes is not None else settings.VECTOR_SEARCH_PROBES
+    with connection.cursor() as cursor:
+        cursor.execute("SET ivfflat.probes = %s", [probes])
 
 
 def search_chunks(
@@ -62,6 +79,9 @@ def search_chunks(
         - **token_count** (*int* or *None*) — Token count of the chunk.
         - **metadata** (*dict*) — Arbitrary metadata stored on the chunk.
     """
+    # Set ivfflat probe count for this session.
+    _set_probes()
+
     # Build the base queryset: only chunks with embeddings.
     queryset = DocumentChunk.objects.filter(
         document_id=document_id,

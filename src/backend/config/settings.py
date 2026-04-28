@@ -29,6 +29,7 @@ env = environ.Env(
     GEMINI_EMBEDDING_MODEL=(str, 'gemini-embedding-001'),
     OLLAMA_BASE_URL=(str, 'http://localhost:11434'),
     EMBEDDING_PROVIDER=(str, 'google'),
+    VECTOR_SEARCH_PROBES=(int, 10),
 )
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -241,6 +242,9 @@ GEMINI_EMBEDDING_MODEL = env('GEMINI_EMBEDDING_MODEL', default='text-embedding-0
 # Embedding Provider Configuration
 OLLAMA_BASE_URL = env('OLLAMA_BASE_URL', default='http://host.docker.internal:11434')
 EMBEDDING_PROVIDER = env('EMBEDDING_PROVIDER', default='google')
+
+# pgvector ivfflat index probe count
+VECTOR_SEARCH_PROBES = env("VECTOR_SEARCH_PROBES")
 
 # Storage Configuration
 STORAGE_TYPE = env('STORAGE_TYPE', default='local')

@@ -12,6 +12,9 @@ Tests
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
+from django.db import connection
 from django.test import TestCase
 
 from documents.models import Document, DocumentChunk
@@ -243,6 +246,19 @@ class SearchChunksTest(TestCase):
         scores = [r["relevance_score"] for r in results]
         for i in range(len(scores) - 1):
             self.assertGreater(scores[i], scores[i + 1])
+
+    def test_search_service_sets_probes(self) -> None:
+        """Verify that _set_probes executes SET ivfflat.probes with the correct value."""
+        from documents.services.search_service import _set_probes
+
+        with patch.object(connection, "cursor") as mock_cursor:
+            mock_cursor.return_value.__enter__.return_value = mock_cursor.return_value
+            _set_probes(probes=10)
+
+        mock_cursor.assert_called_once()
+        mock_cursor.return_value.execute.assert_called_once_with(
+            "SET ivfflat.probes = %s", [10]
+        )
 
     def test_search_chunks_empty_result(self) -> None:
         """Query a document with no chunks at all — expect ``[]``."""

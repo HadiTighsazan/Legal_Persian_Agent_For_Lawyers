@@ -1,62 +1,48 @@
-# WIP Context — Switch Embedding Provider from Ollama to Google Gemini
+# WIP Context — Task 5: ivfflat Index Probe Tuning
 
 ## What Was Just Completed
 
-Replaced the Ollama-based embedding service (`nomic-embed-text`) with Google Gemini API (`gemini-embedding-001`). All 5 specified files were modified, tests pass (59/59), and a real API smoke test confirmed 768-dim embeddings are generated correctly.
+Added pgvector `ivfflat.probes` session-level configuration to improve recall/performance trade-off for similarity searches. The probes setting controls how many lists are searched during an ivfflat index scan — higher values improve recall but slow down queries.
 
 ### Files Modified
 
-1. **`src/backend/config/settings.py`** — Added `GOOGLE_API_KEY` and `GEMINI_EMBEDDING_MODEL` env vars, changed `EMBEDDING_PROVIDER` default from `'ollama'` to `'google'`, updated comment from "Ollama Configuration" to "Embedding Provider Configuration". Default model: `gemini-embedding-001`.
+1. **`src/backend/config/settings.py`** — Added `VECTOR_SEARCH_PROBES=(int, 10)` to the `env` constructor's default casting block (line 32), and a dedicated setting line `VECTOR_SEARCH_PROBES = env("VECTOR_SEARCH_PROBES")` after the Embedding Provider section (line 245).
 
-2. **`src/backend/documents/services/embedding_service.py`** — Complete rewrite from Ollama to Gemini API:
-   - Model: `gemini-embedding-001` (not `text-embedding-004` as originally planned — that model doesn't exist)
-   - Single endpoint: `POST :embedContent` with `outputDimensionality: 768`
-   - Batch endpoint: `POST :batchEmbedContents` with `outputDimensionality: 768` per request
-   - `SUB_BATCH_SIZE`: 100 (Gemini max)
-   - Retry logic preserved (3 attempts, exponential backoff)
+2. **`.env.example`** — Added `VECTOR_SEARCH_PROBES=10` under the Application-Specific Configuration section with a comment explaining the valid range (1-100) and trade-off.
 
-3. **`.env.example`** — Added Google Gemini config section with `GOOGLE_API_KEY`, `GEMINI_EMBEDDING_MODEL=gemini-embedding-001`, `EMBEDDING_PROVIDER=google`. Updated `EMBEDDING_DIMENSION` comment.
+3. **`src/backend/documents/services/search_service.py`** — Added imports for `django.conf.settings` and `django.db.connection`. Added `_set_probes()` helper function that executes `SET ivfflat.probes = %s` via a raw cursor. Called `_set_probes()` at the beginning of `search_chunks()` before the queryset is built.
 
-4. **`docker-compose.yml`** — Added `GOOGLE_API_KEY`, `GEMINI_EMBEDDING_MODEL`, `EMBEDDING_PROVIDER` to both `backend` and `celery_worker` services.
-
-5. **`src/backend/documents/tests/test_embedding.py`** — Replaced Ollama mock helpers with Gemini mock helpers, updated all URL assertions, request body assertions (added `outputDimensionality: 768`), sub-batch sizes from 50→100.
-
-6. **`src/backend/documents/tests/test_search_service.py`** — Updated comment from "text-embedding-004" to "gemini-embedding-001".
-
-### Key Findings During Implementation
-
-- **Model name**: The originally specified `text-embedding-004` does not exist in the Gemini API. The correct model is `models/gemini-embedding-001`.
-- **Default dimension**: `gemini-embedding-001` returns 3072-dim vectors by default.
-- **`outputDimensionality`**: Supported in both `embedContent` (single) and `batchEmbedContents` (per-request) endpoints. Set to 768 to match the existing pgvector schema.
-- **Batch endpoint**: `outputDimensionality` must be passed inside each request object, not at the top level.
+4. **`src/backend/documents/tests/test_search_service.py`** — Added `from unittest.mock import patch` and `from django.db import connection` imports. Added `test_search_service_sets_probes` test method that verifies `_set_probes()` executes `SET ivfflat.probes = %s` with the correct value using a mocked cursor.
 
 ### Test Results
 
-- **59/59 tests pass** in `test_embedding.py`
-- **Real API smoke test**: Successfully generated a 768-dim embedding vector via the live Gemini API
+```
+documents/tests/test_search_service.py::SearchChunksTest::test_search_chunks_empty_result PASSED
+documents/tests/test_search_service.py::SearchChunksTest::test_search_chunks_excludes_unembedded_chunks PASSED
+documents/tests/test_search_service.py::SearchChunksTest::test_search_chunks_filters_by_min_score PASSED
+documents/tests/test_search_service.py::SearchChunksTest::test_search_chunks_orders_by_relevance PASSED
+documents/tests/test_search_service.py::SearchChunksTest::test_search_chunks_returns_top_k PASSED
+documents/tests/test_search_service.py::SearchChunksTest::test_search_service_sets_probes PASSED
+```
+
+**6/6 tests pass** (5 existing + 1 new).
 
 ## Current State of Code
 
-- [`src/backend/documents/services/embedding_service.py`](src/backend/documents/services/embedding_service.py) — Gemini API implementation with `generate_embedding`, `embed_query`, `batch_generate_embeddings`, `generate_embeddings_for_document`, `batch_embed_chunks`, `reembed_chunk`
-- [`src/backend/config/settings.py`](src/backend/config/settings.py) — Google Gemini settings configured
-- [`src/backend/documents/tests/test_embedding.py`](src/backend/documents/tests/test_embedding.py) — All 59 tests updated for Gemini API
-- [`src/backend/documents/tests/test_search_service.py`](src/backend/documents/tests/test_search_service.py) — Comment updated
-- [`.env.example`](.env.example) — Google Gemini config documented
-- [`docker-compose.yml`](docker-compose.yml) — Environment variables propagated
+- [`src/backend/config/settings.py`](src/backend/config/settings.py) — `VECTOR_SEARCH_PROBES` setting added with default value 10
+- [`.env.example`](.env.example) — `VECTOR_SEARCH_PROBES=10` documented
+- [`src/backend/documents/services/search_service.py`](src/backend/documents/services/search_service.py) — `_set_probes()` helper added, called at start of `search_chunks()`
+- [`src/backend/documents/tests/test_search_service.py`](src/backend/documents/tests/test_search_service.py) — New test `test_search_service_sets_probes` added
 
 ## Next Step
 
-No further steps. The migration is complete and verified.
+No further steps. Task 5 is complete and verified.
 
 ### Acceptance Criteria
 
-- [x] Embedding service uses Google Gemini API instead of Ollama
-- [x] `generate_embedding()` calls `POST :embedContent` with `outputDimensionality: 768`
-- [x] `embed_query()` calls `POST :embedContent` with `outputDimensionality: 768`
-- [x] `batch_generate_embeddings()` calls `POST :batchEmbedContents` with `outputDimensionality: 768` per request
-- [x] `SUB_BATCH_SIZE` is 100 (Gemini max)
-- [x] All existing tests pass (59/59)
-- [x] Real API smoke test confirms 768-dim embeddings
-- [x] `.env.example` documents the new Google Gemini config
-- [x] `docker-compose.yml` propagates `GOOGLE_API_KEY` and `GEMINI_EMBEDDING_MODEL`
-- [x] No database migration needed (768-dim vectors unchanged)
+- [x] `VECTOR_SEARCH_PROBES` setting added to `settings.py` with default `10`
+- [x] `VECTOR_SEARCH_PROBES=10` added to `.env.example` with explanatory comment
+- [x] `_set_probes()` helper added to `search_service.py` — executes `SET ivfflat.probes = %s`
+- [x] `_set_probes()` called at the beginning of `search_chunks()` before queryset construction
+- [x] New test `test_search_service_sets_probes` verifies the SQL execution via mocked cursor
+- [x] All 6 tests pass (5 existing + 1 new)
