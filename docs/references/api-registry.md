@@ -725,15 +725,36 @@ Both fields are optional. At least one should be provided for meaningful updates
 
 ## Messages / Q&A
 
-#### POST /conversations/{conversation_id}/messages
-**Description:** Ask question in conversation (RAG query)  
-**Auth Required:** Yes  
+### ✅ Implemented Endpoints
+
+#### POST /conversations/{conversation_id}/messages/
+**Description:** Ask question in conversation (RAG query)
+**Auth Required:** Yes
+**Implementation Date:** 2026-04-28
+**View Class:** `ConversationMessageView`
+**Test Coverage:** 11 tests (10 unit + 1 integration) in `ConversationMessageViewTests`
+**Status:** ✅ Implemented
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies conversation ownership (403 if wrong user, 404 if not found)
+- Validates input with `AskQuestionSerializer` (content required, 1–10,000 chars)
+- Persists user message **before** calling RAG service
+- Builds conversation history from all messages ordered by `created_at`
+- Calls `run_rag_query(question, document_id, conversation_history, top_k=5)`
+- Persists assistant message with `sources` and `token_usage` from RAG result
+- Touches `conversation.updated_at` via `conversation.save()`
+- Returns `201 Created` with `MessageSerializer` of the assistant message
+- `RAGServiceException` → `502 Bad Gateway` with `{"error": "rag_error", ...}`
+- OpenAI rate limit errors → `429 Too Many Requests` with `{"error": "rate_limit_exceeded", "retry_after": 60}`
+- URL registered at `conversations/<uuid:conversation_id>/messages/` with name `conversation-messages`
+
 **Request Body:**
 ```json
 {
   "content": "What is the main conclusion of the study?"
 }
 ```
+
 **Response:** `201 Created`
 ```json
 {
@@ -757,6 +778,14 @@ Both fields are optional. At least one should be provided for meaningful updates
   "created_at": "2026-04-18T10:10:00Z"
 }
 ```
+
+**Error Responses:**
+- `400 Bad Request` — Validation error (empty content, etc.)
+- `401 Unauthorized` — Missing or invalid authentication
+- `403 Forbidden` — Conversation belongs to another user
+- `404 Not Found` — Conversation does not exist
+- `429 Too Many Requests` — OpenAI API rate limit exceeded
+- `502 Bad Gateway` — RAG service error
 
 ---
 

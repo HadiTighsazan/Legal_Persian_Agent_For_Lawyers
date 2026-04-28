@@ -1,9 +1,10 @@
 """
 Views for the conversations app.
 
-Provides ``ConversationListCreateView`` (POST + GET /conversations/) and
-``ConversationDetailView`` (GET + DELETE /conversations/{conversation_id})
-for CRUD operations on conversations (Epic E-07, Task 4).
+Provides ``ConversationListCreateView`` (POST + GET /conversations/),
+``ConversationDetailView`` (GET + DELETE /conversations/{conversation_id}),
+and ``ConversationMessageView`` (POST /conversations/{conversation_id}/messages/)
+for CRUD operations on conversations and asking questions (Epic E-07, Tasks 4 & 5).
 """
 
 from __future__ import annotations
@@ -17,11 +18,14 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from conversations.models import Conversation
+from conversations.models import Conversation, Message
+from conversations.rag_service import RAGServiceException, run_rag_query
 from conversations.serializers import (
+    AskQuestionSerializer,
     ConversationCreateSerializer,
     ConversationDetailSerializer,
     ConversationListSerializer,
+    MessageSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -233,3 +237,131 @@ class ConversationDetailView(APIView):
         )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ConversationMessageView(APIView):
+    """Handle asking a question in a conversation.
+
+    **Endpoint:** ``POST /conversations/{conversation_id}/messages/``
+
+    **Authentication:** Required (JWT via ``rest_framework_simplejwt``).
+
+    **POST Responses:**
+        - ``201 Created`` — Assistant response created successfully.
+        - ``400 Bad Request`` — Validation error (empty content, etc.).
+        - ``401 Unauthorized`` — Missing or invalid authentication.
+        - ``403 Forbidden`` — Conversation belongs to another user.
+        - ``404 Not Found`` — Conversation does not exist.
+        - ``429 Too Many Requests`` — OpenAI API rate limit exceeded.
+        - ``502 Bad Gateway`` — RAG service error.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    # ------------------------------------------------------------------
+    # POST — Ask a question in the conversation
+    # ------------------------------------------------------------------
+
+    def post(self, request: Request, conversation_id: str) -> Response:
+        """Handle the question-asking POST request."""
+        # ------------------------------------------------------------------
+        # 1. Fetch conversation + ownership check
+        # ------------------------------------------------------------------
+        try:
+            conversation = Conversation.objects.get(id=conversation_id)
+        except Conversation.DoesNotExist:
+            return Response(
+                {"error": "not_found", "message": "Conversation not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if conversation.user != request.user:
+            return Response(
+                {
+                    "error": "permission_denied",
+                    "message": "You do not have permission to access this conversation.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # ------------------------------------------------------------------
+        # 2. Validate input with AskQuestionSerializer
+        # ------------------------------------------------------------------
+        serializer = AskQuestionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
+        question = validated_data["content"]
+
+        # ------------------------------------------------------------------
+        # 3. Persist the user message first
+        # ------------------------------------------------------------------
+        Message.objects.create(
+            conversation=conversation,
+            role="user",
+            content=question,
+        )
+
+        # ------------------------------------------------------------------
+        # 4. Build conversation history (includes the just-created user msg)
+        # ------------------------------------------------------------------
+        all_messages = conversation.messages.all().order_by("created_at")
+        conversation_history = [
+            {"role": msg.role, "content": msg.content}
+            for msg in all_messages
+        ]
+
+        # ------------------------------------------------------------------
+        # 5. Call run_rag_query
+        # ------------------------------------------------------------------
+        try:
+            result = run_rag_query(
+                question=question,
+                document_id=str(conversation.document_id),
+                conversation_history=conversation_history,
+                top_k=5,
+            )
+        except RAGServiceException as e:
+            error_msg = str(e).lower()
+            if "rate limit" in error_msg or "429" in error_msg:
+                return Response(
+                    {
+                        "error": "rate_limit_exceeded",
+                        "message": "OpenAI API rate limit exceeded. Please try again later.",
+                        "retry_after": 60,
+                    },
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+            logger.error(
+                "RAG query failed for conversation %s: %s",
+                conversation_id,
+                e,
+            )
+            return Response(
+                {"error": "rag_error", "message": str(e)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # ------------------------------------------------------------------
+        # 6. Persist the assistant message with sources and token_usage
+        # ------------------------------------------------------------------
+        assistant_message = Message.objects.create(
+            conversation=conversation,
+            role="assistant",
+            content=result["content"],
+            sources=result["sources"],
+            token_usage=result["token_usage"],
+        )
+
+        # ------------------------------------------------------------------
+        # 7. Touch conversation.updated_at
+        # ------------------------------------------------------------------
+        conversation.save()  # triggers auto_now=True
+
+        # ------------------------------------------------------------------
+        # 8. Return 201 Created with MessageSerializer of assistant message
+        # ------------------------------------------------------------------
+        response_serializer = MessageSerializer(assistant_message)
+        return Response(
+            response_serializer.data,
+            status=status.HTTP_201_CREATED,
+        )

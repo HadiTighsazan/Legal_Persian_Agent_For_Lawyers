@@ -1,12 +1,17 @@
 """
 URL configuration for the conversations app.
 
-Registers the ``/`` (list-create) and ``/<uuid:conversation_id>/`` (detail) routes.
+Registers the ``/`` (list-create), ``/<uuid:conversation_id>/`` (detail),
+and ``/<uuid:conversation_id>/messages/`` (ask question) routes.
 """
 
 from django.urls import path
 
-from conversations.views import ConversationDetailView, ConversationListCreateView
+from conversations.views import (
+    ConversationDetailView,
+    ConversationListCreateView,
+    ConversationMessageView,
+)
 
 app_name = "conversations"
 
@@ -15,6 +20,11 @@ urlpatterns = [
         "",
         ConversationListCreateView.as_view(),
         name="conversation-list-create",
+    ),
+    path(
+        "<uuid:conversation_id>/messages/",
+        ConversationMessageView.as_view(),
+        name="conversation-messages",
     ),
     path(
         "<uuid:conversation_id>/",
