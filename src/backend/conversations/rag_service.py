@@ -2,7 +2,8 @@
 RAG (Retrieval-Augmented Generation) service for DocuChat.
 
 Provides the core RAG pipeline: embedding a question, searching chunks,
-building context, calling OpenAI chat, and extracting citations.
+building context, calling the configured chat provider, and extracting
+citations.
 """
 
 from __future__ import annotations
@@ -12,10 +13,10 @@ import re
 from typing import Any
 
 from django.conf import settings
-from openai import OpenAI
 
 from documents.services.embedding_service import embed_query
 from documents.services.search_service import search_chunks
+from providers.registry import get_chat_provider
 
 logger = logging.getLogger(__name__)
 
@@ -225,32 +226,22 @@ def run_rag_query(
     )
     messages.append({"role": "user", "content": user_message})
 
-    # Step 5: Call OpenAI
-    logger.info("run_rag_query: Calling OpenAI chat completion")
+    # Step 5: Call the configured chat provider
+    logger.info("run_rag_query: Calling chat provider")
     try:
-        client = OpenAI(api_key=settings.OPENAI_API_KEY)
-        response = client.chat.completions.create(
-            model=settings.OPENAI_CHAT_MODEL,
-            messages=messages,  # type: ignore[arg-type]
+        provider = get_chat_provider()
+        result = provider.chat(
+            messages=messages,
             max_tokens=settings.OPENAI_CHAT_MAX_TOKENS,
         )
+        response_content = result["content"]
+        token_usage = result["token_usage"]
     except Exception as e:
-        logger.exception("run_rag_query: OpenAI API call failed")
-        raise RAGServiceException(f"OpenAI API call failed: {e}") from e
-
-    # Extract response content
-    choice = response.choices[0]
-    response_content = choice.message.content or ""
+        logger.exception("run_rag_query: Chat provider API call failed")
+        raise RAGServiceException(f"Chat provider API call failed: {e}") from e
 
     # Step 6: Extract citations
     sources = extract_citations(response_content, chunks)
-
-    # Build token usage dict
-    token_usage = {
-        "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-        "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-        "total_tokens": response.usage.total_tokens if response.usage else 0,
-    }
 
     # Step 7: Return result
     return {

@@ -1,13 +1,14 @@
 """
 Embedding service for generating and managing vector embeddings.
 
-Provides functions that wrap the Google Gemini ``gemini-embedding-001`` model for
-generating embeddings on individual texts, batches, and full documents.
+Provides functions that delegate to the configured embedding provider
+(via :func:`~providers.registry.get_embedding_provider`).
 Follows the existing service-layer pattern (standalone functions, not classes).
 
 Functions
 ---------
 - :func:`generate_embedding` — Embed a single text string.
+- :func:`embed_query` — Embed a search query string.
 - :func:`batch_generate_embeddings` — Embed a list of texts, handling sub-batching.
 - :func:`generate_embeddings_for_document` — Embed all un-embedded chunks for a document.
 - :func:`batch_embed_chunks` — Embed a specific set of chunks by ID.
@@ -17,14 +18,12 @@ Functions
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
-import requests
-from django.conf import settings
 from django.utils import timezone
 
 from documents.models import Document, DocumentChunk
+from providers.registry import get_embedding_provider
 from tasks.models import ProcessingTask
 
 logger = logging.getLogger(__name__)
@@ -33,20 +32,8 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-EMBEDDING_MODEL: str = "gemini-embedding-001"
-"""The Google Gemini embedding model identifier."""
-
-EMBEDDING_DIMENSIONS: int = 768
-"""The number of dimensions returned by ``gemini-embedding-001`` (with ``outputDimensionality=768``)."""
-
 SUB_BATCH_SIZE: int = 100
-"""Maximum number of texts to send in a single Gemini API call (max 100)."""
-
-_MAX_RETRIES: int = 3
-"""Number of retry attempts for failed API calls."""
-
-_TIMEOUT_SECONDS: int = 60
-"""HTTP request timeout for Gemini API calls."""
+"""Maximum number of texts to send in a single provider API call."""
 
 
 # ---------------------------------------------------------------------------
@@ -60,24 +47,6 @@ class EmbeddingError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _get_gemini_api_key() -> str:
-    """Return the Google Gemini API key from Django settings."""
-    key = settings.GOOGLE_API_KEY
-    if not key:
-        raise EmbeddingError("GOOGLE_API_KEY is not configured")
-    return key
-
-
-def _get_gemini_base_url() -> str:
-    """Return the Gemini API base URL."""
-    return "https://generativelanguage.googleapis.com/v1beta"
-
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -85,290 +54,58 @@ def _get_gemini_base_url() -> str:
 def generate_embedding(text: str) -> list[float] | None:
     """Generate an embedding vector for a single text string.
 
-    Calls ``POST :model:embedContent`` on the Gemini API.
+    Delegates to the configured :class:`~providers.base.BaseEmbeddingProvider`.
 
     Args:
         text: The text to embed.
 
     Returns:
-        A list of 768 floats, or ``None`` if the text is empty or an API
+        A list of floats, or ``None`` if the text is empty or an API
         error occurs.
     """
     if not text or not text.strip():
         return None
-
-    api_key = _get_gemini_api_key()
-    base_url = _get_gemini_base_url()
-    url = f"{base_url}/models/{EMBEDDING_MODEL}:embedContent?key={api_key}"
-
-    for attempt in range(_MAX_RETRIES):
-        try:
-            response = requests.post(
-                url,
-                json={
-                    "model": f"models/{EMBEDDING_MODEL}",
-                    "content": {"parts": [{"text": text}]},
-                    "outputDimensionality": EMBEDDING_DIMENSIONS,
-                },
-                timeout=_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-            data = response.json()
-            embedding: list[float] = data["embedding"]["values"]
-            logger.info(
-                "generate_embedding: Generated embedding (dimensions=%d)",
-                len(embedding),
-            )
-            return embedding
-
-        except requests.exceptions.Timeout:
-            if attempt < _MAX_RETRIES - 1:
-                sleep_time: float = 2.0 ** attempt
-                logger.warning(
-                    "generate_embedding: Timeout, retrying in %.0fs "
-                    "(attempt %d/%d)",
-                    sleep_time,
-                    attempt + 1,
-                    _MAX_RETRIES,
-                )
-                time.sleep(sleep_time)
-            else:
-                logger.error(
-                    "generate_embedding: Timeout after %d retries",
-                    _MAX_RETRIES,
-                )
-                return None
-
-        except requests.exceptions.RequestException as e:
-            if attempt < _MAX_RETRIES - 1:
-                sleep_time = 2.0 ** attempt
-                logger.warning(
-                    "generate_embedding: Request failed (%s), retrying in "
-                    "%.0fs (attempt %d/%d)",
-                    e,
-                    sleep_time,
-                    attempt + 1,
-                    _MAX_RETRIES,
-                )
-                time.sleep(sleep_time)
-            else:
-                logger.error(
-                    "generate_embedding: Request failed after %d retries — %s",
-                    _MAX_RETRIES,
-                    e,
-                )
-                return None
-
-    return None
+    provider = get_embedding_provider()
+    return provider.embed(text)
 
 
 def embed_query(text: str) -> list[float]:
-    """Convert a search query string into a 768-dim embedding vector.
+    """Convert a search query string into an embedding vector.
 
-    Calls ``POST :model:embedContent`` on the Gemini API.  Unlike
-    :func:`generate_embedding`, this function **raises** on failure so the
-    view layer can return proper error responses.
+    Delegates to the configured :class:`~providers.base.BaseEmbeddingProvider`.
 
     Args:
         text: The search query text (must be non-empty).
 
     Returns:
-        A list of 768 floats representing the query embedding.
+        A list of floats representing the query embedding.
 
     Raises:
-        EmbeddingError: If the Gemini API call fails or returns invalid data.
         ValueError: If *text* is empty or whitespace-only.
+        Exception: If the provider API call fails.
     """
     if not text or not text.strip():
         raise ValueError("text must be non-empty")
-
-    api_key = _get_gemini_api_key()
-    base_url = _get_gemini_base_url()
-    url = f"{base_url}/models/{EMBEDDING_MODEL}:embedContent?key={api_key}"
-
-    for attempt in range(_MAX_RETRIES):
-        try:
-            response = requests.post(
-                url,
-                json={
-                    "model": f"models/{EMBEDDING_MODEL}",
-                    "content": {"parts": [{"text": text}]},
-                    "outputDimensionality": EMBEDDING_DIMENSIONS,
-                },
-                timeout=_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-            data = response.json()
-            embedding: list[float] = data["embedding"]["values"]
-            logger.info(
-                "embed_query: Generated embedding (dimensions=%d)",
-                len(embedding),
-            )
-            return embedding
-
-        except requests.exceptions.Timeout:
-            if attempt < _MAX_RETRIES - 1:
-                sleep_time: float = 2.0 ** attempt
-                logger.warning(
-                    "embed_query: Timeout, retrying in %.0fs "
-                    "(attempt %d/%d)",
-                    sleep_time,
-                    attempt + 1,
-                    _MAX_RETRIES,
-                )
-                time.sleep(sleep_time)
-            else:
-                logger.error(
-                    "embed_query: Timeout after %d retries",
-                    _MAX_RETRIES,
-                )
-                raise EmbeddingError("Gemini embedding request timed out after retries")
-
-        except requests.exceptions.RequestException as e:
-            if attempt < _MAX_RETRIES - 1:
-                sleep_time = 2.0 ** attempt
-                logger.warning(
-                    "embed_query: Request failed (%s), retrying in "
-                    "%.0fs (attempt %d/%d)",
-                    e,
-                    sleep_time,
-                    attempt + 1,
-                    _MAX_RETRIES,
-                )
-                time.sleep(sleep_time)
-            else:
-                logger.error(
-                    "embed_query: Request failed after %d retries — %s",
-                    _MAX_RETRIES,
-                    e,
-                )
-                raise EmbeddingError(f"Gemini embedding request failed: {e}")
-
-    raise EmbeddingError("Unexpected error in embed_query")
+    provider = get_embedding_provider()
+    return provider.embed_query(text)
 
 
 def batch_generate_embeddings(texts: list[str]) -> list[list[float] | None]:
     """Generate embeddings for a list of texts, handling sub-batching.
 
-    Uses Gemini's ``batchEmbedContents`` endpoint which accepts multiple
-    inputs in a single call.  Splits *texts* into sub-batches of
-    :data:`SUB_BATCH_SIZE` (100).  Results are returned in the same order as
-    the input list.  Items that fail (empty text, API error) get ``None`` at
-    the corresponding position.
+    Delegates to the configured :class:`~providers.base.BaseEmbeddingProvider`.
+    Results are returned in the same order as the input list.  Items that fail
+    (empty text, API error) get ``None`` at the corresponding position.
 
     Args:
         texts: The list of texts to embed.
 
     Returns:
         A list of the same length as *texts*, where each element is either a
-        list of 768 floats or ``None``.
+        list of floats or ``None``.
     """
-    results: list[list[float] | None] = [None] * len(texts)
-
-    api_key = _get_gemini_api_key()
-    base_url = _get_gemini_base_url()
-    url = f"{base_url}/models/{EMBEDDING_MODEL}:batchEmbedContents?key={api_key}"
-
-    for batch_start in range(0, len(texts), SUB_BATCH_SIZE):
-        batch_end = min(batch_start + SUB_BATCH_SIZE, len(texts))
-        sub_batch = texts[batch_start:batch_end]
-
-        # Pre-fill None for empty texts in this sub-batch.
-        valid_indices: list[int] = []
-        valid_texts: list[str] = []
-        for i, t in enumerate(sub_batch):
-            idx = batch_start + i
-            if not t or not t.strip():
-                logger.info(
-                    "batch_generate_embeddings: Item %d failed — empty text",
-                    idx,
-                )
-                results[idx] = None
-            else:
-                valid_indices.append(idx)
-                valid_texts.append(t)
-
-        if not valid_texts:
-            continue
-
-        # Build Gemini batch request payload
-        requests_payload = []
-        for t in valid_texts:
-            requests_payload.append({
-                "model": f"models/{EMBEDDING_MODEL}",
-                "content": {"parts": [{"text": t}]},
-                "outputDimensionality": EMBEDDING_DIMENSIONS,
-            })
-
-        # Send the sub-batch to Gemini with retry logic.
-        for attempt in range(_MAX_RETRIES):
-            try:
-                response = requests.post(
-                    url,
-                    json={"requests": requests_payload},
-                    timeout=_TIMEOUT_SECONDS,
-                )
-                response.raise_for_status()
-                data = response.json()
-                embeddings_data: list[dict] = data["embeddings"]
-
-                # Map results back by index within the sub-batch.
-                for resp_idx, emb_data in enumerate(embeddings_data):
-                    original_idx = valid_indices[resp_idx]
-                    results[original_idx] = emb_data["values"]
-
-                logger.info(
-                    "batch_generate_embeddings: Sub-batch %d–%d complete "
-                    "(embeddings=%d)",
-                    batch_start,
-                    batch_end,
-                    len(embeddings_data),
-                )
-                break  # Success — exit retry loop.
-
-            except requests.exceptions.Timeout:
-                if attempt < _MAX_RETRIES - 1:
-                    sleep_time = 2.0 ** attempt
-                    logger.warning(
-                        "batch_generate_embeddings: Timeout, retrying "
-                        "in %.0fs (attempt %d/%d)",
-                        sleep_time,
-                        attempt + 1,
-                        _MAX_RETRIES,
-                    )
-                    time.sleep(sleep_time)
-                else:
-                    logger.error(
-                        "batch_generate_embeddings: Timeout after %d retries "
-                        "for sub-batch %d–%d",
-                        _MAX_RETRIES,
-                        batch_start,
-                        batch_end,
-                    )
-
-            except requests.exceptions.RequestException as e:
-                if attempt < _MAX_RETRIES - 1:
-                    sleep_time = 2.0 ** attempt
-                    logger.warning(
-                        "batch_generate_embeddings: Request failed (%s), "
-                        "retrying in %.0fs (attempt %d/%d)",
-                        e,
-                        sleep_time,
-                        attempt + 1,
-                        _MAX_RETRIES,
-                    )
-                    time.sleep(sleep_time)
-                else:
-                    logger.error(
-                        "batch_generate_embeddings: Request failed after "
-                        "%d retries for sub-batch %d–%d — %s",
-                        _MAX_RETRIES,
-                        batch_start,
-                        batch_end,
-                        e,
-                    )
-
-    return results
+    provider = get_embedding_provider()
+    return provider.embed_batch(texts)
 
 
 def generate_embeddings_for_document(document_id: str) -> None:

@@ -1,61 +1,29 @@
-# WIP Context — Task 7: Integration Tests & Final QA
+# WIP Context — Fix 3 Test Failures (Provider Abstraction Migration)
 
 ## What Was Just Completed
 
-### Task 7: Integration Tests & Final QA — Test File Restructuring & Coverage
+Fixed 3 test failures caused by the provider abstraction refactor:
 
-**Files created:**
-- [`src/backend/conversations/tests/test_models.py`](src/backend/conversations/tests/test_models.py) — `ConversationModelTests` with 10 tests:
-  1. `test_create_conversation` — UUID, fields set correctly
-  2. `test_create_message` — role, content, sources default `[]`, token_usage `None`
-  3. `test_conversation_str` — `"Conversation about {title} ({email})"`
-  4. `test_message_str` — `"{role}: {content[:50]}..."`
-  5. `test_cascade_delete_conversation` — Messages cascade-deleted
-  6. `test_cascade_delete_user` — Conversations cascade-deleted
-  7. `test_cascade_delete_document` — Conversations cascade-deleted
-  8. `test_message_ordering` — Default ordering by `created_at`
-  9. `test_conversation_updated_at_auto_now` — `updated_at` changes on save
-  10. `test_message_sources_json_field` — Complex JSON stored/retrieved
+### 1. [`src/backend/documents/services/embedding_service.py`](src/backend/documents/services/embedding_service.py) — Added empty-text guards
 
-- [`src/backend/conversations/tests/test_views_conversations.py`](src/backend/conversations/tests/test_views_conversations.py) — 21 tests (13 list-create + 8 detail), migrated from old `test_views.py`
-- [`src/backend/conversations/tests/test_views_messages.py`](src/backend/conversations/tests/test_views_messages.py) — 11 tests, migrated from old `test_views.py`
-- [`src/backend/conversations/tests/test_views_query.py`](src/backend/conversations/tests/test_views_query.py) — 11 tests, migrated from old `test_views.py`
-- [`src/backend/conversations/tests/test_integration.py`](src/backend/conversations/tests/test_integration.py) — `ConversationIntegrationTests` with 2 tests:
-  1. `test_full_conversation_lifecycle` — Register → create doc → create conv → ask → verify history → ask again → delete
-  2. `test_rag_service_integration` — Mocked `embed_query`, `search_chunks`, `OpenAI` → verify orchestration
+- **`generate_embedding()`** (line 54): Added early return `None` for empty/whitespace-only text before calling the provider. This makes the function self-contained and independent of provider implementation details.
+- **`embed_query()`** (line 70): Added `ValueError` raise for empty/whitespace-only text before calling the provider. This ensures the test `test_embed_query_raises_on_empty_text` works regardless of whether the provider is mocked or real.
 
-**Files deleted:**
-- [`src/backend/conversations/tests/test_views.py`](src/backend/conversations/tests/test_views.py) — Content migrated to 3 new view test files
+### 2. [`src/backend/conversations/tests/test_integration.py`](src/backend/conversations/tests/test_integration.py) — Fixed mock path
 
-**Files unchanged (identical content preserved):**
-- [`src/backend/conversations/tests/test_serializers.py`](src/backend/conversations/tests/test_serializers.py) — 28 tests (6 test classes)
-- [`src/backend/conversations/tests/test_rag_service.py`](src/backend/conversations/tests/test_rag_service.py) — 21 tests (4 test classes)
+- Changed `@patch("conversations.rag_service.OpenAI")` → `@patch("conversations.rag_service.get_chat_provider")`
+- Updated mock setup from OpenAI-style response object (`mock_response.choices[0].message.content`) to provider interface dict (`{"content": ..., "token_usage": {...}}`)
+- Renamed parameter from `mock_openai` → `mock_get_chat_provider`
+
+### Verification
+
+- All 3 target tests passed individually
+- Full test suite: **452 tests passed** with zero failures
 
 ## Current State
 
-- **103 conversations tests all pass** ✅ (no regressions)
-- **Coverage: 99%** for `conversations` app ✅ (well above 90% target)
-  - `conversations/models.py`: 100%
-  - `conversations/views.py`: 97% (4 lines missed — pagination edge cases)
-  - `conversations/serializers.py`: 98% (1 line missed — help_text edge case)
-  - `conversations/rag_service.py`: 98% (2 lines missed — document title fallback)
-  - All test files: 100%
-- **`python manage.py check` passes clean** ✅
-- **Pre-existing failure** in `documents/tests/test_search_service.py::SearchChunksTest::test_search_chunks_orders_by_relevance` — unrelated to this task (pgvector search returns 3 instead of expected 4 results)
-
-## Test File Structure
-
-```
-src/backend/conversations/tests/
-├── __init__.py
-├── test_integration.py          # 2 tests (new)
-├── test_models.py               # 10 tests (new)
-├── test_rag_service.py          # 21 tests (unchanged)
-├── test_serializers.py          # 28 tests (unchanged)
-├── test_views_conversations.py  # 21 tests (migrated)
-├── test_views_messages.py       # 11 tests (migrated)
-└── test_views_query.py          # 11 tests (migrated)
-```
+All tests pass. The provider abstraction layer is fully integrated with no stale mock paths or missing guards.
 
 ## Next Step
-- Proceed with next development task as prioritized
+
+None — task complete.

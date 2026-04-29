@@ -183,11 +183,11 @@ class ConversationIntegrationTests(TestCase):
 
     @patch("conversations.rag_service.search_chunks")
     @patch("conversations.rag_service.embed_query")
-    @patch("conversations.rag_service.OpenAI")
+    @patch("conversations.rag_service.get_chat_provider")
     def test_rag_service_integration(
-        self, mock_openai, mock_embed_query, mock_search_chunks
+        self, mock_get_chat_provider, mock_embed_query, mock_search_chunks
     ):
-        """Test that run_rag_query correctly orchestrates embedding, search, and OpenAI."""
+        """Test that run_rag_query correctly orchestrates embedding, search, and chat provider."""
         # Arrange
         mock_embed_query.return_value = [0.1] * 768
         mock_search_chunks.return_value = [
@@ -202,15 +202,12 @@ class ConversationIntegrationTests(TestCase):
                 "metadata": {},
             }
         ]
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = (
-            "Based on [Source 1], machine learning is a subset of AI."
-        )
-        mock_response.usage.prompt_tokens = 100
-        mock_response.usage.completion_tokens = 50
-        mock_response.usage.total_tokens = 150
-        mock_openai.return_value.chat.completions.create.return_value = mock_response
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = {
+            "content": "Based on [Source 1], machine learning is a subset of AI.",
+            "token_usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+        }
+        mock_get_chat_provider.return_value = mock_provider
 
         # Act
         result = run_rag_query(

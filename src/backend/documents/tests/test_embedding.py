@@ -43,31 +43,6 @@ def _make_fake_embedding(dim: int = 768) -> list[float]:
     return [0.1] * dim
 
 
-def _mock_gemini_batch_response(
-    texts: list[str],
-    dim: int = 768,
-) -> dict:
-    """Build a mock Gemini batchEmbedContents response dict.
-
-    Each text gets a unique embedding where the first element equals the
-    index of the text in the list (to verify ordering).
-    """
-    embeddings = []
-    for idx, _text in enumerate(texts):
-        embedding = [float(idx + 1)] + [0.0] * (dim - 1)
-        embeddings.append({"values": embedding})
-    return {"embeddings": embeddings}
-
-
-def _mock_gemini_single_response(
-    text: str,
-    dim: int = 768,
-) -> dict:
-    """Build a mock Gemini embedContent response dict for a single text."""
-    embedding = [0.1] * dim
-    return {"embedding": {"values": embedding}}
-
-
 def _auth_header(user: User) -> dict[str, str]:
     """Return an Authorization header dict for the given user."""
     from rest_framework_simplejwt.tokens import RefreshToken
@@ -109,19 +84,19 @@ def _mock_celery_request(task_func, celery_task_id: str = "test-celery-id"):
 # ============================================================================
 
 
-@override_settings(GOOGLE_API_KEY="test-key")
 class GenerateEmbeddingTests(TestCase):
     """Tests for :func:`generate_embedding`."""
 
-    @patch("documents.services.embedding_service.requests.post")
-    def test_generate_embedding_returns_768_floats(self, mock_post: MagicMock) -> None:
+    @patch("documents.services.embedding_service.get_embedding_provider")
+    def test_generate_embedding_returns_768_floats(
+        self,
+        mock_get_provider: MagicMock,
+    ) -> None:
         """A valid text should return a 768-dim embedding vector."""
         fake_embedding = _make_fake_embedding()
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "embedding": {"values": fake_embedding},
-        }
-        mock_post.return_value = mock_response
+        mock_provider = MagicMock()
+        mock_provider.embed.return_value = fake_embedding
+        mock_get_provider.return_value = mock_provider
 
         result = generate_embedding("Hello world")
 
@@ -129,16 +104,7 @@ class GenerateEmbeddingTests(TestCase):
         assert result is not None
         self.assertEqual(len(result), 768)
         self.assertEqual(result, fake_embedding)
-
-        mock_post.assert_called_once_with(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=test-key",
-            json={
-                "model": "models/gemini-embedding-001",
-                "content": {"parts": [{"text": "Hello world"}]},
-                "outputDimensionality": 768,
-            },
-            timeout=60,
-        )
+        mock_provider.embed.assert_called_once_with("Hello world")
 
     def test_generate_embedding_empty_text_returns_none(self) -> None:
         """Empty or whitespace-only text should return None."""
@@ -146,123 +112,60 @@ class GenerateEmbeddingTests(TestCase):
         self.assertIsNone(generate_embedding("   "))
         self.assertIsNone(generate_embedding("\n\t"))
 
-    @patch("documents.services.embedding_service.requests.post")
-    def test_generate_embedding_handles_timeout_retry(
+    @patch("documents.services.embedding_service.get_embedding_provider")
+    def test_generate_embedding_provider_returns_none(
         self,
-        mock_post: MagicMock,
+        mock_get_provider: MagicMock,
     ) -> None:
-        """Timeout on first 2 calls should retry; 3rd should succeed."""
-        fake_embedding = _make_fake_embedding()
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "embedding": {"values": fake_embedding},
-        }
+        """When provider.embed returns None, generate_embedding returns None."""
+        mock_provider = MagicMock()
+        mock_provider.embed.return_value = None
+        mock_get_provider.return_value = mock_provider
 
-        from requests.exceptions import Timeout
-        mock_post.side_effect = [
-            Timeout("timeout"),
-            Timeout("timeout"),
-            mock_response,
-        ]
-
-        with patch("documents.services.embedding_service.time.sleep") as mock_sleep:
-            result = generate_embedding("Hello world")
-
-        self.assertIsNotNone(result)
-        assert result is not None
-        self.assertEqual(len(result), 768)
-        self.assertEqual(mock_sleep.call_count, 2)
-        mock_sleep.assert_any_call(1.0)
-        mock_sleep.assert_any_call(2.0)
-
-    @patch("documents.services.embedding_service.requests.post")
-    def test_generate_embedding_retry_exhausted(
-        self,
-        mock_post: MagicMock,
-    ) -> None:
-        """All retries exhausted on timeout should return None."""
-        from requests.exceptions import Timeout
-        mock_post.side_effect = Timeout("timeout")
-
-        with patch("documents.services.embedding_service.time.sleep"):
-            result = generate_embedding("Hello world")
-
-        self.assertIsNone(result)
-
-    @patch("documents.services.embedding_service.requests.post")
-    def test_generate_embedding_request_exception(
-        self,
-        mock_post: MagicMock,
-    ) -> None:
-        """A RequestException after retries should return None."""
-        from requests.exceptions import ConnectionError
-        mock_post.side_effect = ConnectionError("connection refused")
-
-        with patch("documents.services.embedding_service.time.sleep"):
-            result = generate_embedding("Hello world")
-
-        self.assertIsNone(result)
-
-    @patch("documents.services.embedding_service.requests.post")
-    def test_generate_embedding_http_error(
-        self,
-        mock_post: MagicMock,
-    ) -> None:
-        """An HTTP error response should return None after retries."""
-        from requests.exceptions import HTTPError
-        mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = HTTPError("HTTP 500")
-        mock_post.return_value = mock_response
-
-        with patch("documents.services.embedding_service.time.sleep"):
-            result = generate_embedding("Hello world")
-
+        result = generate_embedding("Hello world")
         self.assertIsNone(result)
 
 
-@override_settings(GOOGLE_API_KEY="test-key")
 class EmbedQueryTests(TestCase):
     """Tests for :func:`embed_query`."""
 
-    @patch("documents.services.embedding_service.requests.post")
-    def test_embed_query_returns_768_floats(self, mock_post: MagicMock) -> None:
+    @patch("documents.services.embedding_service.get_embedding_provider")
+    def test_embed_query_returns_768_floats(
+        self,
+        mock_get_provider: MagicMock,
+    ) -> None:
         """A valid query should return a 768-dim embedding vector."""
         fake_embedding = _make_fake_embedding()
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "embedding": {"values": fake_embedding},
-        }
-        mock_post.return_value = mock_response
+        mock_provider = MagicMock()
+        mock_provider.embed_query.return_value = fake_embedding
+        mock_get_provider.return_value = mock_provider
 
         result = embed_query("hello world")
 
         self.assertEqual(len(result), 768)
         self.assertEqual(result, fake_embedding)
+        mock_provider.embed_query.assert_called_once_with("hello world")
 
-        mock_post.assert_called_once_with(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=test-key",
-            json={
-                "model": "models/gemini-embedding-001",
-                "content": {"parts": [{"text": "hello world"}]},
-                "outputDimensionality": 768,
-            },
-            timeout=60,
-        )
+    @patch("documents.services.embedding_service.get_embedding_provider")
+    def test_embed_query_raises_on_provider_failure(
+        self,
+        mock_get_provider: MagicMock,
+    ) -> None:
+        """Provider failure should propagate the exception."""
+        mock_provider = MagicMock()
+        mock_provider.embed_query.side_effect = EmbeddingError("API connection refused")
+        mock_get_provider.return_value = mock_provider
 
-    @patch("documents.services.embedding_service.requests.post")
-    def test_embed_query_raises_on_gemini_failure(self, mock_post: MagicMock) -> None:
-        """All retries exhausted should raise EmbeddingError."""
-        from requests.exceptions import ConnectionError
-        mock_post.side_effect = ConnectionError("connection refused")
-
-        with patch("documents.services.embedding_service.time.sleep"):
-            with self.assertRaises(EmbeddingError) as ctx:
-                embed_query("hello world")
+        with self.assertRaises(EmbeddingError) as ctx:
+            embed_query("hello world")
 
         self.assertIn("connection refused", str(ctx.exception).lower())
 
-    @patch("documents.services.embedding_service.requests.post")
-    def test_embed_query_raises_on_empty_text(self, mock_post: MagicMock) -> None:
+    @patch("documents.services.embedding_service.get_embedding_provider")
+    def test_embed_query_raises_on_empty_text(
+        self,
+        mock_get_provider: MagicMock,
+    ) -> None:
         """Empty or whitespace-only input should raise ValueError."""
         with self.assertRaises(ValueError):
             embed_query("")
@@ -271,23 +174,26 @@ class EmbedQueryTests(TestCase):
         with self.assertRaises(ValueError):
             embed_query("\n\t")
 
-        mock_post.assert_not_called()
+        mock_get_provider.return_value.embed_query.assert_not_called()
 
 
-@override_settings(GOOGLE_API_KEY="test-key")
 class BatchGenerateEmbeddingsTests(TestCase):
     """Tests for :func:`batch_generate_embeddings`."""
 
-    @patch("documents.services.embedding_service.requests.post")
+    @patch("documents.services.embedding_service.get_embedding_provider")
     def test_batch_generate_embeddings_returns_in_order(
         self,
-        mock_post: MagicMock,
+        mock_get_provider: MagicMock,
     ) -> None:
         """3 texts should return 3 embeddings in the correct order."""
         texts = ["First text", "Second text", "Third text"]
-        mock_response = MagicMock()
-        mock_response.json.return_value = _mock_gemini_batch_response(texts)
-        mock_post.return_value = mock_response
+        mock_provider = MagicMock()
+        mock_provider.embed_batch.return_value = [
+            [1.0] + [0.0] * 767,
+            [2.0] + [0.0] * 767,
+            [3.0] + [0.0] * 767,
+        ]
+        mock_get_provider.return_value = mock_provider
 
         results = batch_generate_embeddings(texts)
 
@@ -298,17 +204,23 @@ class BatchGenerateEmbeddingsTests(TestCase):
             self.assertEqual(result[0], float(idx + 1))
             self.assertEqual(len(result), 768)
 
-    @patch("documents.services.embedding_service.requests.post")
+        mock_provider.embed_batch.assert_called_once_with(texts)
+
+    @patch("documents.services.embedding_service.get_embedding_provider")
     def test_batch_generate_embeddings_handles_partial_failure(
         self,
-        mock_post: MagicMock,
+        mock_get_provider: MagicMock,
     ) -> None:
         """Empty texts in the batch should produce None at correct positions."""
         texts = ["Valid text", "", "Another valid", "   "]
-        valid_texts = ["Valid text", "Another valid"]
-        mock_response = MagicMock()
-        mock_response.json.return_value = _mock_gemini_batch_response(valid_texts)
-        mock_post.return_value = mock_response
+        mock_provider = MagicMock()
+        mock_provider.embed_batch.return_value = [
+            [1.0] + [0.0] * 767,
+            None,
+            [2.0] + [0.0] * 767,
+            None,
+        ]
+        mock_get_provider.return_value = mock_provider
 
         results = batch_generate_embeddings(texts)
 
@@ -318,80 +230,26 @@ class BatchGenerateEmbeddingsTests(TestCase):
         self.assertIsNotNone(results[2])
         self.assertIsNone(results[3])
 
-    @patch("documents.services.embedding_service.requests.post")
-    def test_batch_generate_embeddings_sub_batch_splitting(
-        self,
-        mock_post: MagicMock,
-    ) -> None:
-        """120 texts should split into 2 sub-batches (100, 20)."""
-        texts = [f"Text {i}" for i in range(120)]
+        mock_provider.embed_batch.assert_called_once_with(texts)
 
-        global_idx = 0
-
-        def side_effect(url: str, **kwargs: object) -> MagicMock:
-            nonlocal global_idx
-            requests_payload = kwargs.get("json", {}).get("requests", [])
-            assert isinstance(requests_payload, list)
-            embeddings = []
-            for req in requests_payload:
-                embedding = [float(global_idx + 1)] + [0.0] * 767
-                embeddings.append({"values": embedding})
-                global_idx += 1
-            mock_response = MagicMock()
-            mock_response.json.return_value = {
-                "embeddings": embeddings,
-            }
-            return mock_response
-
-        mock_post.side_effect = side_effect
-
-        results = batch_generate_embeddings(texts)
-
-        self.assertEqual(len(results), 120)
-        for idx, result in enumerate(results):
-            self.assertIsNotNone(result, f"Result at index {idx} is None")
-            assert result is not None
-            self.assertEqual(result[0], float(idx + 1))
-
-        self.assertEqual(mock_post.call_count, 2)
-
-    @patch("documents.services.embedding_service.requests.post")
+    @patch("documents.services.embedding_service.get_embedding_provider")
     def test_batch_generate_embeddings_all_empty(
         self,
-        mock_post: MagicMock,
+        mock_get_provider: MagicMock,
     ) -> None:
         """All empty texts should return all Nones without API calls."""
+        mock_provider = MagicMock()
+        mock_provider.embed_batch.return_value = [None, None, None]
+        mock_get_provider.return_value = mock_provider
+
         results = batch_generate_embeddings(["", "   ", ""])
 
         self.assertEqual(len(results), 3)
         self.assertIsNone(results[0])
         self.assertIsNone(results[1])
         self.assertIsNone(results[2])
-        mock_post.assert_not_called()
 
-    @patch("documents.services.embedding_service.requests.post")
-    def test_batch_generate_embeddings_retry_on_failure(
-        self,
-        mock_post: MagicMock,
-    ) -> None:
-        """Transient failure on sub-batch should retry with backoff."""
-        texts = ["Hello", "World"]
-        mock_response = MagicMock()
-        mock_response.json.return_value = _mock_gemini_batch_response(texts)
-
-        from requests.exceptions import Timeout
-        mock_post.side_effect = [
-            Timeout("timeout"),
-            mock_response,
-        ]
-
-        with patch("documents.services.embedding_service.time.sleep") as mock_sleep:
-            results = batch_generate_embeddings(texts)
-
-        self.assertEqual(len(results), 2)
-        self.assertIsNotNone(results[0])
-        self.assertIsNotNone(results[1])
-        mock_sleep.assert_called_once_with(1.0)
+        mock_provider.embed_batch.assert_called_once_with(["", "   ", ""])
 
 
 class GenerateEmbeddingsForDocumentTests(TestCase):

@@ -29,6 +29,11 @@ env = environ.Env(
     GEMINI_EMBEDDING_MODEL=(str, 'gemini-embedding-001'),
     OLLAMA_BASE_URL=(str, 'http://localhost:11434'),
     EMBEDDING_PROVIDER=(str, 'google'),
+    CHAT_PROVIDER=(str, 'openai'),
+    GEMINI_CHAT_MODEL=(str, 'gemini-2.0-flash'),
+    OLLAMA_CHAT_MODEL=(str, 'llama3'),
+    OPENAI_EMBEDDING_MODEL=(str, 'text-embedding-3-small'),
+    OLLAMA_EMBEDDING_MODEL=(str, 'nomic-embed-text'),
     VECTOR_SEARCH_PROBES=(int, 10),
 )
 
@@ -242,6 +247,11 @@ GEMINI_EMBEDDING_MODEL = env('GEMINI_EMBEDDING_MODEL', default='text-embedding-0
 # Embedding Provider Configuration
 OLLAMA_BASE_URL = env('OLLAMA_BASE_URL', default='http://host.docker.internal:11434')
 EMBEDDING_PROVIDER = env('EMBEDDING_PROVIDER', default='google')
+CHAT_PROVIDER = env('CHAT_PROVIDER', default='openai')
+OPENAI_EMBEDDING_MODEL = env('OPENAI_EMBEDDING_MODEL', default='text-embedding-3-small')
+OLLAMA_EMBEDDING_MODEL = env('OLLAMA_EMBEDDING_MODEL', default='nomic-embed-text')
+GEMINI_CHAT_MODEL = env('GEMINI_CHAT_MODEL', default='gemini-2.0-flash')
+OLLAMA_CHAT_MODEL = env('OLLAMA_CHAT_MODEL', default='llama3')
 
 # pgvector ivfflat index probe count
 VECTOR_SEARCH_PROBES = env("VECTOR_SEARCH_PROBES")

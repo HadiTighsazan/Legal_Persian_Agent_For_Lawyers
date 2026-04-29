@@ -7,8 +7,8 @@ Tests cover:
 - :func:`~conversations.rag_service.extract_citations`
 - :func:`~conversations.rag_service.run_rag_query`
 
-All external dependencies (``embed_query``, ``search_chunks``, ``OpenAI``)
-are mocked using ``unittest.mock.patch``.
+All external dependencies (``embed_query``, ``search_chunks``,
+``get_chat_provider``) are mocked using ``unittest.mock.patch``.
 """
 
 from __future__ import annotations
@@ -211,10 +211,10 @@ class RunRagQueryTests:
 
     @patch("conversations.rag_service.search_chunks")
     @patch("conversations.rag_service.embed_query")
-    @patch("conversations.rag_service.OpenAI")
+    @patch("conversations.rag_service.get_chat_provider")
     def test_normal_response(
         self,
-        mock_openai: MagicMock,
+        mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_search_chunks: MagicMock,
     ) -> None:
@@ -234,15 +234,18 @@ class RunRagQueryTests:
             }
         ]
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = (
-            "Based on the context, [Source 1] provides relevant information."
-        )
-        mock_response.usage.prompt_tokens = 100
-        mock_response.usage.completion_tokens = 50
-        mock_response.usage.total_tokens = 150
-        mock_openai.return_value.chat.completions.create.return_value = mock_response
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = {
+            "content": (
+                "Based on the context, [Source 1] provides relevant information."
+            ),
+            "token_usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+            },
+        }
+        mock_get_chat_provider.return_value = mock_provider
 
         # Act
         result = run_rag_query(
@@ -265,14 +268,14 @@ class RunRagQueryTests:
 
     @patch("conversations.rag_service.search_chunks")
     @patch("conversations.rag_service.embed_query")
-    @patch("conversations.rag_service.OpenAI")
+    @patch("conversations.rag_service.get_chat_provider")
     def test_citation_extraction_integration(
         self,
-        mock_openai: MagicMock,
+        mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_search_chunks: MagicMock,
     ) -> None:
-        """OpenAI returns content with [Source 1], verify sources list is populated."""
+        """Chat provider returns content with [Source 1], verify sources list is populated."""
         # Arrange
         mock_embed_query.return_value = [0.1] * 768
         mock_search_chunks.return_value = [
@@ -298,15 +301,16 @@ class RunRagQueryTests:
             },
         ]
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = (
-            "The answer is in [Source 1] and also [Source 2]."
-        )
-        mock_response.usage.prompt_tokens = 50
-        mock_response.usage.completion_tokens = 20
-        mock_response.usage.total_tokens = 70
-        mock_openai.return_value.chat.completions.create.return_value = mock_response
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = {
+            "content": "The answer is in [Source 1] and also [Source 2].",
+            "token_usage": {
+                "prompt_tokens": 50,
+                "completion_tokens": 20,
+                "total_tokens": 70,
+            },
+        }
+        mock_get_chat_provider.return_value = mock_provider
 
         # Act
         result = run_rag_query(
@@ -321,10 +325,10 @@ class RunRagQueryTests:
 
     @patch("conversations.rag_service.search_chunks")
     @patch("conversations.rag_service.embed_query")
-    @patch("conversations.rag_service.OpenAI")
+    @patch("conversations.rag_service.get_chat_provider")
     def test_history_truncation(
         self,
-        mock_openai: MagicMock,
+        mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_search_chunks: MagicMock,
     ) -> None:
@@ -339,13 +343,16 @@ class RunRagQueryTests:
             history.append({"role": "user", "content": f"Question {i}"})
             history.append({"role": "assistant", "content": f"Answer {i}"})
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Response."
-        mock_response.usage.prompt_tokens = 10
-        mock_response.usage.completion_tokens = 5
-        mock_response.usage.total_tokens = 15
-        mock_openai.return_value.chat.completions.create.return_value = mock_response
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = {
+            "content": "Response.",
+            "token_usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+            },
+        }
+        mock_get_chat_provider.return_value = mock_provider
 
         # Act
         with override_settings(RAG_MAX_HISTORY_TURNS=10):
@@ -358,7 +365,7 @@ class RunRagQueryTests:
         # Assert — the last 20 messages (10 turns) should be included
         assert result["content"] == "Response."
         # Verify the mock was called with the right messages
-        call_args = mock_openai.return_value.chat.completions.create.call_args
+        call_args = mock_provider.chat.call_args
         assert call_args is not None
         messages = call_args.kwargs["messages"]
 
@@ -371,23 +378,23 @@ class RunRagQueryTests:
 
     @patch("conversations.rag_service.search_chunks")
     @patch("conversations.rag_service.embed_query")
-    @patch("conversations.rag_service.OpenAI")
-    def test_openai_error_handling(
+    @patch("conversations.rag_service.get_chat_provider")
+    def test_chat_provider_error_handling(
         self,
-        mock_openai: MagicMock,
+        mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_search_chunks: MagicMock,
     ) -> None:
-        """Mock OpenAI to raise an exception, verify RAGServiceException is raised."""
+        """Mock chat provider to raise an exception, verify RAGServiceException is raised."""
         # Arrange
         mock_embed_query.return_value = [0.1] * 768
         mock_search_chunks.return_value = []
-        mock_openai.return_value.chat.completions.create.side_effect = Exception(
-            "OpenAI API error"
-        )
+        mock_provider = MagicMock()
+        mock_provider.chat.side_effect = Exception("Chat provider API error")
+        mock_get_chat_provider.return_value = mock_provider
 
         # Act / Assert
-        with pytest.raises(RAGServiceException, match="OpenAI API call failed"):
+        with pytest.raises(RAGServiceException, match="Chat provider API call failed"):
             run_rag_query(
                 question="Test?",
                 document_id="doc-err",
@@ -395,10 +402,10 @@ class RunRagQueryTests:
 
     @patch("conversations.rag_service.search_chunks")
     @patch("conversations.rag_service.embed_query")
-    @patch("conversations.rag_service.OpenAI")
+    @patch("conversations.rag_service.get_chat_provider")
     def test_embedding_error_handling(
         self,
-        mock_openai: MagicMock,
+        mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_search_chunks: MagicMock,
     ) -> None:
@@ -413,15 +420,15 @@ class RunRagQueryTests:
                 document_id="doc-err",
             )
 
-        # Ensure OpenAI was never called
-        mock_openai.return_value.chat.completions.create.assert_not_called()
+        # Ensure chat provider was never called
+        mock_get_chat_provider.return_value.chat.assert_not_called()
 
     @patch("conversations.rag_service.search_chunks")
     @patch("conversations.rag_service.embed_query")
-    @patch("conversations.rag_service.OpenAI")
+    @patch("conversations.rag_service.get_chat_provider")
     def test_search_error_handling(
         self,
-        mock_openai: MagicMock,
+        mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_search_chunks: MagicMock,
     ) -> None:
@@ -437,30 +444,33 @@ class RunRagQueryTests:
                 document_id="doc-err",
             )
 
-        # Ensure OpenAI was never called
-        mock_openai.return_value.chat.completions.create.assert_not_called()
+        # Ensure chat provider was never called
+        mock_get_chat_provider.return_value.chat.assert_not_called()
 
     @patch("conversations.rag_service.search_chunks")
     @patch("conversations.rag_service.embed_query")
-    @patch("conversations.rag_service.OpenAI")
+    @patch("conversations.rag_service.get_chat_provider")
     def test_empty_chunks_returns_response(
         self,
-        mock_openai: MagicMock,
+        mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_search_chunks: MagicMock,
     ) -> None:
-        """No chunks found, still calls OpenAI with empty context."""
+        """No chunks found, still calls chat provider with empty context."""
         # Arrange
         mock_embed_query.return_value = [0.1] * 768
         mock_search_chunks.return_value = []
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "I don't have enough information."
-        mock_response.usage.prompt_tokens = 50
-        mock_response.usage.completion_tokens = 10
-        mock_response.usage.total_tokens = 60
-        mock_openai.return_value.chat.completions.create.return_value = mock_response
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = {
+            "content": "I don't have enough information.",
+            "token_usage": {
+                "prompt_tokens": 50,
+                "completion_tokens": 10,
+                "total_tokens": 60,
+            },
+        }
+        mock_get_chat_provider.return_value = mock_provider
 
         # Act
         result = run_rag_query(
@@ -475,10 +485,10 @@ class RunRagQueryTests:
 
     @patch("conversations.rag_service.search_chunks")
     @patch("conversations.rag_service.embed_query")
-    @patch("conversations.rag_service.OpenAI")
+    @patch("conversations.rag_service.get_chat_provider")
     def test_custom_top_k(
         self,
-        mock_openai: MagicMock,
+        mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_search_chunks: MagicMock,
     ) -> None:
@@ -487,13 +497,16 @@ class RunRagQueryTests:
         mock_embed_query.return_value = [0.1] * 768
         mock_search_chunks.return_value = []
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Response."
-        mock_response.usage.prompt_tokens = 10
-        mock_response.usage.completion_tokens = 5
-        mock_response.usage.total_tokens = 15
-        mock_openai.return_value.chat.completions.create.return_value = mock_response
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = {
+            "content": "Response.",
+            "token_usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+            },
+        }
+        mock_get_chat_provider.return_value = mock_provider
 
         # Act
         run_rag_query(
