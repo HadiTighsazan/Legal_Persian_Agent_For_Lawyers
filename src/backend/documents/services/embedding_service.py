@@ -82,12 +82,16 @@ def embed_query(text: str) -> list[float]:
 
     Raises:
         ValueError: If *text* is empty or whitespace-only.
-        Exception: If the provider API call fails.
+        EmbeddingError: If the provider API call fails.
     """
     if not text or not text.strip():
         raise ValueError("text must be non-empty")
     provider = get_embedding_provider()
-    return provider.embed_query(text)
+    try:
+        return provider.embed_query(text)
+    except Exception as e:
+        logger.exception("embed_query failed for text: %s...", text[:50])
+        raise EmbeddingError(f"Failed to embed query: {e}") from e
 
 
 def batch_generate_embeddings(texts: list[str]) -> list[list[float] | None]:

@@ -1055,3 +1055,30 @@ class DocumentSearchViewTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["results"], [])
         self.assertEqual(response.data["total_results"], 0)
+
+    @patch("documents.views.embed_query")
+    def test_search_embedding_failure_returns_500(
+        self,
+        mock_embed_query: MagicMock,
+    ) -> None:
+        """When embed_query raises EmbeddingError, the view should return 500
+        with the structured error format."""
+        from documents.services.embedding_service import EmbeddingError
+
+        mock_embed_query.side_effect = EmbeddingError("Gemini API failure")
+
+        response = self.client.post(
+            self.url,
+            {"query": "test"},
+            format="json",
+            **_auth_header(self.user),
+        )
+
+        self.assertEqual(
+            response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+        self.assertEqual(response.data["error"], "embedding_failed")
+        self.assertIn(
+            "Failed to generate query embedding",
+            response.data["message"],
+        )

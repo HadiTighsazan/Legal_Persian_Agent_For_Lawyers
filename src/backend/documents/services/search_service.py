@@ -32,14 +32,23 @@ def _set_probes(probes: int | None = None) -> None:
 
     This controls how many inverted lists are searched during an ivfflat
     index scan.  Higher values improve recall at the cost of speed.
+    Failures are logged as warnings since this is a performance optimization.
 
     Args:
         probes: Number of probes (1-100).  Falls back to
             ``settings.VECTOR_SEARCH_PROBES`` if ``None``.
     """
     probes = probes if probes is not None else settings.VECTOR_SEARCH_PROBES
-    with connection.cursor() as cursor:
-        cursor.execute("SET ivfflat.probes = %s", [probes])
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SET ivfflat.probes = %s", [probes])
+    except Exception as e:
+        logger.warning(
+            "Failed to set ivfflat.probes=%d: %s. "
+            "Search performance may be affected.",
+            probes,
+            e,
+        )
 
 
 def search_chunks(
@@ -81,6 +90,15 @@ def search_chunks(
     """
     # Set ivfflat probe count for this session.
     _set_probes()
+
+    # Validate query vector dimension.
+    expected_dim = settings.EMBEDDING_DIMENSION
+    if len(query_vector) != expected_dim:
+        raise ValueError(
+            f"query_vector dimension {len(query_vector)} does not match "
+            f"expected dimension {expected_dim}. "
+            f"Check EMBEDDING_DIMENSION setting."
+        )
 
     # Build the base queryset: only chunks with embeddings.
     queryset = DocumentChunk.objects.filter(
