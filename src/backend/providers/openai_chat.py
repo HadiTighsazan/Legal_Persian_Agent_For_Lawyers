@@ -13,12 +13,19 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAIChatProvider(BaseChatProvider):
-    """Uses OpenAI's Chat Completions API (``gpt-4o-mini``, etc.)."""
+    """OpenAI-compatible chat provider (works with OpenAI, DeepSeek, etc.).
+
+    Reads ``CHAT_API_KEY`` and ``CHAT_BASE_URL`` from settings so it can
+    target any OpenAI-compatible API (OpenAI, DeepSeek, Together, etc.).
+    """
 
     def __init__(self) -> None:
         import openai
 
-        self.client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+        self.client = openai.OpenAI(
+            api_key=settings.CHAT_API_KEY,
+            base_url=settings.CHAT_BASE_URL,
+        )
         self.model: str = settings.OPENAI_CHAT_MODEL
         self.max_tokens: int = settings.OPENAI_CHAT_MAX_TOKENS
 

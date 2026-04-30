@@ -1,5 +1,8 @@
 """Provider abstraction layer for embedding and chat/LLM providers."""
 
+# Trigger provider registration on import (embedding + chat providers)
+import providers.registration  # noqa: F401
+
 from providers.base import BaseEmbeddingProvider, BaseChatProvider
 from providers.registry import (
     ProviderNotRegisteredError,

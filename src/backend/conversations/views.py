@@ -328,7 +328,7 @@ class ConversationMessageView(APIView):
                 return Response(
                     {
                         "error": "rate_limit_exceeded",
-                        "message": "OpenAI API rate limit exceeded. Please try again later.",
+                        "message": "AI provider rate limit exceeded. Please try again later.",
                         "retry_after": 60,
                     },
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -448,7 +448,7 @@ class DocumentDirectQueryView(APIView):
                 return Response(
                     {
                         "error": "rate_limit_exceeded",
-                        "message": "OpenAI API rate limit exceeded. Please try again later.",
+                        "message": "AI provider rate limit exceeded. Please try again later.",
                         "retry_after": 60,
                     },
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
