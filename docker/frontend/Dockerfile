@@ -3,10 +3,9 @@
 
 FROM node:20-alpine
 
-# Set Iranian npm mirror for compliance
-# Use first priority mirror: https://package-mirror.liara.ir/repository/npm/
-RUN npm config set registry https://package-mirror.liara.ir/repository/npm/ && \
-    npm config set strict-ssl false
+# Build arguments for npm mirrors (overridable via --build-arg)
+ARG NPM_CONFIG_REGISTRY=https://mirror2.chabokan.net/npm
+ARG NPM_CONFIG_STRICT_SSL=false
 
 # Set working directory
 WORKDIR /app
@@ -15,8 +14,9 @@ WORKDIR /app
 COPY src/frontend/package*.json ./
 
 # Remove lockfile to avoid registry conflicts, set reliable mirror and install
-RUN rm -f package-lock.json && \
-    npm config set registry https://mirror2.chabokan.net/npm && \
+RUN npm config set registry ${NPM_CONFIG_REGISTRY} && \
+    npm config set strict-ssl ${NPM_CONFIG_STRICT_SSL} && \
+    rm -f package-lock.json && \
     npm install --no-audit --no-fund
 
 

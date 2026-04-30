@@ -1,49 +1,113 @@
 """
 Core views for the DocuChat system.
-"""
-from datetime import datetime
 
+Provides health check endpoints for monitoring service availability.
+"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+
+from django.conf import settings
+from django.db import connection
+from django.db.utils import OperationalError
 from django.http import JsonResponse
 from django.views import View
+from redis import Redis
+from redis.exceptions import ConnectionError as RedisConnectionError
+
+logger = logging.getLogger(__name__)
 
 
 class HealthCheckView(View):
     """
-    Simple health check endpoint for Docker and load balancers.
-    Returns 200 OK with basic status information.
+    Health check endpoint that verifies all critical services.
+
+    Checks database connection, Redis ping, and Celery (via Redis).
+    Returns 200 if all healthy, 503 if any are down.
     """
-    
+
     def get(self, request):
-        """Return basic health status."""
-        return JsonResponse({
-            'status': 'ok',
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
-            'service': 'docuchat-api',
+        """Return health status of all services."""
+        status = {
+            'status': 'healthy',
+            'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+            'services': {
+                'database': 'unknown',
+                'redis': 'unknown',
+                'celery': 'unknown',
+            },
             'version': '1.0.0',
-        })
+        }
+
+        overall_healthy = True
+
+        # Check database
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+            status['services']['database'] = 'up'
+        except OperationalError as e:
+            status['services']['database'] = 'down'
+            status['services']['database_error'] = str(e)
+            overall_healthy = False
+            logger.error(f"Database health check failed: {e}")
+
+        # Check Redis
+        try:
+            redis_url = self._get_redis_url()
+            redis_client = Redis.from_url(redis_url, socket_connect_timeout=2)
+            redis_client.ping()
+            status['services']['redis'] = 'up'
+        except (RedisConnectionError, ValueError) as e:
+            status['services']['redis'] = 'down'
+            status['services']['redis_error'] = str(e)
+            overall_healthy = False
+            logger.error(f"Redis health check failed: {e}")
+
+        # Check Celery (via Redis connection)
+        # For now, we assume Celery is up if Redis is up
+        # In a more complete implementation, we'd check Celery worker status
+        if status['services']['redis'] == 'up':
+            status['services']['celery'] = 'up'
+        else:
+            status['services']['celery'] = 'down'
+            overall_healthy = False
+
+        # Update overall status
+        if not overall_healthy:
+            status['status'] = 'unhealthy'
+
+        response_status = 200 if overall_healthy else 503
+        return JsonResponse(status, status=response_status)
+
+    def _get_redis_url(self):
+        """Get Redis URL from settings or environment."""
+        return getattr(settings, 'CELERY_BROKER_URL', 'redis://localhost:6379/0')
 
 
 class ReadyCheckView(View):
     """
-    Readiness check for Kubernetes and orchestrators.
+    Simple readiness check for load balancers and orchestrators.
     """
-    
+
     def get(self, request):
-        """Return readiness status."""
+        """Return simple readiness status."""
         return JsonResponse({
             'status': 'ready',
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
         })
 
 
 class LiveCheckView(View):
     """
-    Liveness check for Kubernetes and Docker.
+    Simple liveness check for Kubernetes and Docker.
     """
-    
+
     def get(self, request):
-        """Return liveness status."""
+        """Return simple liveness status."""
         return JsonResponse({
             'status': 'alive',
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
         })
