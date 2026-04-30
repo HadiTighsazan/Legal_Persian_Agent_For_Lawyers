@@ -9,16 +9,13 @@ from typing import Any
 import requests
 from django.conf import settings
 
-from providers.base import BaseEmbeddingProvider
+from providers.base import BaseEmbeddingProvider, EmbeddingBatchError, EMBEDDING_SUB_BATCH_SIZE as SUB_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-SUB_BATCH_SIZE: int = 100
-"""Maximum number of texts to send in a single Gemini API call (max 100)."""
 
 _MAX_RETRIES: int = 3
 """Number of retry attempts for failed API calls."""
@@ -208,6 +205,11 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
                             batch_start,
                             batch_end,
                         )
+                        raise EmbeddingBatchError(
+                            f"Gemini batch embedding timed out after {_MAX_RETRIES} retries "
+                            f"for sub-batch {batch_start}–{batch_end}",
+                            partial_results=results,
+                        )
 
                 except requests.exceptions.RequestException as e:
                     if attempt < _MAX_RETRIES - 1:
@@ -230,6 +232,11 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
                             batch_end,
                             e,
                         )
+                        raise EmbeddingBatchError(
+                            f"Gemini batch embedding failed after {_MAX_RETRIES} retries "
+                            f"for sub-batch {batch_start}–{batch_end}: {e}",
+                            partial_results=results,
+                        ) from e
 
         return results
 

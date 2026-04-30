@@ -20,15 +20,14 @@ from rest_framework.test import APIClient
 
 from documents.models import Document, DocumentChunk
 from documents.services.embedding_service import (
-    SUB_BATCH_SIZE,
     EmbeddingError,
     batch_embed_chunks,
     batch_generate_embeddings,
     embed_query,
     generate_embedding,
-    generate_embeddings_for_document,
     reembed_chunk,
 )
+from providers.base import EMBEDDING_SUB_BATCH_SIZE as SUB_BATCH_SIZE
 from tasks.models import ProcessingTask
 from users.models import User
 
@@ -252,165 +251,6 @@ class BatchGenerateEmbeddingsTests(TestCase):
         mock_provider.embed_batch.assert_called_once_with(["", "   ", ""])
 
 
-class GenerateEmbeddingsForDocumentTests(TestCase):
-    """Tests for :func:`generate_embeddings_for_document`."""
-
-    def setUp(self) -> None:
-        self.user = User.objects.create_user(
-            email="embed-doc@example.com",
-            password="testpass123",
-        )
-        self.document = Document.objects.create(
-            user=self.user,
-            title="Embed Test Doc",
-            filename="embed_test.pdf",
-            original_filename="embed_test.pdf",
-            file_path="/tmp/fake.pdf",
-            file_size=1000,
-            mime_type="application/pdf",
-            processing_status="processing",
-        )
-
-    def _create_chunks(self, count: int, has_embedding: bool = False) -> list[DocumentChunk]:
-        """Create *count* chunks for the test document."""
-        chunks: list[DocumentChunk] = []
-        for i in range(count):
-            chunk = DocumentChunk.objects.create(
-                document=self.document,
-                chunk_index=i,
-                page_start=1,
-                page_end=1,
-                content=f"Chunk {i} content.",
-                token_count=10,
-                embedding=_make_fake_embedding() if has_embedding else None,
-            )
-            chunks.append(chunk)
-        return chunks
-
-    @patch("documents.services.embedding_service.batch_generate_embeddings")
-    def test_generate_embeddings_for_document_success(
-        self,
-        mock_batch: MagicMock,
-    ) -> None:
-        """3 un-embedded chunks should get embeddings and task marked completed."""
-        chunks = self._create_chunks(3)
-
-        mock_batch.return_value = [_make_fake_embedding() for _ in range(3)]
-
-        generate_embeddings_for_document(str(self.document.id))
-
-        for chunk in chunks:
-            chunk.refresh_from_db()
-            self.assertIsNotNone(chunk.embedding)
-            self.assertEqual(len(chunk.embedding), 768)
-
-        task = ProcessingTask.objects.get(
-            document=self.document,
-            task_type="embed",
-        )
-        self.assertEqual(task.status, "completed")
-        self.assertEqual(task.progress, 100)
-        self.assertIsNotNone(task.started_at)
-        self.assertIsNotNone(task.completed_at)
-
-    @patch("documents.services.embedding_service.batch_generate_embeddings")
-    def test_generate_embeddings_for_document_no_chunks(
-        self,
-        mock_batch: MagicMock,
-    ) -> None:
-        """Document with 0 chunks should complete immediately."""
-        generate_embeddings_for_document(str(self.document.id))
-
-        task = ProcessingTask.objects.get(
-            document=self.document,
-            task_type="embed",
-        )
-        self.assertEqual(task.status, "completed")
-        self.assertEqual(task.progress, 100)
-        mock_batch.assert_not_called()
-
-    @patch("documents.services.embedding_service.batch_generate_embeddings")
-    def test_generate_embeddings_for_document_all_already_embedded(
-        self,
-        mock_batch: MagicMock,
-    ) -> None:
-        """All chunks already embedded should complete with no API calls."""
-        self._create_chunks(3, has_embedding=True)
-
-        generate_embeddings_for_document(str(self.document.id))
-
-        task = ProcessingTask.objects.get(
-            document=self.document,
-            task_type="embed",
-        )
-        self.assertEqual(task.status, "completed")
-        self.assertEqual(task.progress, 100)
-        mock_batch.assert_not_called()
-
-    def test_generate_embeddings_for_document_not_found(self) -> None:
-        """Non-existent document should log error and return gracefully."""
-        generate_embeddings_for_document(
-            "00000000-0000-0000-0000-000000000000",
-        )
-
-    @patch("documents.services.embedding_service.batch_generate_embeddings")
-    def test_generate_embeddings_for_document_partial_failures(
-        self,
-        mock_batch: MagicMock,
-    ) -> None:
-        """Some chunks failing should still process successfully."""
-        self._create_chunks(3)
-
-        mock_batch.return_value = [
-            _make_fake_embedding(),
-            None,
-            _make_fake_embedding(),
-        ]
-
-        generate_embeddings_for_document(str(self.document.id))
-
-        task = ProcessingTask.objects.get(
-            document=self.document,
-            task_type="embed",
-        )
-        self.assertEqual(task.status, "completed")
-        self.assertEqual(task.progress, 100)
-
-        chunks = DocumentChunk.objects.filter(
-            document=self.document,
-        ).order_by("chunk_index")
-        self.assertIsNotNone(chunks[0].embedding)
-        self.assertIsNone(chunks[1].embedding)
-        self.assertIsNotNone(chunks[2].embedding)
-
-    @patch("documents.services.embedding_service.batch_generate_embeddings")
-    def test_generate_embeddings_for_document_batch_progress(
-        self,
-        mock_batch: MagicMock,
-    ) -> None:
-        """Progress should be updated correctly during batch processing."""
-        chunk_count = SUB_BATCH_SIZE + 10  # 110 chunks, 2 batches of 100+10
-        self._create_chunks(chunk_count)
-
-        def side_effect(texts: list[str]) -> list[list[float] | None]:
-            return [_make_fake_embedding() for _ in texts]
-
-        mock_batch.side_effect = side_effect
-
-        generate_embeddings_for_document(str(self.document.id))
-
-        task = ProcessingTask.objects.get(
-            document=self.document,
-            task_type="embed",
-        )
-        self.assertEqual(task.status, "completed")
-        self.assertEqual(task.progress, 100)
-
-        embedded_count = DocumentChunk.objects.filter(
-            document=self.document,
-            embedding__isnull=False,
-        ).count()
-        self.assertEqual(embedded_count, chunk_count)
 
 
 class BatchEmbedChunksTests(TestCase):
@@ -558,18 +398,17 @@ class ReembedChunkTests(TestCase):
         self.assertEqual(list(chunk.embedding), new_embedding)
 
     def test_reembed_chunk_not_found(self) -> None:
-        """Non-existent chunk ID should return error dict."""
-        result = reembed_chunk("00000000-0000-0000-0000-000000000000")
-
-        self.assertEqual(result["error"], "not_found")
-        self.assertEqual(result["message"], "Chunk not found")
+        """Non-existent chunk ID should raise EmbeddingError."""
+        with self.assertRaises(EmbeddingError) as ctx:
+            reembed_chunk("00000000-0000-0000-0000-000000000000")
+        self.assertIn("not found", str(ctx.exception).lower())
 
     @patch("documents.services.embedding_service.generate_embedding")
     def test_reembed_chunk_failure(
         self,
         mock_generate: MagicMock,
     ) -> None:
-        """If generate_embedding returns None, embedding_updated should be False."""
+        """If generate_embedding returns None, should raise EmbeddingError."""
         chunk = DocumentChunk.objects.create(
             document=self.document,
             chunk_index=0,
@@ -582,11 +421,9 @@ class ReembedChunkTests(TestCase):
 
         mock_generate.return_value = None
 
-        result = reembed_chunk(str(chunk.id))
-
-        self.assertFalse(result["embedding_updated"])
-        self.assertEqual(result["chunk_id"], str(chunk.id))
-        self.assertIn("error", result)
+        with self.assertRaises(EmbeddingError) as ctx:
+            reembed_chunk(str(chunk.id))
+        self.assertIn("failed to generate embedding", str(ctx.exception).lower())
 
 
 # ============================================================================
@@ -739,6 +576,36 @@ class ChunkBatchEmbedViewTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_batch_embed_skips_other_users_chunks(self) -> None:
+        """Chunks from another user's document should be silently skipped."""
+        other_user = User.objects.create_user(
+            email="other-batch@example.com",
+            password="testpass123",
+        )
+        other_document = _create_document(other_user)
+        other_chunk = DocumentChunk.objects.create(
+            document=other_document,
+            chunk_index=0,
+            page_start=1,
+            page_end=10,
+            content="Other user's chunk",
+            token_count=50,
+            metadata={},
+        )
+
+        response = self.client.post(
+            self.url,
+            {"chunk_ids": [str(other_chunk.id)]},
+            **_auth_header(self.user),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        data = response.json()
+        self.assertEqual(data["processed"], 0)
+        self.assertEqual(data["skipped"], 0)
+        self.assertEqual(data["failed"], 0)
+
     @patch("documents.views.batch_embed_chunks")
     def test_successful_batch_embed_returns_200(
         self, mock_batch: MagicMock,
@@ -746,10 +613,19 @@ class ChunkBatchEmbedViewTests(TestCase):
         """Successful batch embed should return 200 with counts."""
         mock_batch.return_value = {"processed": 3, "skipped": 1, "failed": 0}
 
-        chunk_id = uuid.uuid4()
+        # Create a chunk owned by the user so ownership filtering passes
+        chunk = DocumentChunk.objects.create(
+            document=_create_document(self.user),
+            chunk_index=0,
+            page_start=1,
+            page_end=10,
+            content="Test chunk",
+            token_count=50,
+            metadata={},
+        )
         response = self.client.post(
             self.url,
-            {"chunk_ids": [str(chunk_id)]},
+            {"chunk_ids": [str(chunk.id)]},
             **_auth_header(self.user),
             format="json",
         )
@@ -760,18 +636,33 @@ class ChunkBatchEmbedViewTests(TestCase):
         self.assertEqual(data["skipped"], 1)
         self.assertEqual(data["failed"], 0)
 
-        mock_batch.assert_called_once_with([str(chunk_id)])
+        mock_batch.assert_called_once_with([str(chunk.id)])
 
     @patch("documents.views.batch_embed_chunks")
     def test_batch_embed_handles_up_to_100_chunks(self, mock_batch: MagicMock) -> None:
         """POST with 100 chunk IDs should be accepted (boundary test)."""
-        chunk_ids = [uuid.uuid4() for _ in range(100)]
+        # Create chunks owned by the user
+        doc = _create_document(self.user)
+        chunks = []
+        for i in range(100):
+            chunk = DocumentChunk.objects.create(
+                document=doc,
+                chunk_index=i,
+                page_start=1,
+                page_end=10,
+                content=f"Chunk {i}",
+                token_count=50,
+                metadata={},
+            )
+            chunks.append(chunk)
+
+        chunk_ids = [str(c.id) for c in chunks]
 
         mock_batch.return_value = {"processed": 100, "skipped": 0, "failed": 0}
 
         response = self.client.post(
             self.url,
-            {"chunk_ids": [str(cid) for cid in chunk_ids]},
+            {"chunk_ids": chunk_ids},
             **_auth_header(self.user),
             format="json",
         )
@@ -846,6 +737,20 @@ class ChunkReEmbedViewTests(TestCase):
         self.assertTrue(data["embedding_updated"])
 
         mock_reembed.assert_called_once_with(str(self.chunk.id))
+
+    @patch("documents.views.reembed_chunk")
+    def test_reembed_embedding_failure_returns_500(self, mock_reembed: MagicMock) -> None:
+        """If reembed_chunk raises EmbeddingError, the view should return 500."""
+        from documents.services.embedding_service import EmbeddingError
+
+        mock_reembed.side_effect = EmbeddingError("Failed to generate embedding")
+
+        response = self.client.post(self.url, **_auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        data = response.json()
+        self.assertEqual(data["error"], "embedding_failed")
+        self.assertIn("Failed to generate embedding", data["message"])
 
 
 class TaskStatusViewTests(TestCase):
@@ -989,7 +894,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         self._create_chunks(3)
 
         with patch(
-            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            "documents.services.embedding_service.batch_generate_embeddings",
             return_value=[[0.1] * 768, [0.2] * 768, [0.3] * 768],
         ):
             self._run_task()
@@ -1009,7 +914,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         self._create_chunks(2, has_embedding=True)
 
         with patch(
-            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            "documents.services.embedding_service.batch_generate_embeddings",
         ) as mock_embed:
             self._run_task()
 
@@ -1022,7 +927,7 @@ class EmbeddingCeleryTaskTests(TestCase):
     def test_empty_document_no_chunks(self) -> None:
         """Document with 0 chunks -> task completes immediately."""
         with patch(
-            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            "documents.services.embedding_service.batch_generate_embeddings",
         ) as mock_embed:
             self._run_task()
 
@@ -1055,7 +960,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         self._create_chunks(3)
 
         with patch(
-            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            "documents.services.embedding_service.batch_generate_embeddings",
             return_value=[[0.1] * 768, None, [0.3] * 768],
         ):
             self._run_task()
@@ -1074,7 +979,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         self._create_chunks(2)
 
         with patch(
-            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            "documents.services.embedding_service.batch_generate_embeddings",
             side_effect=ValueError("Gemini API connection failed"),
         ):
             self._run_task()
@@ -1093,7 +998,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         embeddings = [[float(i)] * 768 for i in range(200)]
 
         with patch(
-            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            "documents.services.embedding_service.batch_generate_embeddings",
             side_effect=lambda texts: [embeddings.pop(0) for _ in texts],
         ):
             self._run_task()
@@ -1113,7 +1018,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         self._create_chunks(25)
 
         with patch(
-            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            "documents.services.embedding_service.batch_generate_embeddings",
             return_value=[[0.1] * 768] * 25,
         ):
             self._run_task()
@@ -1129,7 +1034,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         self._create_chunks(1)
 
         with patch(
-            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            "documents.services.embedding_service.batch_generate_embeddings",
             return_value=[[0.1] * 768],
         ):
             self._run_task()
@@ -1142,7 +1047,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         self._create_chunks(1)
 
         with patch(
-            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            "documents.services.embedding_service.batch_generate_embeddings",
             return_value=[[0.1] * 768],
         ):
             self._run_task()
@@ -1157,7 +1062,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         self._create_chunks(100)
 
         with patch(
-            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            "documents.services.embedding_service.batch_generate_embeddings",
             return_value=[[0.1] * 768] * 100,
         ) as mock_embed:
             self._run_task()
@@ -1173,7 +1078,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         self._create_chunks(150)
 
         with patch(
-            "documents.tasks.embedding_tasks.batch_generate_embeddings",
+            "documents.services.embedding_service.batch_generate_embeddings",
             return_value=[[0.1] * 768] * 150,
         ) as mock_embed:
             self._run_task()

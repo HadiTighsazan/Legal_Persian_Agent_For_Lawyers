@@ -7,7 +7,7 @@ from typing import Any
 
 from django.conf import settings
 
-from providers.base import BaseEmbeddingProvider
+from providers.base import BaseEmbeddingProvider, EmbeddingBatchError
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +99,10 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
                 "OpenAIEmbeddingProvider.embed_batch: Failed — %s",
                 e,
             )
+            raise EmbeddingBatchError(
+                f"OpenAI batch embedding failed: {e}",
+                partial_results=results,
+            ) from e
 
         return results
 

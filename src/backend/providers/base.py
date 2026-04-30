@@ -14,6 +14,30 @@ class RateLimitError(ProviderError):
     pass
 
 
+class EmbeddingBatchError(ProviderError):
+    """Raised when a batch embedding API call fails entirely.
+
+    The ``partial_results`` attribute contains the results that were
+    successfully computed before the failure (typically all ``None``).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        partial_results: list[list[float] | None] | None = None,
+    ) -> None:
+        self.partial_results = partial_results
+        super().__init__(message)
+
+
+# ---------------------------------------------------------------------------
+# Shared constants
+# ---------------------------------------------------------------------------
+
+EMBEDDING_SUB_BATCH_SIZE: int = 100
+"""Maximum number of texts to send in a single provider API call."""
+
+
 class BaseEmbeddingProvider(ABC):
     """Abstract interface for embedding providers."""
 

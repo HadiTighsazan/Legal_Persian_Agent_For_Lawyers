@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 from django.test import TestCase, override_settings
 
+from providers.base import EmbeddingBatchError
 from providers.gemini_embedding import GeminiEmbeddingProvider
 from providers.openai_embedding import OpenAIEmbeddingProvider
 from providers.ollama_embedding import OllamaEmbeddingProvider
@@ -113,7 +114,8 @@ class GeminiEmbeddingProviderTests(TestCase):
         self.assertEqual(len(results), 3)
         self.assertIsNotNone(results[0])
         self.assertIsNone(results[1])
-        self.assertIsNotNone(results[2])
+        # The API returned only 1 embedding for 2 valid texts, so results[2] stays None.
+        self.assertIsNone(results[2])
 
     # -- embed_query() tests ----------------------------------------------
 
@@ -162,6 +164,12 @@ class OpenAIEmbeddingProviderTests(TestCase):
     """Tests for :class:`OpenAIEmbeddingProvider`."""
 
     def setUp(self) -> None:
+        # Patch the OpenAI client to avoid real API calls.
+        patcher = patch("openai.OpenAI")
+        self.mock_openai_cls = patcher.start()
+        self.addCleanup(patcher.stop)
+        self.mock_client = MagicMock()
+        self.mock_openai_cls.return_value = self.mock_client
         self.provider = OpenAIEmbeddingProvider()
 
     def test_dimensions_property(self) -> None:
@@ -170,13 +178,12 @@ class OpenAIEmbeddingProviderTests(TestCase):
 
     # -- embed() tests ----------------------------------------------------
 
-    @patch("providers.openai_embedding.openai")
-    def test_embed_returns_embedding(self, mock_openai: MagicMock) -> None:
+    def test_embed_returns_embedding(self) -> None:
         """A valid text returns an embedding vector."""
         mock_response = MagicMock()
         mock_response.data = [MagicMock()]
         mock_response.data[0].embedding = [0.1] * 768
-        mock_openai.OpenAI.return_value.embeddings.create.return_value = mock_response
+        self.mock_client.embeddings.create.return_value = mock_response
 
         result = self.provider.embed("Hello world")
 
@@ -189,10 +196,9 @@ class OpenAIEmbeddingProviderTests(TestCase):
         self.assertIsNone(self.provider.embed(""))
         self.assertIsNone(self.provider.embed("   "))
 
-    @patch("providers.openai_embedding.openai")
-    def test_embed_api_error_returns_none(self, mock_openai: MagicMock) -> None:
+    def test_embed_api_error_returns_none(self) -> None:
         """API error returns None."""
-        mock_openai.OpenAI.return_value.embeddings.create.side_effect = Exception(
+        self.mock_client.embeddings.create.side_effect = Exception(
             "API error"
         )
 
@@ -201,15 +207,14 @@ class OpenAIEmbeddingProviderTests(TestCase):
 
     # -- embed_batch() tests ----------------------------------------------
 
-    @patch("providers.openai_embedding.openai")
-    def test_embed_batch_returns_in_order(self, mock_openai: MagicMock) -> None:
+    def test_embed_batch_returns_in_order(self) -> None:
         """Multiple texts return embeddings in correct order."""
         mock_response = MagicMock()
         mock_response.data = [
             MagicMock(embedding=[1.0] + [0.0] * 767),
             MagicMock(embedding=[2.0] + [0.0] * 767),
         ]
-        mock_openai.OpenAI.return_value.embeddings.create.return_value = mock_response
+        self.mock_client.embeddings.create.return_value = mock_response
 
         results = self.provider.embed_batch(["First", "Second"])
 
@@ -221,15 +226,14 @@ class OpenAIEmbeddingProviderTests(TestCase):
         self.assertEqual(results[0][0], 1.0)
         self.assertEqual(results[1][0], 2.0)
 
-    @patch("providers.openai_embedding.openai")
-    def test_embed_batch_empty_texts(self, mock_openai: MagicMock) -> None:
+    def test_embed_batch_empty_texts(self) -> None:
         """Empty texts in batch produce None at correct positions."""
         mock_response = MagicMock()
         mock_response.data = [
             MagicMock(embedding=[1.0] + [0.0] * 767),
             MagicMock(embedding=[2.0] + [0.0] * 767),
         ]
-        mock_openai.OpenAI.return_value.embeddings.create.return_value = mock_response
+        self.mock_client.embeddings.create.return_value = mock_response
 
         results = self.provider.embed_batch(["Valid", "", "Another"])
 
@@ -240,12 +244,11 @@ class OpenAIEmbeddingProviderTests(TestCase):
 
     # -- embed_query() tests ----------------------------------------------
 
-    @patch("providers.openai_embedding.openai")
-    def test_embed_query_returns_embedding(self, mock_openai: MagicMock) -> None:
+    def test_embed_query_returns_embedding(self) -> None:
         """A valid query returns an embedding vector."""
         mock_response = MagicMock()
         mock_response.data = [MagicMock(embedding=[0.1] * 768)]
-        mock_openai.OpenAI.return_value.embeddings.create.return_value = mock_response
+        self.mock_client.embeddings.create.return_value = mock_response
 
         result = self.provider.embed_query("test query")
         self.assertEqual(len(result), 768)
@@ -257,10 +260,9 @@ class OpenAIEmbeddingProviderTests(TestCase):
         with self.assertRaises(ValueError):
             self.provider.embed_query("   ")
 
-    @patch("providers.openai_embedding.openai")
-    def test_embed_query_api_error_raises(self, mock_openai: MagicMock) -> None:
+    def test_embed_query_api_error_raises(self) -> None:
         """API error propagates the exception."""
-        mock_openai.OpenAI.return_value.embeddings.create.side_effect = Exception(
+        self.mock_client.embeddings.create.side_effect = Exception(
             "API error"
         )
 

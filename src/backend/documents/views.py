@@ -518,7 +518,22 @@ class ChunkBatchEmbedView(APIView):
         serializer.is_valid(raise_exception=True)
 
         chunk_ids = [str(cid) for cid in serializer.validated_data["chunk_ids"]]
-        result = batch_embed_chunks(chunk_ids)
+
+        # Filter chunks belonging to the authenticated user
+        user_chunks = DocumentChunk.objects.filter(
+            id__in=chunk_ids,
+            document__user=request.user,
+        ).values_list("id", flat=True)
+
+        user_chunk_ids = [str(cid) for cid in user_chunks]
+
+        if not user_chunk_ids:
+            return Response(
+                {"processed": 0, "skipped": 0, "failed": 0},
+                status=status.HTTP_200_OK,
+            )
+
+        result = batch_embed_chunks(user_chunk_ids)
 
         response_serializer = ChunkBatchEmbedResponseSerializer(data=result)
         response_serializer.is_valid(raise_exception=True)
@@ -556,7 +571,13 @@ class ChunkReEmbedView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        result = reembed_chunk(str(chunk.id))
+        try:
+            result = reembed_chunk(str(chunk.id))
+        except EmbeddingError as e:
+            return Response(
+                {"error": "embedding_failed", "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         response_serializer = ChunkReEmbedResponseSerializer(data=result)
         response_serializer.is_valid(raise_exception=True)

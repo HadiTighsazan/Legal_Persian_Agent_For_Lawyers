@@ -8,7 +8,7 @@ from typing import Any
 import requests
 from django.conf import settings
 
-from providers.base import BaseEmbeddingProvider
+from providers.base import BaseEmbeddingProvider, EmbeddingBatchError
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +116,10 @@ class OllamaEmbeddingProvider(BaseEmbeddingProvider):
                 "OllamaEmbeddingProvider.embed_batch: Failed — %s",
                 e,
             )
+            raise EmbeddingBatchError(
+                f"Ollama batch embedding failed: {e}",
+                partial_results=results,
+            ) from e
 
         return results
 

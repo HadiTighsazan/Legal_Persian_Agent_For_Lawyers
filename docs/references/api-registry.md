@@ -560,10 +560,12 @@ Both fields are optional. At least one should be provided for meaningful updates
 ```
 **Error Responses:**
 - `400 Bad Request`: Invalid chunk_ids
+- `403 Forbidden`: One or more chunks belong to another user's document
 
 **Implementation Notes:**
 - Uses `IsAuthenticated` permission class
 - Validates request body with `ChunkBatchEmbedRequestSerializer`
+- Filters chunks by `document__user=request.user` to enforce ownership
 - Calls `batch_embed_chunks(chunk_ids)` from the embedding service
 - Uses `ChunkBatchEmbedResponseSerializer` for response validation
 
@@ -583,11 +585,19 @@ Both fields are optional. At least one should be provided for meaningful updates
 **Error Responses:**
 - `403 Forbidden`: Chunk belongs to another user's document
 - `404 Not Found`: Chunk does not exist
+- `500 Internal Server Error`: Embedding generation failed
+  ```json
+  {
+    "error": "embedding_failed",
+    "message": "Failed to generate embedding for chunk <chunk_id>"
+  }
+  ```
 
 **Implementation Notes:**
 - Uses `IsAuthenticated` permission class
 - Verifies chunk ownership via `chunk.document.user != request.user`
 - Calls `reembed_chunk(str(chunk.id))` from the embedding service
+- Catches `EmbeddingError` and returns 500 with structured error response
 - Uses `ChunkReEmbedResponseSerializer` for response validation
 
 ---
