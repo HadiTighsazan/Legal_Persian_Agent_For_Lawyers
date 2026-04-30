@@ -4,6 +4,16 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 
+class ProviderError(Exception):
+    """Base exception for all provider errors."""
+    pass
+
+
+class RateLimitError(ProviderError):
+    """Raised when the provider returns a rate-limit response."""
+    pass
+
+
 class BaseEmbeddingProvider(ABC):
     """Abstract interface for embedding providers."""
 

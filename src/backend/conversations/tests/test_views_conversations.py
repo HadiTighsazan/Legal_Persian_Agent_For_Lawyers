@@ -242,7 +242,8 @@ class ConversationListCreateViewTests(TestCase):
         data = response.json()
         self.assertEqual(data["count"], 5)
         self.assertEqual(len(data["results"]), 2)
-        self.assertEqual(data["next"], 2)
+        self.assertIsNotNone(data["next"])
+        self.assertIn("page=2", data["next"])
         self.assertIsNone(data["previous"])
 
     def test_get_pagination_max_page_size(self) -> None:

@@ -264,9 +264,9 @@ CHAT_BASE_URL = env('CHAT_BASE_URL', default='https://api.openai.com/v1')
 # pgvector ivfflat index probe count
 VECTOR_SEARCH_PROBES = env("VECTOR_SEARCH_PROBES")
 
-# OpenAI Chat Configuration
+# Chat Configuration (OpenAI-compatible: OpenAI, DeepSeek, Together, etc.)
 OPENAI_CHAT_MODEL = env("OPENAI_CHAT_MODEL", default="gpt-4o-mini")
-OPENAI_CHAT_MAX_TOKENS = env.int("OPENAI_CHAT_MAX_TOKENS", default=1000)
+CHAT_MAX_TOKENS = env.int("CHAT_MAX_TOKENS", default=1000)
 
 # RAG Configuration
 RAG_MAX_HISTORY_TURNS = env.int("RAG_MAX_HISTORY_TURNS", default=10)

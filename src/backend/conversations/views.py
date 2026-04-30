@@ -13,6 +13,7 @@ import logging
 
 from django.db.models import Count
 from rest_framework import status
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -29,8 +30,53 @@ from conversations.serializers import (
     DirectQuerySerializer,
     MessageSerializer,
 )
+from providers.base import RateLimitError
 
 logger = logging.getLogger(__name__)
+
+
+# ------------------------------------------------------------------
+# Pagination
+# ------------------------------------------------------------------
+
+class ConversationPagination(PageNumberPagination):
+    """Pagination for conversation list views."""
+    page_size = 20
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+
+def _get_conversation_or_error(
+    conversation_id: str,
+    request: Request,
+) -> tuple[Conversation | None, Response | None]:
+    """Fetch a conversation and verify ownership.
+
+    Returns a ``(conversation, None)`` tuple on success, or
+    ``(None, error_response)`` on failure.
+    """
+    try:
+        conversation = Conversation.objects.get(id=conversation_id)
+    except Conversation.DoesNotExist:
+        return None, Response(
+            {"error": "not_found", "message": "Conversation not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if conversation.user != request.user:
+        return None, Response(
+            {
+                "error": "permission_denied",
+                "message": "You do not have permission to access this conversation.",
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    return conversation, None
 
 
 class ConversationListCreateView(APIView):
@@ -106,38 +152,11 @@ class ConversationListCreateView(APIView):
             message_count=Count("messages", distinct=True),
         ).order_by("-updated_at")
 
-        # Pagination
-        try:
-            page = int(request.query_params.get("page", 1))
-            page_size = int(request.query_params.get("page_size", 20))
-        except (ValueError, TypeError):
-            page, page_size = 1, 20
-
-        if page < 1:
-            page = 1
-        if page_size < 1:
-            page_size = 20
-        if page_size > 100:
-            page_size = 100
-
-        total = queryset.count()
-        start = (page - 1) * page_size
-        end = start + page_size
-        page_conversations = queryset[start:end]
-
-        serializer = ConversationListSerializer(page_conversations, many=True)
-
-        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
-
-        return Response(
-            {
-                "count": total,
-                "next": page + 1 if page < total_pages else None,
-                "previous": page - 1 if page > 1 else None,
-                "results": serializer.data,
-            },
-            status=status.HTTP_200_OK,
-        )
+        # Pagination using DRF's PageNumberPagination
+        paginator = ConversationPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        serializer = ConversationListSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
 
 
 class ConversationDetailView(APIView):
@@ -164,55 +183,29 @@ class ConversationDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     # ------------------------------------------------------------------
-    # Helper — Fetch conversation with ownership check
+    # GET — Retrieve a single conversation with messages
     # ------------------------------------------------------------------
 
-    def _get_conversation_or_error(
-        self,
-        conversation_id: str,
-        request: Request,
-    ) -> tuple[Conversation | None, Response | None]:
-        """Fetch a conversation and verify ownership.
-
-        Returns a ``(conversation, None)`` tuple on success, or
-        ``(None, error_response)`` on failure.
-        """
+    def get(self, request: Request, conversation_id: str) -> Response:
+        """Handle the conversation detail GET request."""
         try:
-            conversation = Conversation.objects.get(id=conversation_id)
+            conversation = Conversation.objects.prefetch_related("messages").annotate(
+                message_count=Count("messages"),
+            ).get(id=conversation_id)
         except Conversation.DoesNotExist:
-            return None, Response(
+            return Response(
                 {"error": "not_found", "message": "Conversation not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         if conversation.user != request.user:
-            return None, Response(
+            return Response(
                 {
                     "error": "permission_denied",
                     "message": "You do not have permission to access this conversation.",
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
-
-        return conversation, None
-
-    # ------------------------------------------------------------------
-    # GET — Retrieve a single conversation with messages
-    # ------------------------------------------------------------------
-
-    def get(self, request: Request, conversation_id: str) -> Response:
-        """Handle the conversation detail GET request."""
-        conversation, error = self._get_conversation_or_error(
-            conversation_id,
-            request,
-        )
-        if error:
-            return error
-
-        # Prefetch messages and annotate message_count
-        conversation = Conversation.objects.prefetch_related("messages").annotate(
-            message_count=Count("messages"),
-        ).get(id=conversation.id)
 
         serializer = ConversationDetailSerializer(conversation)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -223,7 +216,7 @@ class ConversationDetailView(APIView):
 
     def delete(self, request: Request, conversation_id: str) -> Response:
         """Handle the conversation deletion DELETE request."""
-        conversation, error = self._get_conversation_or_error(
+        conversation, error = _get_conversation_or_error(
             conversation_id,
             request,
         )
@@ -239,6 +232,11 @@ class ConversationDetailView(APIView):
         )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    # ------------------------------------------------------------------
+    # DELETE — Delete a conversation
+    # ------------------------------------------------------------------
+
 
 
 class ConversationMessageView(APIView):
@@ -269,22 +267,9 @@ class ConversationMessageView(APIView):
         # ------------------------------------------------------------------
         # 1. Fetch conversation + ownership check
         # ------------------------------------------------------------------
-        try:
-            conversation = Conversation.objects.get(id=conversation_id)
-        except Conversation.DoesNotExist:
-            return Response(
-                {"error": "not_found", "message": "Conversation not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if conversation.user != request.user:
-            return Response(
-                {
-                    "error": "permission_denied",
-                    "message": "You do not have permission to access this conversation.",
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        conversation, error = _get_conversation_or_error(conversation_id, request)
+        if error:
+            return error
 
         # ------------------------------------------------------------------
         # 2. Validate input with AskQuestionSerializer
@@ -324,7 +309,7 @@ class ConversationMessageView(APIView):
             )
         except RAGServiceException as e:
             error_msg = str(e).lower()
-            if "rate limit" in error_msg or "429" in error_msg:
+            if isinstance(e.__cause__, RateLimitError) or "rate limit" in error_msg or "429" in error_msg:
                 return Response(
                     {
                         "error": "rate_limit_exceeded",
@@ -444,7 +429,7 @@ class DocumentDirectQueryView(APIView):
             )
         except RAGServiceException as e:
             error_msg = str(e).lower()
-            if "rate limit" in error_msg or "429" in error_msg:
+            if isinstance(e.__cause__, RateLimitError) or "rate limit" in error_msg or "429" in error_msg:
                 return Response(
                     {
                         "error": "rate_limit_exceeded",

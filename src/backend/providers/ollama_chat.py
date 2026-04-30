@@ -8,7 +8,7 @@ from typing import Any
 import requests
 from django.conf import settings
 
-from providers.base import BaseChatProvider
+from providers.base import BaseChatProvider, RateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,11 @@ class OllamaChatProvider(BaseChatProvider):
             response = requests.post(url, json=payload, timeout=120)
             response.raise_for_status()
             data = response.json()
+        except requests.HTTPError as e:
+            logger.exception("OllamaChatProvider.chat: API call failed")
+            if response.status_code == 429:
+                raise RateLimitError(str(e)) from e
+            raise
         except Exception as e:
             logger.exception("OllamaChatProvider.chat: API call failed")
             raise

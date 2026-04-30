@@ -7,7 +7,7 @@ from typing import Any
 
 from django.conf import settings
 
-from providers.base import BaseChatProvider
+from providers.base import BaseChatProvider, RateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class OpenAIChatProvider(BaseChatProvider):
             base_url=settings.CHAT_BASE_URL,
         )
         self.model: str = settings.OPENAI_CHAT_MODEL
-        self.max_tokens: int = settings.OPENAI_CHAT_MAX_TOKENS
+        self.max_tokens: int = settings.CHAT_MAX_TOKENS
 
     # ------------------------------------------------------------------
     # Public API
@@ -60,6 +60,9 @@ class OpenAIChatProvider(BaseChatProvider):
             )
         except Exception as e:
             logger.exception("OpenAIChatProvider.chat: API call failed")
+            # Re-raise rate-limit errors as RateLimitError
+            if "rate limit" in str(e).lower() or "429" in str(e):
+                raise RateLimitError(str(e)) from e
             raise
 
         choice = response.choices[0]

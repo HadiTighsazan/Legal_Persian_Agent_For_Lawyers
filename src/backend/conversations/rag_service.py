@@ -13,7 +13,9 @@ import re
 from typing import Any
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 
+from documents.models import Document
 from documents.services.embedding_service import embed_query
 from documents.services.search_service import search_chunks
 from providers.registry import get_chat_provider
@@ -51,23 +53,27 @@ def build_context(chunks: list[dict]) -> str:
     """
     max_chars = settings.RAG_CONTEXT_TOKEN_BUDGET * _CHARS_PER_TOKEN
     context_parts: list[str] = []
+    total_chars = 0
 
     for i, chunk in enumerate(chunks):
-        header = f"[Source {i + 1} | Pages {chunk['page_start']}-{chunk['page_end']}]"
-        part = f"{header}\n{chunk['content']}"
+        page_start = chunk.get("page_start", "?")
+        page_end = chunk.get("page_end", "?")
+        content = chunk.get("content", "")
+        header = f"[Source {i + 1} | Pages {page_start}-{page_end}]"
+        part = f"{header}\n{content}"
 
         # If adding this part would exceed the budget, stop.
-        current_len = sum(len(p) for p in context_parts)
-        if current_len + len(part) > max_chars:
-            remaining = max_chars - current_len
+        if total_chars + len(part) > max_chars:
+            remaining = max_chars - total_chars
             if remaining > 0:
                 # Truncate the content portion to fit
-                truncated_content = chunk['content'][:remaining - len(header) - 1]
+                truncated_content = content[:remaining - len(header) - 1]
                 if truncated_content:
                     context_parts.append(f"{header}\n{truncated_content}")
             break
 
         context_parts.append(part)
+        total_chars += len(part)
 
     return "\n\n".join(context_parts)
 
@@ -232,7 +238,7 @@ def run_rag_query(
         provider = get_chat_provider()
         result = provider.chat(
             messages=messages,
-            max_tokens=settings.OPENAI_CHAT_MAX_TOKENS,
+            max_tokens=settings.CHAT_MAX_TOKENS,
         )
         response_content = result["content"]
         token_usage = result["token_usage"]
@@ -265,9 +271,8 @@ def _get_document_title(document_id: str) -> str:
         The document title, or "Unknown Document" if not found.
     """
     try:
-        from documents.models import Document
         return str(Document.objects.values_list("title", flat=True).get(id=document_id))
-    except Exception:
+    except (Document.DoesNotExist, ValidationError):
         logger.warning(
             "run_rag_query: Document %s not found, using fallback title",
             document_id,
