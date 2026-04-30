@@ -280,7 +280,7 @@ S3_REGION = env('S3_REGION', default='us-east-1')
 
 # File upload settings
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB
-ALLOWED_FILE_TYPES = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain']
+ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.txt']
 
 # Logging
 # Ensure logs directory exists

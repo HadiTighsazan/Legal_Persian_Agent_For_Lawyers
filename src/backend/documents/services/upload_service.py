@@ -138,6 +138,15 @@ def upload_document(
         logger.exception(
             "Failed to create database record for '%s'", unique_filename
         )
+        # Clean up the orphaned file from storage
+        try:
+            storage.delete_file(file_path)
+            logger.info("Cleaned up orphaned file: %s", file_path)
+        except Exception as cleanup_exc:
+            logger.error(
+                "Failed to clean up orphaned file '%s': %s",
+                file_path, cleanup_exc,
+            )
         raise RuntimeError(
             f"Document file was saved but the database record could not be "
             f"created: {exc}"

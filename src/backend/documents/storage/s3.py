@@ -2,6 +2,7 @@
 S3 storage backend implementation using boto3.
 """
 
+import io
 import logging
 from typing import BinaryIO, Optional
 
@@ -123,7 +124,9 @@ class S3StorageBackend(StorageBackend):
                 Bucket=self._bucket_name,
                 Key=storage_path,
             )
-            return response["Body"]
+            # Wrap in BytesIO to match LocalStorageBackend contract
+            # and ensure seekability for PyMuPDF and other consumers.
+            return io.BytesIO(response["Body"].read())
         except ClientError as exc:
             error_code = exc.response.get("Error", {}).get("Code", "")
             if error_code == "NoSuchKey":
