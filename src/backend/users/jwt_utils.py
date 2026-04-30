@@ -99,7 +99,7 @@ def verify_access_token(token: str) -> Optional[Dict[str, Any]]:
         Optional[Dict]: Decoded token payload if valid, None otherwise
     
     Note:
-        Returns None for invalid, expired, or blacklisted tokens
+        Returns None for invalid, expired, or malformed tokens
     """
     if not token or not isinstance(token, str):
         return None
@@ -107,10 +107,6 @@ def verify_access_token(token: str) -> Optional[Dict[str, Any]]:
     try:
         # Decode and verify token
         access_token = AccessToken(token)
-        
-        # Check if token is blacklisted
-        if is_token_blacklisted(access_token):
-            return None
         
         # Get payload
         payload = access_token.payload
@@ -139,7 +135,7 @@ def verify_refresh_token(token: str) -> Optional[Dict[str, Any]]:
         Optional[Dict]: Decoded token payload if valid, None otherwise
     
     Note:
-        Returns None for invalid, expired, or blacklisted tokens
+        Returns None for invalid, expired, or malformed tokens
     """
     if not token or not isinstance(token, str):
         return None
@@ -147,10 +143,6 @@ def verify_refresh_token(token: str) -> Optional[Dict[str, Any]]:
     try:
         # Decode and verify token
         refresh_token = RefreshToken(token)
-        
-        # Check if token is blacklisted
-        if is_token_blacklisted(refresh_token):
-            return None
         
         # Get payload
         payload = refresh_token.payload
@@ -171,42 +163,6 @@ def verify_refresh_token(token: str) -> Optional[Dict[str, Any]]:
         
     except (TokenError, InvalidToken, KeyError, ValueError):
         # Token is invalid, expired, or malformed
-        return None
-
-
-def is_token_blacklisted(token) -> bool:
-    """
-    Check if a token is blacklisted.
-    
-    DEPRECATED: Token revocation is now handled via the RefreshToken database model.
-    This function always returns False as blacklisting is managed through our
-    custom RefreshToken model with database-level revocation.
-    
-    Args:
-        token: AccessToken or RefreshToken object
-    
-    Returns:
-        bool: Always False (revocation handled via RefreshToken model)
-    """
-    return False
-
-
-def get_token_payload(token: str, token_type: str = 'access') -> Optional[Dict[str, Any]]:
-    """
-    Generic function to get token payload based on type.
-    
-    Args:
-        token: JWT token string
-        token_type: Type of token ('access' or 'refresh')
-    
-    Returns:
-        Optional[Dict]: Decoded token payload if valid, None otherwise
-    """
-    if token_type == 'access':
-        return verify_access_token(token)
-    elif token_type == 'refresh':
-        return verify_refresh_token(token)
-    else:
         return None
 
 

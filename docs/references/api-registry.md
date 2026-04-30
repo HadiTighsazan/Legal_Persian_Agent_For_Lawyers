@@ -76,11 +76,11 @@
 
 **Implementation Notes:**
 - Uses `@authentication_classes([])` and `@permission_classes([AllowAny])` to allow unauthenticated access
-- Validates email format via Django's `validate_email`
-- Enforces minimum password length of 8 characters
+- Validates input via `RegisterSerializer` (email uniqueness, password strength via Django validators)
 - Creates user via `User.objects.create_user()`
 - Generates JWT access + refresh token pair on successful registration
 - Stores refresh token hash in `refresh_tokens` table
+- Returns user data via `UserSerializer`
 
 ---
 
@@ -117,9 +117,11 @@
 
 **Implementation Notes:**
 - Uses `@authentication_classes([])` and `@permission_classes([AllowAny])` to allow unauthenticated access
+- Validates input via `LoginSerializer`
 - Authenticates via email + password using `user.verify_password()`
 - Generates new JWT access + refresh token pair on successful login
 - Stores refresh token hash in `refresh_tokens` table
+- Returns user data via `UserSerializer`
 
 ---
 
@@ -218,6 +220,7 @@ curl -X GET http://localhost:8000/users/me/
 **Implementation Notes:**
 - Uses Django REST Framework's `IsAuthenticated` permission class
 - Authentication is handled by DRF's `JWTAuthentication` (custom `JWTAuthenticationMiddleware` has been removed)
+- Returns user data via `UserSerializer` (read-only ModelSerializer)
 - Returns ISO 8601 formatted timestamps
 - Follows consistent error response format
 - Note: `stats` field is not yet implemented (planned for future enhancement)
@@ -258,6 +261,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 - Only provided fields are updated (partial update)
 - `updated_at` is automatically updated via model's `auto_now=True`
 - Uses `ProfileUpdateSerializer` for validation
+- Returns user data via `UserSerializer`
 
 ---
 

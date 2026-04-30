@@ -96,8 +96,6 @@ class RefreshTokenManager(models.Manager):
         Returns:
             QuerySet: QuerySet of valid refresh tokens
         """
-        from django.utils import timezone
-        
         # Get tokens that are not expired and belong to active user
         return self.filter(
             user=user,
@@ -112,8 +110,6 @@ class RefreshTokenManager(models.Manager):
         Returns:
             int: Number of tokens deleted
         """
-        from django.utils import timezone
-        
         # Get all expired tokens
         expired_tokens = self.filter(expires_at__lte=timezone.now())
         
@@ -259,7 +255,6 @@ class RefreshToken(models.Model):
     
     def is_expired(self):
         """Check if the refresh token has expired."""
-        from django.utils import timezone
         return timezone.now() >= self.expires_at
     
     def is_valid(self):
@@ -269,8 +264,6 @@ class RefreshToken(models.Model):
         Returns:
             bool: True if token is valid (not expired and user is active), False otherwise
         """
-        from django.utils import timezone
-        
         # Check if token is expired
         if self.is_expired():
             return False
@@ -288,7 +281,6 @@ class RefreshToken(models.Model):
         Returns:
             datetime.timedelta: Time remaining until expiration
         """
-        from django.utils import timezone
         from datetime import timedelta
         
         now = timezone.now()

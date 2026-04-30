@@ -4,8 +4,8 @@ Authentication views for the DocuChat system.
 This module contains API endpoints for user authentication including
 registration, login, token refresh, and logout.
 """
+import logging
 import uuid
-from datetime import timedelta
 from typing import Dict, Any
 
 from django.conf import settings
@@ -25,7 +25,14 @@ from users.jwt_utils import (
     create_tokens_for_user,
     get_token_hash,
 )
-from users.serializers import ProfileUpdateSerializer
+from users.serializers import (
+    LoginSerializer,
+    ProfileUpdateSerializer,
+    RegisterSerializer,
+    UserSerializer,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['POST'])
@@ -62,84 +69,59 @@ def register_view(request: Request) -> Response:
     - 409 Conflict: Email already exists
     """
     try:
-        data = request.data
-        
-        # Validate required fields
-        email = data.get('email')
-        password = data.get('password')
-        
-        if not email:
+        # Validate input using RegisterSerializer
+        serializer = RegisterSerializer(data=request.data)
+        if not serializer.is_valid():
+            errors = serializer.errors
+            # Check for email conflict specifically
+            if 'email' in errors and any(
+                'already exists' in str(err).lower()
+                for err in errors['email']
+            ):
+                return Response(
+                    {"error": "Email already exists"},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            # Return first error for other validation failures
+            first_field = list(errors.keys())[0]
+            first_error = errors[first_field][0]
             return Response(
-                {"error": "Email is required"},
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": str(first_error)},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-            
-        if not password:
-            return Response(
-                {"error": "Password is required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Validate email format
-        from django.core.validators import validate_email
-        from django.core.exceptions import ValidationError
-        
-        try:
-            validate_email(email)
-        except ValidationError:
-            return Response(
-                {"error": "Invalid email format"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Validate password strength (min 8 chars)
-        if len(password) < 8:
-            return Response(
-                {"error": "Password must be at least 8 characters long"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check if email already exists
-        if User.objects.filter(email=email).exists():
-            return Response(
-                {"error": "Email already exists"},
-                status=status.HTTP_409_CONFLICT
-            )
-        
+
+        validated_data = serializer.validated_data
+        email = validated_data['email']
+        password = validated_data['password']
+        full_name = validated_data.get('full_name') or ''
+
         # Create user
-        full_name = data.get('full_name', '')
         user = User.objects.create_user(
             email=email,
             password=password,
             full_name=full_name
         )
-        
+
         # Generate token ID for refresh token
         token_id = uuid.uuid4()
-        
+
         # Generate tokens
         tokens = create_tokens_for_user(user, token_id)
-        
+
         # Store refresh token hash in database
         token_hash = get_token_hash(tokens['refresh_token'])
         refresh_lifetime = settings.SIMPLE_JWT['REFRESH_TOKEN_LIFETIME']
         expires_at = timezone.now() + refresh_lifetime
-        
+
         RefreshToken.objects.create_refresh_token(
             user=user,
             token_hash=token_hash,
             expires_at=expires_at
         )
-        
-        # Prepare response
-        user_data = {
-            'id': str(user.id),
-            'email': user.email,
-            'full_name': user.full_name,
-            'created_at': user.created_at.isoformat() if user.created_at else None,
-            'is_active': user.is_active
-        }
-        
+
+        # Prepare response using UserSerializer
+        user_data = UserSerializer(user).data
+
         return Response(
             {
                 'user': user_data,
@@ -148,13 +130,10 @@ def register_view(request: Request) -> Response:
             },
             status=status.HTTP_201_CREATED
         )
-        
+
     except Exception as e:
-        # Log the error for debugging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Registration error: {str(e)}")
-        
+        logger.exception("Registration error")
+
         return Response(
             {"error": "Internal server error"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -198,40 +177,26 @@ def login_view(request: Request) -> Response:
         # Handle JSON parsing errors
         try:
             data = request.data
-        except Exception as json_error:
+        except Exception:
             return Response(
                 {"error": "Invalid JSON format"},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # Validate required fields
-        email = data.get('email')
-        password = data.get('password')
-        
-        if not email:
+
+        # Validate input using LoginSerializer
+        serializer = LoginSerializer(data=data)
+        if not serializer.is_valid():
+            first_field = list(serializer.errors.keys())[0]
+            first_error = serializer.errors[first_field][0]
             return Response(
-                {"error": "Email is required"},
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": str(first_error)},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-            
-        if not password:
-            return Response(
-                {"error": "Password is required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Validate email format
-        from django.core.validators import validate_email
-        from django.core.exceptions import ValidationError
-        
-        try:
-            validate_email(email)
-        except ValidationError:
-            return Response(
-                {"error": "Invalid email format"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
+
+        validated_data = serializer.validated_data
+        email = validated_data['email']
+        password = validated_data['password']
+
         # Find user by email
         try:
             user = User.objects.get(email=email)
@@ -240,47 +205,41 @@ def login_view(request: Request) -> Response:
                 {"error": "Invalid credentials"},
                 status=status.HTTP_401_UNAUTHORIZED
             )
-        
+
         # Check if user is active
         if not user.is_active:
             return Response(
                 {"error": "Account is inactive"},
                 status=status.HTTP_401_UNAUTHORIZED
             )
-        
+
         # Verify password
         if not user.verify_password(password):
             return Response(
                 {"error": "Invalid credentials"},
                 status=status.HTTP_401_UNAUTHORIZED
             )
-        
+
         # Generate token ID for refresh token
         token_id = uuid.uuid4()
-        
+
         # Generate tokens
         tokens = create_tokens_for_user(user, token_id)
-        
+
         # Store refresh token hash in database
         token_hash = get_token_hash(tokens['refresh_token'])
         refresh_lifetime = settings.SIMPLE_JWT['REFRESH_TOKEN_LIFETIME']
         expires_at = timezone.now() + refresh_lifetime
-        
+
         RefreshToken.objects.create_refresh_token(
             user=user,
             token_hash=token_hash,
             expires_at=expires_at
         )
-        
-        # Prepare response
-        user_data = {
-            'id': str(user.id),
-            'email': user.email,
-            'full_name': user.full_name,
-            'created_at': user.created_at.isoformat() if user.created_at else None,
-            'is_active': user.is_active
-        }
-        
+
+        # Prepare response using UserSerializer
+        user_data = UserSerializer(user).data
+
         return Response(
             {
                 'user': user_data,
@@ -289,13 +248,10 @@ def login_view(request: Request) -> Response:
             },
             status=status.HTTP_200_OK
         )
-        
+
     except Exception as e:
-        # Log the error for debugging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Login error: {str(e)}")
-        
+        logger.exception("Login error")
+
         return Response(
             {"error": "Internal server error"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -345,18 +301,8 @@ def profile_view(request: Request) -> Response:
     user = request.user
     
     if request.method == 'GET':
-        # Prepare user data
-        user_data = {
-            'id': str(user.id),
-            'email': user.email,
-            'full_name': user.full_name,
-            'is_active': user.is_active,
-            'created_at': user.created_at.isoformat() if user.created_at else None,
-            'updated_at': user.updated_at.isoformat() if user.updated_at else None,
-        }
-        
-        return Response(user_data, status=status.HTTP_200_OK)
-    
+        return Response(UserSerializer(user).data, status=status.HTTP_200_OK)
+
     elif request.method == 'PATCH':
         # Validate request data using DRF serializer
         serializer = ProfileUpdateSerializer(
@@ -364,13 +310,13 @@ def profile_view(request: Request) -> Response:
             context={'user': user},
             partial=True,
         )
-        
+
         if not serializer.is_valid():
             # Extract the first error message
             errors = serializer.errors
             first_field = list(errors.keys())[0]
             first_error = errors[first_field][0]
-            
+
             # Determine appropriate HTTP status code
             error_msg = str(first_error)
             if 'already exists' in error_msg.lower():
@@ -383,29 +329,19 @@ def profile_view(request: Request) -> Response:
                     {'error': error_msg},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-        
+
         # Apply validated updates
         validated_data = serializer.validated_data
-        
+
         if 'full_name' in validated_data:
             user.full_name = validated_data['full_name']
-        
+
         if 'email' in validated_data:
             user.email = validated_data['email']
-        
+
         user.save()
-        
-        # Prepare response data
-        user_data = {
-            'id': str(user.id),
-            'email': user.email,
-            'full_name': user.full_name,
-            'is_active': user.is_active,
-            'created_at': user.created_at.isoformat() if user.created_at else None,
-            'updated_at': user.updated_at.isoformat() if user.updated_at else None,
-        }
-        
-        return Response(user_data, status=status.HTTP_200_OK)
+
+        return Response(UserSerializer(user).data, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
@@ -530,11 +466,8 @@ def refresh_view(request: Request) -> Response:
             )
         
     except Exception as e:
-        # Log the error for debugging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Token refresh error: {str(e)}")
-        
+        logger.exception("Token refresh error")
+
         return Response(
             {"error": "Internal server error"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -600,11 +533,8 @@ def logout_view(request: Request) -> Response:
             )
         
     except Exception as e:
-        # Log the error for debugging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Logout error: {str(e)}")
-        
+        logger.exception("Logout error")
+
         return Response(
             {"error": "Internal server error"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR

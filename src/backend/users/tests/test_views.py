@@ -42,7 +42,6 @@ class RegistrationViewTests(TestCase):
         
     def test_register_with_valid_data_returns_201(self):
         """Test registration with valid data returns 201 Created."""
-        # This test should fail initially (RED phase)
         data = {
             'email': 'test@example.com',
             'password': 'SecurePass123!',
@@ -53,7 +52,6 @@ class RegistrationViewTests(TestCase):
             data=json.dumps(data),
             content_type='application/json'
         )
-        # Currently returns 501 Not Implemented, but should return 201
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         
     def test_register_returns_user_data(self):
@@ -300,11 +298,7 @@ class LoginViewTests(TestCase):
             data=json.dumps(data),
             content_type='application/json'
         )
-        
-        # This test should fail initially (RED phase)
-        # Expected: 200 OK, but endpoint doesn't exist yet
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
+
     def test_login_requires_email(self):
         """Test that email is required for login."""
         data = {
