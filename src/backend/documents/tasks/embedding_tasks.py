@@ -110,22 +110,12 @@ def embed_document(self, document_id: str, task_id: str) -> None:
             embedded=processed_count,
         )
 
-    except EmbeddingBatchError as e:
-        # Partial failure — mark as failed but log partial results
-        error_message = f"Embedding failed after partial progress: {e}"
-        logger.exception(
-            "embed_document: %s (document=%s, task=%s)",
-            error_message,
-            document_id,
-            task_id,
-        )
-        processing_task.status = "failed"
-        processing_task.error_message = error_message
-        processing_task.completed_at = timezone.now()
-        processing_task.save(update_fields=["status", "error_message", "completed_at"])
-
     except Exception as e:
-        error_message = f"Embedding failed: {e}"
+        if isinstance(e, EmbeddingBatchError):
+            error_message = f"Embedding failed after partial progress: {e}"
+        else:
+            error_message = f"Embedding failed: {e}"
+        
         logger.exception(
             "embed_document: %s (document=%s, task=%s)",
             error_message,

@@ -2,6 +2,7 @@
 Local filesystem storage backend implementation.
 """
 
+import io
 import logging
 import os
 import shutil
@@ -57,6 +58,45 @@ class LocalStorageBackend(StorageBackend):
             )
 
         return resolved
+
+    def open(self, storage_path: str) -> BinaryIO:
+        """
+        Open a stored file for reading.
+
+        If *storage_path* is an absolute path, it is used directly.
+        Otherwise, it is resolved relative to the storage root.
+
+        Returns an in-memory ``BytesIO`` buffer so the returned stream is
+        seekable and compatible with libraries (e.g. PyMuPDF) that expect
+        a full ``BytesIO``-like object.
+
+        Args:
+            storage_path: The storage path returned by save_file(), or an
+                          absolute filesystem path.
+
+        Returns:
+            A ``BytesIO`` buffer containing the file contents.
+
+        Raises:
+            StorageError: If the file cannot be opened or does not exist.
+        """
+        if os.path.isabs(storage_path):
+            resolved = Path(storage_path)
+        else:
+            resolved = self._resolve_path(storage_path)
+
+        if not resolved.exists():
+            raise StorageError(
+                f"File not found at '{resolved}'"
+            )
+
+        try:
+            with open(resolved, "rb") as f:
+                return io.BytesIO(f.read())
+        except OSError as exc:
+            raise StorageError(
+                f"Failed to open file '{resolved}': {exc}"
+            ) from exc
 
     def save_file(self, uploaded_file: BinaryIO, relative_path: str) -> str:
         """

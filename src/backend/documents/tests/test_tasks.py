@@ -459,16 +459,17 @@ class ChunkDocumentTests(TestCase):
         self._run_task("")
 
         self.document.refresh_from_db()
-        # Bug #2: processing_status must remain "failed", not be overwritten to "completed".
+        # processing_status must remain "failed", not be overwritten to "completed".
         self.assertEqual(self.document.processing_status, "failed")
         self.assertEqual(self.document.processing_error, "PDF file is corrupted or unreadable")
 
-        # The chunk ProcessingTask should still be marked completed (it handled empty text).
-        chunk_task = ProcessingTask.objects.get(
+        # No chunk ProcessingTask should be created — we skip entirely when
+        # the document is already in a failed state.
+        chunk_task_exists = ProcessingTask.objects.filter(
             document=self.document,
             task_type="chunk",
-        )
-        self.assertEqual(chunk_task.status, "completed")
+        ).exists()
+        self.assertFalse(chunk_task_exists)
 
     def test_does_not_overwrite_failed_status_on_successful_chunking(self) -> None:
         """If document is already 'failed', chunk_document must not overwrite even on success."""
@@ -480,9 +481,16 @@ class ChunkDocumentTests(TestCase):
         self._run_task("[PAGE 1]\nSome text here.")
 
         self.document.refresh_from_db()
-        # Must remain "failed" — the chunk task succeeded but the overall pipeline failed.
+        # Must remain "failed" — we skip entirely when the document is already failed.
         self.assertEqual(self.document.processing_status, "failed")
         self.assertEqual(self.document.processing_error, "Previous error")
+
+        # No chunk ProcessingTask should be created.
+        chunk_task_exists = ProcessingTask.objects.filter(
+            document=self.document,
+            task_type="chunk",
+        ).exists()
+        self.assertFalse(chunk_task_exists)
 
     # -- Test Gap #1: extract-success + chunk-failure scenario (Bug #1) --
 

@@ -35,6 +35,22 @@ class StorageBackend(ABC):
         ...
 
     @abstractmethod
+    def open(self, storage_path: str) -> BinaryIO:
+        """
+        Open a stored file for reading.
+
+        Args:
+            storage_path: The storage path returned by save_file().
+
+        Returns:
+            A binary file-like object containing the file contents.
+
+        Raises:
+            StorageError: If the file cannot be opened or does not exist.
+        """
+        ...
+
+    @abstractmethod
     def get_file_url(self, storage_path: str) -> str:
         """
         Get the URL or local filesystem path for retrieving a stored file.

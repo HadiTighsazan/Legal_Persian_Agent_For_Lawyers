@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import traceback
-import os
 
 from celery import chain, shared_task
 from django.db import transaction, IntegrityError, OperationalError
@@ -34,14 +33,12 @@ import fitz  # PyMuPDF
 from documents.models import Document, DocumentChunk
 from documents.services.chunking_service import ChunkingService
 from documents.services.error_handler import (
-    _has_pdf_magic_bytes,
     classify_pdf_error,
     fail_processing_task,
     log_milestone,
 )
 from documents.storage import get_storage_backend
 from tasks.models import ProcessingTask
-from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -119,28 +116,26 @@ def extract_text_from_pdf(self, document_id: str) -> str:
     document.save(update_fields=["processing_status"])
 
     try:
-        # Resolve the PDF path using the storage backend.
-        # For local storage, file_path is already an absolute path.
-        # For S3 storage, we'd need to download the file first.
-        if os.path.isabs(document.file_path):
-            pdf_path = document.file_path
-        else:
-            pdf_path = os.path.join(settings.MEDIA_ROOT, document.file_path)
-
+        # Resolve the PDF content using the storage backend.
+        storage = get_storage_backend()
+        pdf_content = storage.open(document.file_path)
+        
         # Check PDF magic bytes before attempting to open.
-        if not _has_pdf_magic_bytes(pdf_path):
+        header = pdf_content.read(4)
+        pdf_content.seek(0)
+        if header != b"%PDF":
             fail_processing_task(
                 processing_task, document, "File is not a valid PDF", logger,
             )
             return ""
 
-        pdf_document = fitz.open(pdf_path)
+        pdf_document = fitz.open(stream=pdf_content, filetype="pdf")
     except fitz.FileDataError as e:
-        error_msg = classify_pdf_error(e, pdf_path)
+        error_msg = classify_pdf_error(e, document.file_path)
         fail_processing_task(processing_task, document, error_msg, logger)
         return ""
     except Exception as e:
-        error_msg = classify_pdf_error(e, pdf_path)
+        error_msg = classify_pdf_error(e, document.file_path)
         fail_processing_task(processing_task, document, error_msg, logger)
         return ""
 
@@ -227,6 +222,14 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         logger.error("chunk_document: Document %s not found", document_id)
         return
 
+    # If the document is already in a terminal failed state, skip entirely.
+    if document.processing_status == "failed":
+        logger.info(
+            "chunk_document: Document %s is already failed — skipping chunking",
+            document_id,
+        )
+        return
+
     # Create a new ProcessingTask for the chunk step.
     chunk_task = ProcessingTask.objects.create(
         document=document,
@@ -240,15 +243,8 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
     if not extracted_text or not extracted_text.strip():
         logger.info("chunk_document: Document %s has no extracted text — skipping chunking", document_id)
         document.total_chunks = 0
-
-        # Bug #2 fix: Don't overwrite processing_status if extraction already failed.
-        # If the document is already in a "failed" state (e.g., corrupted PDF),
-        # preserve that status rather than overwriting it to "completed".
-        if document.processing_status != "failed":
-            document.processing_status = "completed"
-            document.save(update_fields=["total_chunks", "processing_status"])
-        else:
-            document.save(update_fields=["total_chunks"])
+        document.processing_status = "completed"
+        document.save(update_fields=["total_chunks", "processing_status"])
 
         chunk_task.status = "completed"
         chunk_task.completed_at = timezone.now()
@@ -290,13 +286,8 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
 
         # Update document metadata.
         document.total_chunks = len(chunks_to_create)
-
-        # Bug #2 fix: Don't overwrite processing_status if extraction already failed.
-        if document.processing_status != "failed":
-            document.processing_status = "completed"
-            document.save(update_fields=["total_chunks", "processing_status"])
-        else:
-            document.save(update_fields=["total_chunks"])
+        document.processing_status = "completed"
+        document.save(update_fields=["total_chunks", "processing_status"])
 
         # Mark the chunk ProcessingTask as completed.
         chunk_task.status = "completed"

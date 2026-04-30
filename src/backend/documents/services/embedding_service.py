@@ -125,11 +125,15 @@ def _process_chunk_batch(
         texts = [chunk.content for chunk in batch]
         embeddings = batch_generate_embeddings(texts)
 
+        updated_chunks = []
         for chunk, embedding in zip(batch, embeddings):
             if embedding is not None:
                 chunk.embedding = embedding
-                chunk.save(update_fields=["embedding"])
+                updated_chunks.append(chunk)
                 processed += 1
+
+        if updated_chunks:
+            DocumentChunk.objects.bulk_update(updated_chunks, ["embedding"])
 
         if progress_callback:
             progress_callback(processed)

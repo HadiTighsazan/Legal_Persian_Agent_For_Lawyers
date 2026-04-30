@@ -103,6 +103,39 @@ class S3StorageBackend(StorageBackend):
                 f"s3://{self._bucket_name}/{storage_path}: {exc}"
             ) from exc
 
+    def open(self, storage_path: str) -> BinaryIO:
+        """
+        Open a stored file from S3 for reading.
+
+        Downloads the file content into an in-memory ``BytesIO`` buffer.
+
+        Args:
+            storage_path: The S3 object key returned by save_file().
+
+        Returns:
+            A ``BytesIO`` buffer containing the file contents.
+
+        Raises:
+            StorageError: If the file cannot be retrieved from S3.
+        """
+        try:
+            response = self._client.get_object(
+                Bucket=self._bucket_name,
+                Key=storage_path,
+            )
+            return response["Body"]
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code", "")
+            if error_code == "NoSuchKey":
+                raise StorageError(
+                    f"File not found in S3: s3://{self._bucket_name}/{storage_path}"
+                ) from exc
+            raise StorageError(
+                f"Failed to open file from S3 "
+                f"(bucket='{self._bucket_name}', "
+                f"key='{storage_path}'): {exc}"
+            ) from exc
+
     def delete_file(self, storage_path: str) -> bool:
         """
         Delete a file from the S3 bucket.
