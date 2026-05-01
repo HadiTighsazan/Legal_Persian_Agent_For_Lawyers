@@ -26,7 +26,7 @@ const navItems: NavItem[] = [
     label: 'Documents',
     icon: <FileText className="h-5 w-5" />,
     href: '/documents',
-    disabled: true,
+    // disabled: true,  // removed — Documents nav is now active
   },
   {
     label: 'Conversations',
@@ -84,7 +84,10 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         {/* Navigation */}
         <nav className="flex-1 space-y-1 px-3 py-4">
           {navItems.map((item) => {
-            const isActive = location.pathname === item.href;
+            const isActive =
+              item.href === '/documents'
+                ? location.pathname.startsWith('/documents')
+                : location.pathname === item.href;
 
             return (
               <button

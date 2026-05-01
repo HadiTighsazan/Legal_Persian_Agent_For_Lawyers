@@ -3,6 +3,9 @@ import PrivateRoute from '@/components/auth/PrivateRoute';
 import PublicRoute from '@/components/auth/PublicRoute';
 import AppShell from '@/components/layout/AppShell';
 import DashboardPage from '@/pages/DashboardPage';
+import DocumentListPage from '@/pages/DocumentListPage';
+import UploadPage from '@/pages/UploadPage';
+import DocumentDetailPage from '@/pages/DocumentDetailPage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
 
@@ -25,6 +28,9 @@ const router = createBrowserRouter([
         element: <AppShell />,
         children: [
           { path: '/dashboard', element: <DashboardPage /> },
+          { path: '/documents', element: <DocumentListPage /> },
+          { path: '/documents/upload', element: <UploadPage /> },
+          { path: '/documents/:documentId', element: <DocumentDetailPage /> },
         ],
       },
     ],
