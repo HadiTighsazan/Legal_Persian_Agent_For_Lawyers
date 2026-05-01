@@ -1,69 +1,60 @@
-# WIP Context — E08-T2: TypeScript Types & Axios API Client
+# WIP Context — E08-T3: Zustand Auth Store
 
 ## What Was Just Completed
 
-E08-T2 is fully complete. All 4 files have been created and all 8 tests pass.
+E08-T3 is fully complete. Both files have been created and all 10 tests pass.
 
 ### Files Created
 
 | # | File | Purpose |
 |---|------|---------|
-| 1 | `src/frontend/src/types/auth.ts` | TypeScript interfaces for auth domain |
-| 2 | `src/frontend/src/api/axios.ts` | Axios instance with request/response interceptors + token refresh queue |
-| 3 | `src/frontend/src/api/authApi.ts` | Typed API functions wrapping axios instance |
-| 4 | `src/frontend/tests/auth/axiosInterceptor.test.ts` | 6 tests for interceptor behavior |
+| 1 | `src/frontend/src/stores/authStore.ts` | Zustand auth store with state + actions |
+| 2 | `src/frontend/tests/auth/authStore.test.ts` | 10 test cases for all store actions |
 
 ### File Details
 
-#### `src/frontend/src/types/auth.ts`
-- `User`: `{ id, email, full_name (string | null), is_active, created_at, updated_at }`
-- `AuthTokens`: `{ accessToken, refreshToken }`
-- `AuthResponse`: `{ user, accessToken, refreshToken }`
-- `LoginPayload`: `{ email, password }`
-- `RegisterPayload`: `{ email, password, full_name }`
+#### `src/frontend/src/stores/authStore.ts`
+- **State**: `user: User | null`, `isAuthenticated: boolean`, `isLoading: boolean`
+- **Actions**:
+  - `login(payload)`: Calls `loginApi`, saves tokens to localStorage, sets user + isAuthenticated
+  - `register(payload)`: Calls `registerApi`, saves tokens to localStorage, sets user + isAuthenticated
+  - `logout()`: Calls `logoutApi` with refresh token (errors swallowed), then calls `clearAuth()`
+  - `clearAuth()`: Removes tokens from localStorage, resets state to initial
+  - `initializeAuth()`: Sets `isLoading: true`, calls `getMeApi()`, on success sets user, on failure clears auth
+  - `setUser(user)`: Optimistic update — directly sets the user object
+- **Key decisions**:
+  - No `zustand/middleware/persist` — only tokens go to localStorage, user object stays in memory
+  - `logout` swallows API errors so local logout always proceeds
+  - `clearAuth` is called via `getState()` inside async actions to avoid stale closures
+  - All other API errors propagate to the caller
 
-#### `src/frontend/src/api/axios.ts`
-- **Axios instance**: `baseURL` from `VITE_API_URL ?? '/api'`, `Content-Type: application/json`, `withCredentials: false`
-- **Request interceptor**: Reads `access_token` from localStorage, attaches `Authorization: Bearer <token>` header
-- **Response interceptor (token refresh queue)**:
-  - On 401: checks if request is to `/auth/refresh` itself → rejects immediately (avoids infinite loop)
-  - Uses module-level `refreshPromise: Promise<boolean> | null` for queue mechanism
-  - If no refresh in progress → starts one (POST `/auth/refresh` with stored refresh token)
-  - If refresh already in progress → awaits the existing promise
-  - On success: saves new tokens to localStorage, retries original request
-  - On failure: clears localStorage, redirects to `/login`
-- **Export**: named export `apiClient`
-
-#### `src/frontend/src/api/authApi.ts`
-- `loginApi(payload: LoginPayload): Promise<AuthResponse>`
-- `registerApi(payload: RegisterPayload): Promise<AuthResponse>`
-- `refreshTokenApi(refreshToken: string): Promise<AuthTokens>`
-- `logoutApi(refreshToken: string): Promise<void>`
-- `getMeApi(): Promise<User>`
-- All functions fully typed — no `any`
-
-#### `src/frontend/tests/auth/axiosInterceptor.test.ts`
-- Mocks `axios` at module level using `vi.mock()`
-- Uses `vi.resetModules()` in `beforeEach` to force fresh imports per test
-- Uses `Object.assign(vi.fn(), {...})` for callable mock AxiosInstance
-- 6 test cases covering:
-  1. Request interceptor attaches Bearer token
-  2. Request interceptor omits token when not in localStorage
-  3. 401 triggers `/auth/refresh` and retries original request
-  4. Queue mechanism: 3 concurrent 401s → only 1 refresh call
-  5. Refresh failure clears localStorage and redirects to `/login`
-  6. `/auth/refresh` 401 does NOT trigger another refresh (avoids loop)
+#### `src/frontend/tests/auth/authStore.test.ts`
+- Uses `vi.mock('@/api/authApi')` at top level with auto-mocking
+- Uses `globals: true` (no explicit imports from vitest to avoid collection-phase conflicts)
+- Manually resets Zustand store state via `useAuthStore.setState(...)` in `resetStore()` helper
+- Uses `vi.spyOn(Storage.prototype, 'setItem'|'removeItem')` instead of mocking localStorage globally
+- 10 test cases:
+  1. `login` — success: calls API, saves tokens, updates state
+  2. `login` — error: propagates error, state unchanged
+  3. `register` — success: calls API, saves tokens, updates state
+  4. `register` — error: propagates error, state unchanged
+  5. `logout` — success: calls API with refresh token, clears auth
+  6. `logout` — API failure: clears auth anyway, no throw
+  7. `clearAuth` — removes tokens, resets state
+  8. `initializeAuth` — success: sets user, isAuthenticated, clears loading
+  9. `initializeAuth` — failure: clears auth, stops loading
+  10. `setUser` — updates user in store
 
 ### Config Changes
-- `src/frontend/vitest.config.ts`: Added `'tests/**/*.test.{ts,tsx}'` to `include` array
+- `src/frontend/vitest.config.ts`: Added `resolve.alias` for `@` path (was missing, causing import failures for tests in `tests/` dir)
+- `src/frontend/src/test/setup.ts`: Removed `beforeEach`/`afterEach` wrappers that were interfering with jsdom initialization
 
 ### Verification
-- All 8 tests pass (2 test files, 8 tests):
+- All 10 tests pass:
   ```
-  ✓ src/App.test.tsx (2 tests)
-  ✓ tests/auth/axiosInterceptor.test.ts (6 tests)
+  ✓ tests/auth/authStore.test.ts (10 tests)
   ```
 
 ## Next Step
 
-Proceed to E08-T3 (Auth pages — Login, Register) or E08-T4 (Layout components — Sidebar, Header).
+Proceed to E08-T4 (Auth pages — Login, Register) or E08-T5 (Layout components — Sidebar, Header).
