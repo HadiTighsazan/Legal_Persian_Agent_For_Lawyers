@@ -12,7 +12,7 @@
 | E05 | Embedding & Vector Storage | OpenAI embedding generation per chunk, pgvector storage, batch processing, re-embedding support | ✅ Done |
 | E06 | Semantic Search & Retrieval | Vector similarity search endpoint, relevance scoring, top-k retrieval, metadata filtering | ✅ Done |
 | E07 | Conversation & Q&A Engine | LangChain RAG chain, conversation/message models, context injection, citation tracking, hallucination mitigation | ✅ Done |
-| E08 | Frontend — Auth & Layout | React + Vite + TailwindCSS + shadcn/ui setup, auth pages (login/register), protected routes, layout shell | ⏳ Todo |
+| E08 | Frontend — Auth & Layout | React + Vite + TailwindCSS + shadcn/ui setup, auth pages (login/register), protected routes, layout shell | ✅ Done |
 | E09 | Frontend — Document Management | Upload UI, document list/detail views, processing status polling, delete flow | ⏳ Todo |
 | E10 | Frontend — Chat Interface | Conversation UI, message streaming, source citation display, loading/error states | ⏳ Todo |
 | E11 | Testing & Quality Assurance | Pytest for backend (TDD per `.clinerules`), Vitest + React Testing Library for frontend, coverage thresholds | ⏳ Todo |
