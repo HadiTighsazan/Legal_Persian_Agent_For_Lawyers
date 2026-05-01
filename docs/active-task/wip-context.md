@@ -1,28 +1,31 @@
-# WIP Context — T05: Navigation Wiring & Route Registration
+# WIP Context — T01: Document Upload Page & Flow
 
 ## What was just completed
 
-Task T05 — Navigation Wiring & Route Registration has been fully implemented.
+### Fix: File path mismatch for UploadPage
 
-### Files Created
-- [`src/frontend/src/pages/DocumentListPage.tsx`](../../src/frontend/src/pages/DocumentListPage.tsx) — Placeholder component for `/documents`
-- [`src/frontend/src/pages/UploadPage.tsx`](../../src/frontend/src/pages/UploadPage.tsx) — Placeholder component for `/documents/upload`
-- [`src/frontend/src/pages/DocumentDetailPage.tsx`](../../src/frontend/src/pages/DocumentDetailPage.tsx) — Placeholder component for `/documents/:documentId`
+**Problem:** The implemented `UploadPage.tsx` was at `src/frontend/src/pages/UploadPage.tsx`, but the route was expected to resolve to `src/frontend/src/pages/documents/UploadPage.tsx`. The user saw an empty page.
 
-### Files Modified
-- [`src/frontend/src/App.tsx`](../../src/frontend/src/App.tsx) — Added imports for the 3 new page components and registered their routes under `PrivateRoute` > `AppShell`
-- [`src/frontend/src/components/layout/Sidebar.tsx`](../../src/frontend/src/components/layout/Sidebar.tsx) — Removed `disabled: true` from Documents nav item; changed active-state detection to `startsWith('/documents')` prefix match
+**Fix:**
+1. Created `src/frontend/src/pages/documents/` directory
+2. Created [`src/frontend/src/pages/documents/UploadPage.tsx`](src/frontend/src/pages/documents/UploadPage.tsx) with the full upload form implementation
+3. Updated [`src/frontend/src/App.tsx`](src/frontend/src/App.tsx:7) import from `@/pages/UploadPage` → `@/pages/documents/UploadPage`
+4. Deleted the redundant `src/frontend/src/pages/UploadPage.tsx`
 
-### Verification
-- `npx tsc --noEmit` passes with zero errors
+### Previous fix: 404 on `use-toast.ts`
+Separated the `useToast` hook (`.ts`, no JSX) from the `<Toaster>` component (`components/ui/toaster.tsx`, with JSX) following standard shadcn pattern.
 
 ## Current state of the code
-
-- All 3 document routes (`/documents`, `/documents/upload`, `/documents/:documentId`) are registered and accessible when authenticated
-- The "Documents" nav link in the sidebar is enabled and highlights on any `/documents/*` path
-- Placeholder pages render without crashing
-- Existing auth flow (PrivateRoute/PublicRoute) remains unchanged
+- All implementation steps complete
+- TypeScript compiles cleanly (`npx tsc --noEmit` passes)
+- `App.tsx` imports `UploadPage` from `@/pages/documents/UploadPage`
+- `main.tsx` imports `Toaster` from `@/components/ui/toaster`
+- `UploadPage.tsx` imports `useToast` from `@/hooks/use-toast`
 
 ## Next step
-
-Proceed with T01, T02, or T03 to replace the placeholder pages with full implementations.
+Manual browser testing at `/documents/upload` — the page should now render with:
+- Title input
+- DropZone (drag-and-drop PDF upload)
+- Upload button (disabled until file + title provided)
+- Progress bar during upload
+- Toast notifications on success/error

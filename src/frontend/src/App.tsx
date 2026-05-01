@@ -4,7 +4,7 @@ import PublicRoute from '@/components/auth/PublicRoute';
 import AppShell from '@/components/layout/AppShell';
 import DashboardPage from '@/pages/DashboardPage';
 import DocumentListPage from '@/pages/DocumentListPage';
-import UploadPage from '@/pages/UploadPage';
+import UploadPage from '@/pages/documents/UploadPage';
 import DocumentDetailPage from '@/pages/DocumentDetailPage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
