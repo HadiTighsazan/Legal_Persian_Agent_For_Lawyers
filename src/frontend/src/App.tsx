@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom'
 import PrivateRoute from '@/components/auth/PrivateRoute';
 import PublicRoute from '@/components/auth/PublicRoute';
 import DashboardPage from '@/pages/DashboardPage';
+import LoginPage from '@/pages/LoginPage';
 
 const router = createBrowserRouter([
   {
@@ -11,7 +12,7 @@ const router = createBrowserRouter([
   {
     element: <PublicRoute />,
     children: [
-      { path: '/login', element: <div>Login Page</div> },    // Placeholder — will be replaced by T5
+      { path: '/login', element: <LoginPage /> },
       { path: '/register', element: <div>Register Page</div> }, // Placeholder — will be replaced by T6
     ],
   },

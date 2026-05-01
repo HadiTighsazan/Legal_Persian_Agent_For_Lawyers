@@ -63,6 +63,11 @@ export const useAuthStore = create<AuthStore>((set) => ({
   },
 
   initializeAuth: async (): Promise<void> => {
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      set({ isLoading: false });
+      return;
+    }
     set({ isLoading: true });
     try {
       const user = await getMeApi();

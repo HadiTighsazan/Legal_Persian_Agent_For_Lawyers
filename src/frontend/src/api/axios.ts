@@ -29,12 +29,21 @@ apiClient.interceptors.request.use(
 // ── Token Refresh Queue ───────────────────────────────────────────────
 let refreshPromise: Promise<boolean> | null = null;
 
+const redirectToLogin = (): void => {
+  if (
+    !window.location.pathname.startsWith('/login') &&
+    !window.location.pathname.startsWith('/register')
+  ) {
+    window.location.href = '/login';
+  }
+};
+
 const refreshTokens = async (): Promise<boolean> => {
   const storedRefreshToken = localStorage.getItem('refresh_token');
   if (!storedRefreshToken) {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
-    window.location.href = '/login';
+    redirectToLogin();
     return false;
   }
 
@@ -50,7 +59,7 @@ const refreshTokens = async (): Promise<boolean> => {
   } catch {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
-    window.location.href = '/login';
+    redirectToLogin();
     return false;
   }
 };
