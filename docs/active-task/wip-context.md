@@ -1,51 +1,42 @@
-# WIP Context — E08-T5: Login Page (with infinite redirect fix)
+# WIP Context — E08-T6: Register Page (Complete)
 
 ## What Was Just Completed
 
-E08-T5 is fully complete. The login page at `/login` has been implemented with React Hook Form + Zod v4 validation, centered card layout, error handling, and a link to the registration page. Both TypeScript check (`npx tsc --noEmit`) and Vite build (`npx vite build`) pass with zero errors.
+E08-T6 is fully complete. The register page at `/register` has been implemented with React Hook Form + Zod v4 validation, centered card layout (same as LoginPage), password confirmation with `.refine()`, password strength hint, error handling for 409/400/network errors, and a link to the login page. Both TypeScript check (`npx tsc --noEmit`) and Vite build (`npx vite build`) pass with zero errors.
 
 ### Files Created
 
 | # | File | Purpose |
 |---|------|---------|
-| 1 | `src/frontend/src/pages/LoginPage.tsx` | Full login form with Zod validation, error handling, loading state, and centered card layout |
+| 1 | `src/frontend/src/pages/RegisterPage.tsx` | Full registration form with Zod validation, password confirmation, error handling, loading state, and centered card layout |
 
 ### Files Modified
 
 | # | File | Change |
 |---|------|--------|
-| 2 | `src/frontend/src/App.tsx` | Added `import LoginPage from '@/pages/LoginPage'` and replaced `<div>Login Page</div>` placeholder with `<LoginPage />` |
-| 3 | `src/frontend/src/stores/authStore.ts` | **Fix:** `initializeAuth()` now checks for `access_token` in localStorage before calling `getMeApi()`. If no token exists, it sets `isLoading: false` and returns early — prevents unnecessary 401 API call that triggered the refresh loop. |
-| 4 | `src/frontend/src/api/axios.ts` | **Fix:** Extracted `redirectToLogin()` helper that checks `window.location.pathname` before redirecting. Only performs hard redirect (`window.location.href = '/login'`) if the user is NOT already on `/login` or `/register`. Applied to both `refreshTokens` failure paths (no refresh token + refresh API failure). |
+| 2 | `src/frontend/src/App.tsx` | Added `import RegisterPage from '@/pages/RegisterPage'` and replaced `<div>Register Page</div>` placeholder with `<RegisterPage />` |
 
-### LoginPage Implementation Details
+### RegisterPage Implementation Details
 
-- **Zod Schema (`zod/v4`)**: Validates `email` (required + email format) and `password` (required only)
+- **Zod Schema (`zod/v4`)**: Validates `full_name` (required), `email` (required + email format), `password` (min 8 chars), `confirmPassword` (required). Uses `.refine()` at schema level to check `data.password === data.confirmPassword` with `path: ['confirmPassword']` so the error appears on the confirmPassword field.
 - **Form State**: `useForm` with `zodResolver`, default values as empty strings
-- **Submit Flow**: Calls `authStore.login(values)` → on success navigates to `/dashboard` with `replace: true`; on failure sets appropriate error message
+- **Submit Flow**: Calls `authStore.register({ full_name, email, password })` — `confirmPassword` is NOT sent to the API (enforced by TypeScript via `RegisterPayload` type)
 - **Error Handling (4 cases)**:
-  - **401** → `"Invalid email or password"`
-  - **400** → Shows `response.data.detail` or generic `"Invalid input. Please check your credentials."`
+  - **409 Conflict** → `"An account with this email already exists"`
+  - **400 Bad Request** → Shows `response.data.error` or generic `"Invalid input. Please check your information."`
   - **Network error** → `"Unable to connect to the server. Please check your connection."`
   - **Other** → `"An unexpected error occurred. Please try again."`
 - **Loading State**: `isSubmitting` disables all inputs and button; `Loader2` spinner appears inside the button
 - **Error Banner**: shadcn `Alert` with `variant="destructive"` and `AlertCircle` icon; cleared on each new submit
+- **Password Strength Hint**: `FormDescription` component below password field: "Must be at least 8 characters"
 - **Layout**: Centered card using `flex min-h-screen items-center justify-center` — standalone auth page, no AppShell
-- **Accessibility**: `autoComplete="email"` / `autoComplete="current-password"`, `disabled` on inputs during submission
-- **Register Link**: React Router `<Link to="/register">` styled as `text-primary hover:underline`
-
-### Infinite Redirect Loop Fix
-
-**Root cause:** `main.tsx` calls `initializeAuth()` on mount → `getMeApi()` fires with no token → 401 → Axios response interceptor catches it → refresh fails → `window.location.href = '/login'` → hard page reload → loop restarts.
-
-**Fix 1 — `authStore.ts`:** `initializeAuth()` now checks `localStorage.getItem('access_token')` first. If absent, it sets `isLoading: false` and returns immediately without making any API call.
-
-**Fix 2 — `axios.ts`:** Both hard redirects in `refreshTokens()` now go through `redirectToLogin()`, which guards against redirecting when already on `/login` or `/register`.
+- **Accessibility**: `autoComplete="name"` on full_name, `autoComplete="email"` on email, `autoComplete="new-password"` on both password fields, `disabled` on inputs during submission
+- **Login Link**: React Router `<Link to="/login">` styled as `text-primary hover:underline` — "Already have an account? Sign in"
 
 ### Updated Route Structure
 
 ```
-/login             → PublicRoute → LoginPage (replaced placeholder)
+/register          → PublicRoute → RegisterPage (replaced placeholder)
 ```
 
 ### Verification
@@ -55,4 +46,4 @@ E08-T5 is fully complete. The login page at `/login` has been implemented with R
 
 ## Next Step
 
-Proceed to E08-T6 (Register Page).
+Proceed to E08-T7 (App Shell Layout — Sidebar + Topbar).

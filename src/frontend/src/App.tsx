@@ -3,6 +3,7 @@ import PrivateRoute from '@/components/auth/PrivateRoute';
 import PublicRoute from '@/components/auth/PublicRoute';
 import DashboardPage from '@/pages/DashboardPage';
 import LoginPage from '@/pages/LoginPage';
+import RegisterPage from '@/pages/RegisterPage';
 
 const router = createBrowserRouter([
   {
@@ -13,7 +14,7 @@ const router = createBrowserRouter([
     element: <PublicRoute />,
     children: [
       { path: '/login', element: <LoginPage /> },
-      { path: '/register', element: <div>Register Page</div> }, // Placeholder — will be replaced by T6
+      { path: '/register', element: <RegisterPage /> },
     ],
   },
   {
