@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import PrivateRoute from '@/components/auth/PrivateRoute';
 import PublicRoute from '@/components/auth/PublicRoute';
+import AppShell from '@/components/layout/AppShell';
 import DashboardPage from '@/pages/DashboardPage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
@@ -21,7 +22,7 @@ const router = createBrowserRouter([
     element: <PrivateRoute />,
     children: [
       {
-        // element: <AppShell />,  // Will be added in T7
+        element: <AppShell />,
         children: [
           { path: '/dashboard', element: <DashboardPage /> },
         ],
