@@ -5,7 +5,7 @@ DO NOT search for files using `list_dir` or `search_files` unless absolutely nec
 - Database Schema: `docs/references/database-schema.md`
 - API Contracts: `docs/references/api-registry.md`
 - Source Code: `src/`
-- Frontend Tests: Place adjacent to the source files (e.g., Component.test.tsx)
+- Frontend Tests: Place inside src/frontend/tests/ (Do NOT place adjacent to components)
 - Backend Tests: Place inside the respective Django app's tests/ directory (e.g., app_name/tests/test_views.py)
 
 Never read the entire src/ directory or massive files unless specifically requested for the current micro-task.
@@ -14,7 +14,7 @@ Never read the entire src/ directory or massive files unless specifically reques
 - Frontend: React, Vite, TailwindCSS, shadcn/ui
 - Backend: Django, Django REST Framework, PostgreSQL, pgvector, Celery, Redis
 - AI & Document Processing: LangChain, PyMuPDF, OpenAI API
-- Testing: Vitest, React Testing Library, Pytest
+- Testing: Playwright (for Frontend E2E), Pytest (for Backend)
 - DevOps & Deployment: Docker, Nginx, Gunicorn
 
 # 3. Development Environment & Execution (CRITICAL)
@@ -35,7 +35,7 @@ Always follow these $3$ exact steps for every new feature or component:
 1. RED: Write a failing test first. Stop and verify.
 2. GREEN: Write the minimum code required to make the test pass.
 3. REFACTOR: Clean up the code without changing behavior.
-
+Note for Frontend: Do not follow strict TDD. Follow a "Visual First" approach. The user will verify the UI manually first, and only then should you write Playwright E2E tests to lock in the behavior.
 # 6. WIP & State Management (CRITICAL)
 - After completing ANY step or before stopping to ask the user for input, you MUST update `docs/active-task/wip-context.md`.
 - Overwrite the file with: 
