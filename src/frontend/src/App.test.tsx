@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
 
 // This is a placeholder test file that will be expanded in MT-10
 // when the frontend project structure is properly initialized

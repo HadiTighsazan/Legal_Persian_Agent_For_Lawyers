@@ -1,60 +1,47 @@
-# WIP Context — E08-T3: Zustand Auth Store
+# WIP Context — E08-T4: Route Structure & Auth Guards
 
 ## What Was Just Completed
 
-E08-T3 is fully complete. Both files have been created and all 10 tests pass.
+E08-T4 is fully complete. All 5 files have been created/modified and both TypeScript check (`npx tsc --noEmit`) and Vite build (`npx vite build`) pass with zero errors.
 
 ### Files Created
 
 | # | File | Purpose |
 |---|------|---------|
-| 1 | `src/frontend/src/stores/authStore.ts` | Zustand auth store with state + actions |
-| 2 | `src/frontend/tests/auth/authStore.test.ts` | 10 test cases for all store actions |
+| 1 | `src/frontend/src/components/auth/PrivateRoute.tsx` | Auth guard — shows spinner while loading, redirects to `/login` if unauthenticated, renders `<Outlet />` for children |
+| 2 | `src/frontend/src/components/auth/PublicRoute.tsx` | Reverse auth guard — shows spinner while loading, redirects to `/dashboard` if already authenticated, renders `<Outlet />` for children |
+| 3 | `src/frontend/src/pages/DashboardPage.tsx` | Placeholder dashboard page — renders `<h1>Dashboard</h1>` |
 
-### File Details
+### Files Modified
 
-#### `src/frontend/src/stores/authStore.ts`
-- **State**: `user: User | null`, `isAuthenticated: boolean`, `isLoading: boolean`
-- **Actions**:
-  - `login(payload)`: Calls `loginApi`, saves tokens to localStorage, sets user + isAuthenticated
-  - `register(payload)`: Calls `registerApi`, saves tokens to localStorage, sets user + isAuthenticated
-  - `logout()`: Calls `logoutApi` with refresh token (errors swallowed), then calls `clearAuth()`
-  - `clearAuth()`: Removes tokens from localStorage, resets state to initial
-  - `initializeAuth()`: Sets `isLoading: true`, calls `getMeApi()`, on success sets user, on failure clears auth
-  - `setUser(user)`: Optimistic update — directly sets the user object
-- **Key decisions**:
-  - No `zustand/middleware/persist` — only tokens go to localStorage, user object stays in memory
-  - `logout` swallows API errors so local logout always proceeds
-  - `clearAuth` is called via `getState()` inside async actions to avoid stale closures
-  - All other API errors propagate to the caller
+| # | File | Change |
+|---|------|--------|
+| 4 | `src/frontend/src/App.tsx` | Complete rewrite — replaced landing page with `createBrowserRouter` + `RouterProvider` route config |
+| 5 | `src/frontend/src/main.tsx` | Added `useAuthStore.getState().initializeAuth()` call before `ReactDOM.createRoot` to initialize auth on app mount |
+| 6 | `src/frontend/src/App.test.tsx` | Removed unused `render`/`screen` imports that caused TS error `TS6192` |
 
-#### `src/frontend/tests/auth/authStore.test.ts`
-- Uses `vi.mock('@/api/authApi')` at top level with auto-mocking
-- Uses `globals: true` (no explicit imports from vitest to avoid collection-phase conflicts)
-- Manually resets Zustand store state via `useAuthStore.setState(...)` in `resetStore()` helper
-- Uses `vi.spyOn(Storage.prototype, 'setItem'|'removeItem')` instead of mocking localStorage globally
-- 10 test cases:
-  1. `login` — success: calls API, saves tokens, updates state
-  2. `login` — error: propagates error, state unchanged
-  3. `register` — success: calls API, saves tokens, updates state
-  4. `register` — error: propagates error, state unchanged
-  5. `logout` — success: calls API with refresh token, clears auth
-  6. `logout` — API failure: clears auth anyway, no throw
-  7. `clearAuth` — removes tokens, resets state
-  8. `initializeAuth` — success: sets user, isAuthenticated, clears loading
-  9. `initializeAuth` — failure: clears auth, stops loading
-  10. `setUser` — updates user in store
+### Route Structure
 
-### Config Changes
-- `src/frontend/vitest.config.ts`: Added `resolve.alias` for `@` path (was missing, causing import failures for tests in `tests/` dir)
-- `src/frontend/src/test/setup.ts`: Removed `beforeEach`/`afterEach` wrappers that were interfering with jsdom initialization
+```
+/                  → Navigate to /dashboard
+/login             → PublicRoute → <div>Login Page</div> (placeholder)
+/register          → PublicRoute → <div>Register Page</div> (placeholder)
+/dashboard         → PrivateRoute → DashboardPage
+* (404)            → Navigate to /dashboard
+```
+
+### Key Implementation Details
+
+- **`PrivateRoute.tsx`**: Uses `useAuthStore` with selector functions (`s.isAuthenticated`, `s.isLoading`) for optimal re-render behavior. Shows full-screen centered `Loader2` spinner while auth is initializing. Uses `<Navigate to="/login" replace />` — `replace` prevents back-button from returning to the protected page.
+- **`PublicRoute.tsx`**: Same spinner pattern. Redirects already-authenticated users to `/dashboard` (prevents logged-in users from seeing login/register pages).
+- **`App.tsx`**: Uses `createBrowserRouter` (React Router v6/v7 compatible). `PublicRoute` and `PrivateRoute` use `<Outlet />` internally. `/login` and `/register` use placeholder `<div>` elements (to be replaced by T5/T6). `AppShell` wrapper is commented out (to be added in T7).
+- **`main.tsx`**: `initializeAuth()` is called **before** `ReactDOM.createRoot` — starts auth initialization immediately, preventing flash of unauthenticated content on page refresh.
 
 ### Verification
-- All 10 tests pass:
-  ```
-  ✓ tests/auth/authStore.test.ts (10 tests)
-  ```
+
+- `npx tsc --noEmit` — zero errors
+- `npx vite build` — builds successfully (dist/ directory created)
 
 ## Next Step
 
-Proceed to E08-T4 (Auth pages — Login, Register) or E08-T5 (Layout components — Sidebar, Header).
+Proceed to E08-T5 (Login Page) or E08-T6 (Register Page).
