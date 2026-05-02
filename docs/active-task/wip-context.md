@@ -2,30 +2,35 @@
 
 ## What was just completed
 
-### Fix: File path mismatch for UploadPage
+### T01 Test Migration to Playwright E2E (All 6 Steps)
 
-**Problem:** The implemented `UploadPage.tsx` was at `src/frontend/src/pages/UploadPage.tsx`, but the route was expected to resolve to `src/frontend/src/pages/documents/UploadPage.tsx`. The user saw an empty page.
+1. **Step 1 — Verify no stale Jest/RTL test files:** Confirmed no `.test.ts`/`.test.tsx` files exist in `src/frontend/src/components/documents/` or `src/frontend/src/pages/documents/`.
 
-**Fix:**
-1. Created `src/frontend/src/pages/documents/` directory
-2. Created [`src/frontend/src/pages/documents/UploadPage.tsx`](src/frontend/src/pages/documents/UploadPage.tsx) with the full upload form implementation
-3. Updated [`src/frontend/src/App.tsx`](src/frontend/src/App.tsx:7) import from `@/pages/UploadPage` → `@/pages/documents/UploadPage`
-4. Deleted the redundant `src/frontend/src/pages/UploadPage.tsx`
+2. **Step 2 — Install `@playwright/test`:** Installed `@playwright/test` (v1.59.1) via npm. Chromium browser downloaded manually by the user.
 
-### Previous fix: 404 on `use-toast.ts`
-Separated the `useToast` hook (`.ts`, no JSX) from the `<Toaster>` component (`components/ui/toaster.tsx`, with JSX) following standard shadcn pattern.
+3. **Step 3 — Create `playwright.config.ts`:** Created at [`src/frontend/playwright.config.ts`](src/frontend/playwright.config.ts) with `testDir: './tests'`, `testMatch: '**/*.spec.ts'`, base URL `http://localhost:5173`, and Chromium project.
+
+4. **Step 4 — Create `tests/upload.spec.ts`:** Created at [`src/frontend/tests/upload.spec.ts`](src/frontend/tests/upload.spec.ts) with 5 E2E test cases under `test.describe('T01 — Document Upload Flow')`:
+   - Upload button disabled when no file/title
+   - Invalid file (non-PDF) shows error
+   - Valid PDF shows file preview
+   - Successful upload with mocked API (redirects to `/documents/doc-123`)
+   - Upload error (500) shows toast and stays on page
+
+5. **Step 5 — Add Playwright scripts:** Added `test:e2e`, `test:e2e:ui`, `test:e2e:headed` scripts to [`src/frontend/package.json`](src/frontend/package.json).
+
+6. **Step 6 — Verify Vitest config:** Confirmed [`src/frontend/vitest.config.ts`](src/frontend/vitest.config.ts) uses `include: ['src/**/*.test.{ts,tsx}', 'tests/**/*.test.{ts,tsx}']` — no conflict with `.spec.ts` Playwright convention.
+
+7. **Verification:** `npx playwright test --list` outputs all 5 tests successfully.
 
 ## Current state of the code
-- All implementation steps complete
-- TypeScript compiles cleanly (`npx tsc --noEmit` passes)
-- `App.tsx` imports `UploadPage` from `@/pages/documents/UploadPage`
-- `main.tsx` imports `Toaster` from `@/components/ui/toaster`
-- `UploadPage.tsx` imports `useToast` from `@/hooks/use-toast`
+- Playwright installed and configured
+- 5 E2E tests written for the document upload flow
+- Vitest tests (`App.test.tsx`, `authStore.test.ts`, `axiosInterceptor.test.ts`) remain untouched
+- `testMatch` in Playwright config excludes `.test.ts` files to avoid conflicts with Vitest
 
 ## Next step
-Manual browser testing at `/documents/upload` — the page should now render with:
-- Title input
-- DropZone (drag-and-drop PDF upload)
-- Upload button (disabled until file + title provided)
-- Progress bar during upload
-- Toast notifications on success/error
+Manual visual verification of the upload flow, then run E2E tests against the running dev server:
+```bash
+cd src/frontend && npx playwright test
+```
