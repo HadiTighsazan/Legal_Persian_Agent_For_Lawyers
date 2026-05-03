@@ -13,6 +13,7 @@ from documents.views import (
     ChunkReEmbedView,
     DocumentChunksListView,
     DocumentEmbedView,
+    DocumentListView,
     DocumentProcessView,
     DocumentProcessingStatusView,
     DocumentSearchView,
@@ -23,6 +24,7 @@ from documents.views import (
 app_name = "documents"
 
 urlpatterns = [
+    path("", DocumentListView.as_view(), name="document-list"),
     path("upload/", DocumentUploadView.as_view(), name="document-upload"),
     path(
         "<uuid:document_id>/process/",

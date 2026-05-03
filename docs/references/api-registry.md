@@ -311,8 +311,11 @@ Both fields are optional. At least one should be provided for meaningful updates
 ---
 
 #### GET /documents
-**Description:** List user's documents  
-**Auth Required:** Yes  
+**Description:** List user's documents
+**Auth Required:** Yes
+**Status:** ✅ Implemented
+**Implementation Date:** 2026-05-03
+**View Class:** `DocumentListView`
 **Query Parameters:**
 - `page`: Integer (default: 1)
 - `page_size`: Integer (default: 20, max: 100)
@@ -339,6 +342,16 @@ Both fields are optional. At least one should be provided for meaningful updates
   ]
 }
 ```
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Filters by `Document.objects.filter(user=request.user)`
+- Supports `title__icontains` search and `status` exact filter
+- Paginates via Django's `Paginator` with clamped `page` (min 1) and `page_size` (1–100)
+- Returns `count`, `next`, `previous`, `results` in standard paginated format
+- Results ordered by `-created_at` (newest first)
+- URL registered at `""` (root of documents app) with name `document-list`
+- **Important:** The empty path `""` must be placed **before** `upload/` in `urlpatterns` to avoid Django catching `upload` as a UUID
 
 ---
 

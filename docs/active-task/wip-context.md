@@ -1,45 +1,71 @@
-# WIP Context — Vitest Test Fixes
+# WIP Context — T02 Document List Page Implementation
 
 ## What was just completed
 
-### Fixed Vitest Test Failures (3 root causes identified and resolved)
+### T02 — Document List Page (Full Implementation)
 
-**Root Cause 1 — `import.meta.env` not available in Vitest:**
-- [`src/frontend/src/api/axios.ts`](src/frontend/src/api/axios.ts:10) uses `import.meta.env.VITE_API_URL` at module scope
-- Vitest's `jsdom` environment does NOT automatically load `.env` files
-- **Fix:** Added `env` config to [`src/frontend/vitest.config.ts`](src/frontend/vitest.config.ts) with `VITE_API_URL` and `VITE_APP_NAME`
+**Backend:**
+- Added [`DocumentListView`](src/backend/documents/views.py:62) — a new API view at `GET /documents/` that returns a paginated, searchable, filterable list of the authenticated user's documents
+- Supports query params: `page`, `page_size`, `search` (title contains), `status` (exact match)
+- Uses Django's `Paginator` with clamped values (`page >= 1`, `page_size` 1–100)
+- Results ordered by `-created_at` (newest first)
+- Added route at [`src/backend/documents/urls.py`](src/backend/documents/urls.py:26) — `path("", DocumentListView.as_view(), name="document-list")` placed **before** `upload/` to avoid UUID routing conflicts
 
-**Root Cause 2 — Axios mock mismatch in `axiosInterceptor.test.ts`:**
-- The test mocked `axios.default.post` but the actual `refreshTokens()` function calls `axios.post` (not `axios.default.post`)
-- The mock never intercepted the refresh token API call
-- **Fix:** Updated the mock in [`src/frontend/tests/auth/axiosInterceptor.test.ts`](src/frontend/tests/auth/axiosInterceptor.test.ts) to provide `axios.post` directly (not `axios.default.post`)
+**Frontend — API Layer:**
+- Added [`listDocuments()`](src/frontend/src/lib/api/documents.ts:20) function with `ListDocumentsParams` interface
+- Uses existing `apiClient` from `@/api/axios`
+- Builds query params dynamically, skipping undefined values
 
-**Root Cause 3 — Missing `vi.resetModules()` in `authStore.test.ts`:**
-- Module state could leak between tests because `vi.resetModules()` was never called
-- **Fix:** Added `vi.resetModules()` in `beforeEach` in [`src/frontend/tests/auth/authStore.test.ts`](src/frontend/tests/auth/authStore.test.ts)
+**Frontend — Components:**
+- [`StatusBadge`](src/frontend/src/components/documents/StatusBadge.tsx) — Maps `status` field values (`uploaded`, `pending`, `processing`, `completed`, `failed`) to colored badges with appropriate Tailwind classes. `processing` gets `animate-pulse`.
+- [`DocumentCard`](src/frontend/src/components/documents/DocumentCard.tsx) — Clickable card showing title, filename, file size (formatted), total pages, created date, and `StatusBadge`. Navigates to `/documents/:id` on click.
 
-**Additional fix — `window.location` stub missing `pathname`:**
-- The `redirectToLogin()` function in [`axios.ts`](src/frontend/src/api/axios.ts:32) checks `window.location.pathname`
-- The test stub only had `{ href: '' }`, causing `undefined.startsWith()` to throw
-- **Fix:** Added `pathname: ''` to the location stub
+**Frontend — Page:**
+- [`DocumentListPage`](src/frontend/src/pages/documents/DocumentListPage.tsx) — Full implementation with:
+  - Search input with 300ms debounce (resets to page 1 on search)
+  - Native `<select>` status filter dropdown (All, Completed, Processing, Failed, Uploaded)
+  - Loading state: 3× skeleton cards with `animate-pulse`
+  - Error state: `Alert` with `variant="destructive"` + retry button
+  - Empty state: "No documents yet" + "Upload your first document" button
+  - Data state: responsive grid (`grid-cols-1 md:grid-cols-2 lg:grid-cols-3`)
+  - Pagination: Previous/Next buttons with "Page X of Y" indicator
+
+**Frontend — Routing:**
+- Updated [`App.tsx`](src/frontend/src/App.tsx:6) import from `@/pages/DocumentListPage` to `@/pages/documents/DocumentListPage`
+- Deleted old stub file [`src/frontend/src/pages/DocumentListPage.tsx`](src/frontend/src/pages/DocumentListPage.tsx)
+
+**Frontend — Tests:**
+- [`DocumentListPage.test.tsx`](src/frontend/src/pages/documents/DocumentListPage.test.tsx) — 4 tests:
+  1. Smoke test: renders cards when API returns 2 documents
+  2. Empty state: shows "Upload your first document" button
+  3. Loading state: skeleton cards visible (`.animate-pulse` elements)
+  4. Error state: error alert + retry button visible
+
+**Reference Docs:**
+- Updated [`api-registry.md`](docs/references/api-registry.md) — marked `GET /documents` as ✅ Implemented with implementation date 2026-05-03 and notes
 
 ## Current state of the code
 
-- All 3 Vitest test files pass: **18 tests, 3 test files, all passing** ✅
-  - `src/App.test.tsx` — 2 tests ✅
-  - `tests/auth/authStore.test.ts` — 10 tests ✅
-  - `tests/auth/axiosInterceptor.test.ts` — 6 tests ✅
-- Playwright E2E tests remain unchanged and working
-- No breaking changes to any source code
+- **All 22 Vitest tests pass** (4 test files, including 4 new tests) ✅
+- Backend `DocumentListView` is ready at `GET /documents/`
+- Frontend `DocumentListPage` is fully functional with all states
+- Old stub file deleted, routing updated
 
-## Files modified
+## Files created/modified
 
 | File | Change |
 |------|--------|
-| [`src/frontend/vitest.config.ts`](src/frontend/vitest.config.ts) | Added `env` config with `VITE_API_URL` and `VITE_APP_NAME` |
-| [`src/frontend/tests/auth/axiosInterceptor.test.ts`](src/frontend/tests/auth/axiosInterceptor.test.ts) | Fixed axios mock structure (`axios.post` not `axios.default.post`); added `pathname` to location stub |
-| [`src/frontend/tests/auth/authStore.test.ts`](src/frontend/tests/auth/authStore.test.ts) | Added `vi.resetModules()` in `beforeEach` |
+| [`src/backend/documents/views.py`](src/backend/documents/views.py) | Added `DocumentListView` class with pagination, search, and status filtering |
+| [`src/backend/documents/urls.py`](src/backend/documents/urls.py) | Added `path("", DocumentListView.as_view(), name="document-list")` |
+| [`src/frontend/src/lib/api/documents.ts`](src/frontend/src/lib/api/documents.ts) | Added `listDocuments()` function and `ListDocumentsParams` interface |
+| [`src/frontend/src/components/documents/StatusBadge.tsx`](src/frontend/src/components/documents/StatusBadge.tsx) | **NEW** — Status badge component with color mapping |
+| [`src/frontend/src/components/documents/DocumentCard.tsx`](src/frontend/src/components/documents/DocumentCard.tsx) | **NEW** — Clickable document card with metadata |
+| [`src/frontend/src/pages/documents/DocumentListPage.tsx`](src/frontend/src/pages/documents/DocumentListPage.tsx) | **NEW** — Full document list page with all states |
+| [`src/frontend/src/App.tsx`](src/frontend/src/App.tsx) | Updated import path for `DocumentListPage` |
+| [`src/frontend/src/pages/DocumentListPage.tsx`](src/frontend/src/pages/DocumentListPage.tsx) | **DELETED** — Old stub file |
+| [`src/frontend/src/pages/documents/DocumentListPage.test.tsx`](src/frontend/src/pages/documents/DocumentListPage.test.tsx) | **NEW** — 4 tests (smoke, empty, loading, error) |
+| [`docs/references/api-registry.md`](docs/references/api-registry.md) | Marked `GET /documents` as ✅ Implemented |
 
 ## Next step
 
-N/A — Task complete. Vitest tests are now fully passing.
+N/A — Task complete. All tests pass (22/22). Ready for review.

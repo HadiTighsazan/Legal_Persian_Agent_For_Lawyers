@@ -18,6 +18,7 @@ Epic E-05 (Task 4) adds four new embedding views:
 import logging
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.paginator import EmptyPage, Paginator
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
@@ -57,6 +58,81 @@ from documents.tasks import embed_document, process_document
 from tasks.models import ProcessingTask
 
 logger = logging.getLogger(__name__)
+
+
+class DocumentListView(APIView):
+    """List the authenticated user's documents with pagination, search, and status filtering.
+
+    **Endpoint:** ``GET /documents/``
+
+    **Authentication:** Required.
+
+    **Query Parameters:**
+        - ``page`` (int, default=1)
+        - ``page_size`` (int, default=20, max=100)
+        - ``search`` (str, optional) — filter by title (case-insensitive contains)
+        - ``status`` (str, optional) — filter by document status
+
+    **Responses:**
+        - ``200 OK`` — Paginated document list returned successfully.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        page = int(request.query_params.get("page", 1))
+        page_size = int(request.query_params.get("page_size", 20))
+        search = request.query_params.get("search", "")
+        status_filter = request.query_params.get("status", "")
+
+        # Clamp values
+        page = max(1, page)
+        page_size = max(1, min(100, page_size))
+
+        # Build queryset
+        queryset = Document.objects.filter(user=request.user)
+
+        if search:
+            queryset = queryset.filter(title__icontains=search)
+
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+
+        queryset = queryset.order_by("-created_at")
+
+        # Paginate
+        paginator = Paginator(queryset, page_size)
+        try:
+            page_obj = paginator.page(page)
+        except EmptyPage:
+            page_obj = paginator.page(paginator.num_pages) if paginator.num_pages > 0 else []
+            page = paginator.num_pages if paginator.num_pages > 0 else 1
+
+        # Serialize
+        results = []
+        for doc in page_obj.object_list:
+            results.append({
+                "id": str(doc.id),
+                "title": doc.title,
+                "original_filename": doc.original_filename,
+                "file_size": doc.file_size,
+                "total_pages": doc.total_pages,
+                "status": doc.status,
+                "created_at": doc.created_at.isoformat(),
+                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+            })
+
+        # Build next/previous URLs
+        base_url = request.build_absolute_uri(request.path)
+        next_url = f"{base_url}?page={page + 1}&page_size={page_size}" if page_obj.has_next() else None
+        prev_url = f"{base_url}?page={page - 1}&page_size={page_size}" if page_obj.has_previous() else None
+
+        return Response({
+            "count": paginator.count,
+            "next": next_url,
+            "previous": prev_url,
+            "results": results,
+        })
 
 
 class DocumentUploadView(APIView):

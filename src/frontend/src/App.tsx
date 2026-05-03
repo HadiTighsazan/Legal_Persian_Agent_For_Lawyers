@@ -3,7 +3,7 @@ import PrivateRoute from '@/components/auth/PrivateRoute';
 import PublicRoute from '@/components/auth/PublicRoute';
 import AppShell from '@/components/layout/AppShell';
 import DashboardPage from '@/pages/DashboardPage';
-import DocumentListPage from '@/pages/DocumentListPage';
+import DocumentListPage from '@/pages/documents/DocumentListPage';
 import UploadPage from '@/pages/documents/UploadPage';
 import DocumentDetailPage from '@/pages/DocumentDetailPage';
 import LoginPage from '@/pages/LoginPage';
