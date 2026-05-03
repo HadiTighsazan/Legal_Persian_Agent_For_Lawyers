@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   getDocument,
-  deleteDocument,
   triggerProcessing,
   triggerEmbedding,
 } from "@/lib/api/documents";
@@ -10,14 +9,15 @@ import { useProcessingStatus } from "@/hooks/useProcessingStatus";
 import type { Document } from "@/types/document";
 import StatusBadge from "@/components/documents/StatusBadge";
 import ProcessingStatusPanel from "@/components/documents/ProcessingStatusPanel";
+import DeleteDocumentDialog from "@/components/documents/DeleteDocumentDialog";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
+import { toast } from "@/hooks/use-toast";
 import {
   AlertCircle,
   ArrowLeft,
   FileText,
-  Loader2,
   Trash2,
   MessageSquare,
 } from "lucide-react";
@@ -76,7 +76,7 @@ export default function DocumentDetailPage() {
   const [document, setDocument] = useState<Document | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   // ── Processing status polling ──────────────────────────────────────────
   const { statusData, isPolling } = useProcessingStatus(
@@ -118,24 +118,16 @@ export default function DocumentDetailPage() {
     navigate(`/conversations/new?documentId=${documentId}`);
   };
 
-  const handleDelete = async () => {
-    if (!documentId) return;
+  const handleDeleteClick = () => {
+    setDeleteDialogOpen(true);
+  };
 
-    const confirmed = window.confirm(
-      "Are you sure you want to delete this document? This action cannot be undone.",
-    );
-    if (!confirmed) return;
-
-    setIsDeleting(true);
-    try {
-      await deleteDocument(documentId);
-      navigate("/documents");
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Failed to delete document.";
-      setError(message);
-      setIsDeleting(false);
-    }
+  const handleDocumentDeleted = () => {
+    toast({
+      title: "Document deleted",
+      description: "The document has been permanently removed.",
+    });
+    navigate("/documents");
   };
 
   const handleStartProcessing = async () => {
@@ -306,17 +298,21 @@ export default function DocumentDetailPage() {
 
         <Button
           variant="destructive"
-          onClick={handleDelete}
-          disabled={isDeleting}
+          onClick={handleDeleteClick}
         >
-          {isDeleting ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Trash2 className="mr-2 h-4 w-4" />
-          )}
+          <Trash2 className="mr-2 h-4 w-4" />
           Delete
         </Button>
       </div>
+
+      {/* ── Delete confirmation dialog ──────────────────────────────── */}
+      <DeleteDocumentDialog
+        documentId={document.id}
+        documentTitle={document.title}
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onDeleted={handleDocumentDeleted}
+      />
     </div>
   );
 }

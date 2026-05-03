@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import DocumentDetailPage from "./DocumentDetailPage";
 import type { Document, ProcessingStatusResponse } from "@/types/document";
@@ -24,6 +25,11 @@ const mockUseProcessingStatus = vi.fn();
 
 vi.mock("@/hooks/useProcessingStatus", () => ({
   useProcessingStatus: (...args: unknown[]) => mockUseProcessingStatus(...args),
+}));
+
+// ── Mock the toast hook ───────────────────────────────────────────────────
+vi.mock("@/hooks/use-toast", () => ({
+  toast: vi.fn(),
 }));
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -196,5 +202,55 @@ describe("DocumentDetailPage", () => {
 
     // Processing Status panel should be visible
     expect(screen.getByText("Processing Status")).toBeInTheDocument();
+  });
+  // ── Clicking Delete opens the confirmation dialog ─────────────────────
+  it("opens delete confirmation dialog when Delete button is clicked", async () => {
+    const doc = createMockDocument();
+    mockGetDocument.mockResolvedValue(doc);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Annual Report")).toBeInTheDocument();
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /delete/i }));
+
+    // Dialog should appear with the dialog title
+    expect(screen.getByText("Delete Document")).toBeInTheDocument();
+    // Confirmation text should include the document title (use getByText with a custom matcher for the strong element)
+    expect(
+      screen.getByText((content, element) => {
+        return element?.tagName === "STRONG" && content === "Annual Report";
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /cancel/i }),
+    ).toBeInTheDocument();
+  });
+
+  // ── Successful deletion navigates to /documents ───────────────────────
+  it("navigates to /documents after successful deletion via dialog", async () => {
+    const doc = createMockDocument();
+    mockGetDocument.mockResolvedValue(doc);
+    mockDeleteDocument.mockResolvedValue(undefined);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Annual Report")).toBeInTheDocument();
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /delete/i }));
+
+    // Click Delete in the dialog
+    await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+    // Should navigate to /documents
+    await waitFor(() => {
+      expect(screen.getByText("Documents List Page")).toBeInTheDocument();
+    });
   });
 });
