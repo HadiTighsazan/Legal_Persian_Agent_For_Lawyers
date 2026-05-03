@@ -14,8 +14,7 @@ Never read the entire src/ directory or massive files unless specifically reques
 - Frontend: React, Vite, TailwindCSS, shadcn/ui
 - Backend: Django, Django REST Framework, PostgreSQL, pgvector, Celery, Redis
 - AI & Document Processing: LangChain, PyMuPDF, OpenAI API
-- Testing: Playwright (for Frontend E2E), Pytest (for Backend)
-- DevOps & Deployment: Docker, Nginx, Gunicorn
+- Testing: Playwright (for ALL Frontend UI, Components, and E2E tests - DO NOT USE React Testing Library), Vitest (ONLY for pure non-UI logic like stores/api), Pytest (for Backend)- DevOps & Deployment: Docker, Nginx, Gunicorn
 
 # 3. Development Environment & Execution (CRITICAL)
 - The standard development workflow is fully containerized. ALWAYS use `docker-compose up` to run the project.
@@ -30,12 +29,16 @@ Never read the entire src/ directory or massive files unless specifically reques
 - Error Handling: Always use try/catch blocks and provide meaningful error messages.
 - Strict Typing: Use TypeScript for all Frontend code. Use Python Type Hints (PEP 484) for all Backend code.
 
-# 5. TDD Flow (Test-Driven Development)
-Always follow these $3$ exact steps for every new feature or component:
+# 5. TDD Flow & Testing Strategy
+For Backend and strictly non-UI Frontend logic (e.g., stores, API utilities), follow these 3 exact steps:
 1. RED: Write a failing test first. Stop and verify.
 2. GREEN: Write the minimum code required to make the test pass.
 3. REFACTOR: Clean up the code without changing behavior.
-Note for Frontend: Do not follow strict TDD. Follow a "Visual First" approach. The user will verify the UI manually first, and only then should you write Playwright E2E tests to lock in the behavior.
+
+CRITICAL UI RULE: Do NOT follow strict TDD for Frontend UI Components. Follow a "Visual First" approach:
+1. Write the UI code (React components, layouts, etc.).
+2. STOP and wait for the user to manually verify the behavior in the browser.
+3. ONLY AFTER user approval, write Playwright tests to lock in the behavior. Never use Vitest/RTL for UI testing.
 # 6. WIP & State Management (CRITICAL)
 - After completing ANY step or before stopping to ask the user for input, you MUST update `docs/active-task/wip-context.md`.
 - Overwrite the file with: 
