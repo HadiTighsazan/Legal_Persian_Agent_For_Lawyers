@@ -135,6 +135,80 @@ class DocumentListView(APIView):
         })
 
 
+class DocumentDetailView(APIView):
+    """Retrieve or delete a single document by its ID.
+
+    **Endpoint:** ``GET /documents/<uuid:document_id>/`` — Retrieve document details.
+    **Endpoint:** ``DELETE /documents/<uuid:document_id>/`` — Delete a document.
+
+    **Authentication:** Required.
+
+    **GET Responses:**
+        - ``200 OK`` — Document details returned successfully.
+        - ``403 Forbidden`` — Document belongs to another user.
+        - ``404 Not Found`` — Document does not exist.
+
+    **DELETE Responses:**
+        - ``204 No Content`` — Document deleted successfully.
+        - ``403 Forbidden`` — Document belongs to another user.
+        - ``404 Not Found`` — Document does not exist.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, document_id: str) -> Response:
+        """Handle the document detail GET request."""
+        try:
+            document = Document.objects.get(id=document_id)
+        except Document.DoesNotExist:
+            return Response(
+                {"error": "not_found", "message": "Document not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Verify ownership.
+        if document.user != request.user:
+            return Response(
+                {"error": "permission_denied", "message": "You do not have permission to view this document."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return Response({
+            "id": str(document.id),
+            "title": document.title,
+            "original_filename": document.original_filename,
+            "file_size": document.file_size,
+            "mime_type": document.mime_type,
+            "total_pages": document.total_pages,
+            "status": document.status,
+            "processing_status": document.processing_status,
+            "error_message": document.error_message,
+            "chunks_count": document.total_chunks,
+            "created_at": document.created_at.isoformat(),
+            "updated_at": document.updated_at.isoformat() if document.updated_at else None,
+        })
+
+    def delete(self, request: Request, document_id: str) -> Response:
+        """Handle the document delete DELETE request."""
+        try:
+            document = Document.objects.get(id=document_id)
+        except Document.DoesNotExist:
+            return Response(
+                {"error": "not_found", "message": "Document not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Verify ownership.
+        if document.user != request.user:
+            return Response(
+                {"error": "permission_denied", "message": "You do not have permission to delete this document."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        document.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class DocumentUploadView(APIView):
     """Accept a file upload and return the created document's metadata.
 

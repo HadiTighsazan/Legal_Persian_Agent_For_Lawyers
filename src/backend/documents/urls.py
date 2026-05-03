@@ -12,6 +12,7 @@ from documents.views import (
     ChunkBatchEmbedView,
     ChunkReEmbedView,
     DocumentChunksListView,
+    DocumentDetailView,
     DocumentEmbedView,
     DocumentListView,
     DocumentProcessView,
@@ -26,6 +27,11 @@ app_name = "documents"
 urlpatterns = [
     path("", DocumentListView.as_view(), name="document-list"),
     path("upload/", DocumentUploadView.as_view(), name="document-upload"),
+    path(
+        "<uuid:document_id>/",
+        DocumentDetailView.as_view(),
+        name="document-detail",
+    ),
     path(
         "<uuid:document_id>/process/",
         DocumentProcessView.as_view(),

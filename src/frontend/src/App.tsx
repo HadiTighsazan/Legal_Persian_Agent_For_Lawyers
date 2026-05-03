@@ -5,7 +5,7 @@ import AppShell from '@/components/layout/AppShell';
 import DashboardPage from '@/pages/DashboardPage';
 import DocumentListPage from '@/pages/documents/DocumentListPage';
 import UploadPage from '@/pages/documents/UploadPage';
-import DocumentDetailPage from '@/pages/DocumentDetailPage';
+import DocumentDetailPage from '@/pages/documents/DocumentDetailPage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
 

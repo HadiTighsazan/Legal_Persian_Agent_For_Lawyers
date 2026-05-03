@@ -7,6 +7,10 @@ export interface Document {
   status: string;
   created_at: string;
   updated_at?: string;
+  mime_type?: string;
+  error_message?: string | null;
+  processing_status?: string;
+  chunks_count?: number;
 }
 
 export interface UploadResponse {

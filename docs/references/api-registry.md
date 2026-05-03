@@ -283,14 +283,17 @@ Both fields are optional. At least one should be provided for meaningful updates
 
 ---
 
-## Planned Endpoints (Epic E02+)
-
 ## Documents
 
+### ✅ Implemented Endpoints — Document CRUD & Processing
+
 #### POST /documents/upload
-**Description:** Upload document file  
-**Auth Required:** Yes  
-**Content-Type:** `multipart/form-data`  
+**Description:** Upload document file
+**Auth Required:** Yes
+**Content-Type:** `multipart/form-data`
+**Status:** ✅ Implemented
+**Implementation Date:** 2026-04-24
+**View Class:** `DocumentUploadView`
 **Request Body:**
 - `file`: File (PDF, max 500MB)
 - `title`: String (optional)
@@ -356,8 +359,11 @@ Both fields are optional. At least one should be provided for meaningful updates
 ---
 
 #### GET /documents/{document_id}
-**Description:** Get document details  
-**Auth Required:** Yes  
+**Description:** Get document details
+**Auth Required:** Yes
+**Status:** ✅ Implemented
+**Implementation Date:** 2026-05-03
+**View Class:** `DocumentDetailView`
 **Response:** `200 OK`
 ```json
 {
@@ -374,13 +380,35 @@ Both fields are optional. At least one should be provided for meaningful updates
   "chunks_count": 500
 }
 ```
+**Error Responses:**
+- `403 Forbidden`: Document belongs to another user
+- `404 Not Found`: Document does not exist
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies document ownership via `document.user != request.user`
+- Returns full document details including `mime_type`, `processing_status`, `error_message`, `chunks_count` (mapped from `total_chunks`)
+- URL registered at `"<uuid:document_id>/"` with name `document-detail`
+- **Important:** Route placed after `upload/` but before sub-routes like `process/` to avoid conflicts
 
 ---
 
 #### DELETE /documents/{document_id}
-**Description:** Delete document and all related data  
-**Auth Required:** Yes  
+**Description:** Delete document and all related data
+**Auth Required:** Yes
+**Status:** ✅ Implemented
+**Implementation Date:** 2026-05-03
+**View Class:** `DocumentDetailView`
 **Response:** `204 No Content`
+**Error Responses:**
+- `403 Forbidden`: Document belongs to another user
+- `404 Not Found`: Document does not exist
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies document ownership via `document.user != request.user`
+- Calls `document.delete()` which cascades to related chunks, processing tasks, and conversations
+- Returns `204 No Content` on success
 
 ---
 
