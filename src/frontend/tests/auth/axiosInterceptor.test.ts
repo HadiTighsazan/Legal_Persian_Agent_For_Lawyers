@@ -34,12 +34,16 @@ mockAxiosInstance.interceptors.response.use = vi.fn(
   },
 );
 
+// Shared mock for axios.post — used by refreshTokens() in axios.ts
+const mockPost = vi.fn();
+
 vi.mock('axios', () => ({
   default: {
     create: vi.fn(() => mockAxiosInstance),
-    post: vi.fn(),
+    post: mockPost,
   },
   create: vi.fn(() => mockAxiosInstance),
+  post: mockPost,
 }));
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -92,7 +96,7 @@ beforeEach(() => {
   // Stub window.location — make href writable
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   delete (window as any).location;
-  window.location = { href: '' } as Location;
+  window.location = { href: '', pathname: '' } as unknown as Location;
 });
 
 afterEach(() => {
@@ -138,8 +142,9 @@ describe('Axios response interceptor — 401 handling', () => {
 
   it('on 401, calls /auth/refresh and retries the original request', async () => {
     // Mock the POST for /auth/refresh to succeed
-    const axios = await import('axios');
-    vi.mocked(axios.default.post).mockResolvedValueOnce({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const axios = (await import('axios')) as any;
+    axios.post.mockResolvedValueOnce({
       data: {
         accessToken: 'new-access-token',
         refreshToken: 'new-refresh-token',
@@ -156,7 +161,7 @@ describe('Axios response interceptor — 401 handling', () => {
     const result = await responseHandlers[0].rejected(error);
 
     // Should have called /auth/refresh
-    expect(axios.default.post).toHaveBeenCalledWith(
+    expect(axios.post).toHaveBeenCalledWith(
       expect.stringContaining('/auth/refresh'),
       { refreshToken: 'valid-refresh-token' },
     );
@@ -170,8 +175,9 @@ describe('Axios response interceptor — 401 handling', () => {
   });
 
   it('queue mechanism — 3 concurrent 401s trigger only 1 refresh call', async () => {
-    const axios = await import('axios');
-    vi.mocked(axios.default.post).mockResolvedValue({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const axios = (await import('axios')) as any;
+    axios.post.mockResolvedValue({
       data: {
         accessToken: 'new-access-token',
         refreshToken: 'new-refresh-token',
@@ -190,15 +196,16 @@ describe('Axios response interceptor — 401 handling', () => {
     ]);
 
     // axios.post should have been called only once for /auth/refresh
-    const refreshCalls = vi.mocked(axios.default.post).mock.calls.filter(
-      ([url]) => typeof url === 'string' && url.includes('/auth/refresh'),
+    const refreshCalls = axios.post.mock.calls.filter(
+      ([url]: [string]) => typeof url === 'string' && url.includes('/auth/refresh'),
     );
     expect(refreshCalls.length).toBe(1);
   });
 
   it('on refresh failure, clears localStorage and redirects to /login', async () => {
-    const axios = await import('axios');
-    vi.mocked(axios.default.post).mockRejectedValueOnce(new Error('Refresh failed'));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const axios = (await import('axios')) as any;
+    axios.post.mockRejectedValueOnce(new Error('Refresh failed'));
 
     await import('../../src/api/axios');
 
@@ -217,7 +224,8 @@ describe('Axios response interceptor — 401 handling', () => {
   });
 
   it('does NOT retry if failed request is to /auth/refresh itself', async () => {
-    const axios = await import('axios');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const axios = (await import('axios')) as any;
 
     await import('../../src/api/axios');
 
@@ -228,6 +236,6 @@ describe('Axios response interceptor — 401 handling', () => {
     ).rejects.toThrow();
 
     // Should NOT have called /auth/refresh again
-    expect(axios.default.post).not.toHaveBeenCalled();
+    expect(axios.post).not.toHaveBeenCalled();
   });
 });

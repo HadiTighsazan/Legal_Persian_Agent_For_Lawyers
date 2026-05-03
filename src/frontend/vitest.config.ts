@@ -25,5 +25,10 @@ export default defineConfig({
         '**/index.html',
       ],
     },
+    // Provide VITE_ env vars so import.meta.env works in tests
+    env: {
+      VITE_API_URL: 'http://localhost:8000/api',
+      VITE_APP_NAME: 'DocuChat',
+    },
   },
 })

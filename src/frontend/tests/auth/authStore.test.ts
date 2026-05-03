@@ -36,6 +36,7 @@ const mockAuthResponse = {
 // ── Setup ──────────────────────────────────────────────────────────────
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.resetModules();
   localStorage.clear();
 });
 
