@@ -38,6 +38,7 @@ def _guess_mime_type(original_filename: str) -> str:
 def upload_document(
     user: Any,
     file: Any,
+    title: str = "",
     allowed_extensions: Optional[list[str]] = None,
     max_size_mb: Optional[float] = None,
 ) -> dict:
@@ -56,6 +57,7 @@ def upload_document(
         user: The User instance that owns the document.
         file: The uploaded file object (must have ``.name`` and ``.size``
               attributes, and be readable as a binary stream).
+        title: A descriptive title for the document (from the upload form).
         allowed_extensions: Optional list of permitted file extensions.
             Passed through to :func:`~documents.utils.file_validator.validate_file_type`.
         max_size_mb: Optional maximum file size in megabytes. Passed through
@@ -66,7 +68,7 @@ def upload_document(
 
             {
                 "id": "uuid-string",
-                "title": "stored-filename",
+                "title": "user-provided-title",
                 "original_filename": "original-name.pdf",
                 "file_size": 123456,
                 "mime_type": "application/pdf",
@@ -126,6 +128,7 @@ def upload_document(
     try:
         document = create_document(
             user=user,
+            title=title or unique_filename,
             filename=unique_filename,
             original_filename=original_filename,
             file_size=file.size,

@@ -68,6 +68,9 @@ describe("DocumentListPage", () => {
       expect(screen.getByText("Annual Report")).toBeInTheDocument();
     });
     expect(screen.getByText("Meeting Notes")).toBeInTheDocument();
+
+    // Permanent Upload button should be visible in the header
+    expect(screen.getByRole("button", { name: /^upload$/i })).toBeInTheDocument();
   });
 
   it("shows empty state when API returns no documents", async () => {
@@ -82,6 +85,9 @@ describe("DocumentListPage", () => {
         screen.getByText("Upload your first document"),
       ).toBeInTheDocument();
     });
+
+    // Permanent Upload button should also be visible in the header
+    expect(screen.getByRole("button", { name: /^upload$/i })).toBeInTheDocument();
   });
 
   it("shows skeleton cards while loading", async () => {

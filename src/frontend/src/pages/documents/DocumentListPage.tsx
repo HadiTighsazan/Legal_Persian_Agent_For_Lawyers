@@ -117,11 +117,17 @@ export default function DocumentListPage() {
   return (
     <div className="space-y-6">
       {/* ── Page Header ──────────────────────────────────────────────── */}
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Documents</h1>
-        <p className="mt-1 text-muted-foreground">
-          Browse and manage your uploaded documents.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Documents</h1>
+          <p className="mt-1 text-muted-foreground">
+            Browse and manage your uploaded documents.
+          </p>
+        </div>
+        <Button onClick={() => navigate("/documents/upload")}>
+          <Upload className="mr-2 h-4 w-4" />
+          Upload
+        </Button>
       </div>
 
       {/* ── Search & Filter Bar ───────────────────────────────────────── */}

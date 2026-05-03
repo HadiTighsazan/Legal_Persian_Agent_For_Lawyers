@@ -161,10 +161,12 @@ class DocumentUploadView(APIView):
         serializer.is_valid(raise_exception=True)
 
         uploaded_file = serializer.validated_data["file"]
+        title = serializer.validated_data.get("title", "")
         logger.info(
-            "Upload request received for file '%s' (size=%s) by user=%s",
+            "Upload request received for file '%s' (size=%s, title='%s') by user=%s",
             uploaded_file.name,
             uploaded_file.size,
+            title,
             request.user,
         )
 
@@ -172,7 +174,11 @@ class DocumentUploadView(APIView):
         # Step 2 — Delegate to the upload service
         # ------------------------------------------------------------------
         try:
-            metadata = upload_document(user=request.user, file=uploaded_file)
+            metadata = upload_document(
+                user=request.user,
+                file=uploaded_file,
+                title=title,
+            )
         except DjangoValidationError as exc:
             logger.warning(
                 "Validation failed for file '%s': %s",

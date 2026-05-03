@@ -11,15 +11,22 @@ from rest_framework import serializers
 
 
 class DocumentUploadSerializer(serializers.Serializer):
-    """Validate the incoming file field from a multipart/form-data request.
+    """Validate the incoming file and title fields from a multipart/form-data request.
 
     The serializer only performs basic DRF-level validation (ensuring a file
-    is present).  Deeper type/size validation is delegated to the
-    :mod:`documents.utils.file_validator` module called by the upload service.
+    is present and a title is provided).  Deeper type/size validation is
+    delegated to the :mod:`documents.utils.file_validator` module called by
+    the upload service.
     """
 
     file = serializers.FileField(
         help_text="The document file to upload (PDF, DOCX, or TXT).",
+    )
+    title = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        max_length=255,
+        help_text="A descriptive title for the document.",
     )
 
 

@@ -36,8 +36,8 @@
 
 **Frontend — Tests:**
 - [`DocumentListPage.test.tsx`](src/frontend/src/pages/documents/DocumentListPage.test.tsx) — 4 tests:
-  1. Smoke test: renders cards when API returns 2 documents
-  2. Empty state: shows "Upload your first document" button
+  1. Smoke test: renders cards when API returns 2 documents + verifies permanent Upload button in header
+  2. Empty state: shows "Upload your first document" button + verifies permanent Upload button in header
   3. Loading state: skeleton cards visible (`.animate-pulse` elements)
   4. Error state: error alert + retry button visible
 
@@ -48,7 +48,10 @@
 
 - **All 22 Vitest tests pass** (4 test files, including 4 new tests) ✅
 - Backend `DocumentListView` is ready at `GET /documents/`
-- Frontend `DocumentListPage` is fully functional with all states
+- Frontend `DocumentListPage` is fully functional with all states:
+  - Header has permanent "Upload" button (always visible, links to `/documents/upload`)
+  - Search with 300ms debounce, status filter dropdown, pagination
+  - Loading, error, empty, and data states all handled
 - Old stub file deleted, routing updated
 
 ## Files created/modified
@@ -69,3 +72,16 @@
 ## Next step
 
 N/A — Task complete. All tests pass (22/22). Ready for review.
+
+## Latest update (2026-05-03)
+
+- Added permanent "Upload" button to the page header (always visible, not just in empty state)
+- Updated tests to verify the permanent Upload button is present in both data state and empty state
+- **Fixed backend upload pipeline** to accept and store the user-provided `title` from the upload form (previously `title` was set to the UUID-based filename)
+  - [`DocumentUploadSerializer`](src/backend/documents/serializers.py:13) — Added required `title` field
+  - [`upload_document()`](src/backend/documents/services/upload_service.py:38) — Accepts `title` parameter, falls back to `unique_filename` if empty
+  - [`create_document()`](src/backend/documents/repositories/document_repository.py:11) — Uses `title` parameter instead of `filename` for the `title` column
+  - [`DocumentUploadView.post()`](src/backend/documents/views.py:155) — Extracts `title` from validated data and passes it to `upload_document`
+- Updated serializer tests to cover the new `title` field
+- Backend container restarted to pick up changes
+- All 116 backend tests (serializer + views) and all 22 frontend tests pass ✅

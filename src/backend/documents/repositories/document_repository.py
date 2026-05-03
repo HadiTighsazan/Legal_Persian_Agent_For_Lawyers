@@ -10,6 +10,7 @@ from documents.models import Document
 
 def create_document(
     user,
+    title: str,
     filename: str,
     original_filename: str,
     file_size: int,
@@ -22,7 +23,8 @@ def create_document(
 
     Args:
         user: The User instance owning the document.
-        filename: The stored filename (used as the document title).
+        title: A descriptive title for the document (from the upload form).
+        filename: The stored filename (UUID-based).
         original_filename: The original uploaded filename.
         file_size: Size of the file in bytes.
         mime_type: MIME type of the file.
@@ -34,7 +36,7 @@ def create_document(
     """
     document = Document.objects.create(
         user=user,
-        title=filename,
+        title=title,
         filename=filename,
         original_filename=original_filename,
         file_size=file_size,

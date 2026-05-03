@@ -44,28 +44,43 @@ from documents.serializers import (
 class DocumentUploadSerializerTests(TestCase):
     """Validate that the upload serializer correctly accepts/rejects input."""
 
-    def test_valid_file_passes(self) -> None:
-        """A ``SimpleUploadedFile`` should pass validation."""
+    def test_valid_file_and_title_passes(self) -> None:
+        """A ``SimpleUploadedFile`` with a title should pass validation."""
         uploaded = SimpleUploadedFile("test.pdf", b"dummy content")
-        serializer = DocumentUploadSerializer(data={"file": uploaded})
+        serializer = DocumentUploadSerializer(
+            data={"file": uploaded, "title": "My Document"},
+        )
         self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["title"], "My Document")
 
     def test_missing_file_returns_error(self) -> None:
         """Omitting the ``file`` field should fail validation."""
-        serializer = DocumentUploadSerializer(data={})
+        serializer = DocumentUploadSerializer(data={"title": "My Document"})
         self.assertFalse(serializer.is_valid())
         self.assertIn("file", serializer.errors)
 
+    def test_missing_title_returns_error(self) -> None:
+        """Omitting the ``title`` field should fail validation."""
+        uploaded = SimpleUploadedFile("test.pdf", b"dummy content")
+        serializer = DocumentUploadSerializer(data={"file": uploaded})
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("title", serializer.errors)
+
     def test_none_file_returns_error(self) -> None:
         """Passing ``None`` for the file field should fail validation."""
-        serializer = DocumentUploadSerializer(data={"file": None})
+        serializer = DocumentUploadSerializer(
+            data={"file": None, "title": "My Document"},
+        )
         self.assertFalse(serializer.is_valid())
         self.assertIn("file", serializer.errors)
 
     def test_help_text_is_set(self) -> None:
-        """The ``file`` field should have a descriptive help_text."""
-        field = DocumentUploadSerializer().fields["file"]
-        self.assertIn("document file", field.help_text.lower())
+        """The ``file`` and ``title`` fields should have descriptive help_text."""
+        serializer = DocumentUploadSerializer()
+        file_field = serializer.fields["file"]
+        title_field = serializer.fields["title"]
+        self.assertIn("document file", file_field.help_text.lower())
+        self.assertIn("title", title_field.help_text.lower())
 
 
 # ---------------------------------------------------------------------------
