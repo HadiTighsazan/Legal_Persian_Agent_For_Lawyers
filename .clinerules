@@ -14,7 +14,8 @@ Never read the entire src/ directory or massive files unless specifically reques
 - Frontend: React, Vite, TailwindCSS, shadcn/ui
 - Backend: Django, Django REST Framework, PostgreSQL, pgvector, Celery, Redis
 - AI & Document Processing: LangChain, PyMuPDF, OpenAI API
-- Testing: Playwright (for ALL Frontend UI, Components, and E2E tests - DO NOT USE React Testing Library), Vitest (ONLY for pure non-UI logic like stores/api), Pytest (for Backend)- DevOps & Deployment: Docker, Nginx, Gunicorn
+- Testing: Vitest (ONLY for pure non-UI logic like stores/api), Pytest (for Backend). NO AUTOMATED UI TESTING (Manual testing only).
+- DevOps & Deployment: Docker, Nginx, Gunicorn
 
 # 3. Development Environment & Execution (CRITICAL)
 - The standard development workflow is fully containerized. ALWAYS use `docker-compose up` to run the project.
@@ -35,10 +36,10 @@ For Backend and strictly non-UI Frontend logic (e.g., stores, API utilities), fo
 2. GREEN: Write the minimum code required to make the test pass.
 3. REFACTOR: Clean up the code without changing behavior.
 
-CRITICAL UI RULE: Do NOT follow strict TDD for Frontend UI Components. Follow a "Visual First" approach:
+CRITICAL UI RULE: Do NOT write automated tests for Frontend UI Components. Follow a strictly "Visual First" and Manual Testing approach:
 1. Write the UI code (React components, layouts, etc.).
 2. STOP and wait for the user to manually verify the behavior in the browser.
-3. ONLY AFTER user approval, write Playwright tests to lock in the behavior. Never use Vitest/RTL for UI testing.
+3. DO NOT write automated UI tests (No Playwright, No RTL, No Vitest for UI components). We rely entirely on user's manual verification for visuals and UI interactions. Proceed to the next task only after user approval.
 # 6. WIP & State Management (CRITICAL)
 - After completing ANY step or before stopping to ask the user for input, you MUST update `docs/active-task/wip-context.md`.
 - Overwrite the file with: 
