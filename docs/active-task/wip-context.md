@@ -1,35 +1,40 @@
-# WIP Context — Playwright Cleanup
+# WIP Context — Task 3: ConversationSidebar Component
 
 ## What Was Just Completed
 
-Complete removal of Playwright (E2E UI testing) from the DocuChat project. All UI testing will now be done **manually** per the project's `.clinerules` (Visual First approach).
+**Task 3: ConversationSidebar Component** — fully implemented and visually verified.
 
-### Files Modified
-1. **`src/frontend/package.json`** — Removed:
-   - `@playwright/test` from `devDependencies`
-   - Scripts: `test:e2e`, `test:e2e:ui`, `test:e2e:headed`
+### Files Created
+1. **`src/frontend/src/components/chat/ConversationSidebar.tsx`** — Left sidebar component listing conversations for a given document.
 
-2. **`.gitignore`** — Added `playwright-report/` entry
+### Key Features Implemented
+- **Props:** `documentId`, `activeConversationId`, `onSelect` — all strictly typed
+- **Loading state:** 3 skeleton divs with `animate-pulse` and `bg-muted`
+- **Empty state:** Centered `MessageSquare` icon + "No conversations yet." text
+- **Conversation list:** Maps over `conversations` array, shows title (or "Untitled Chat" fallback) + relative time
+- **Active state:** `bg-primary/10 text-primary` + `border-l-2 border-primary` left accent
+- **Relative time helper:** `formatRelativeTime()` — "just now", "2 mins ago", "3 hours ago", "5 days ago", date fallback
+- **Hover delete:** `Trash2` icon with `opacity-0 group-hover:opacity-100` transition
+- **Delete confirmation:** Inline "Delete? **Yes** / **No**" replaces row content on click
+- **New Chat button:** Calls `createConversation(documentId)` then `onSelect(newConv.id)`
+- **No `any` types** — all properly typed with `Conversation` from API module
 
-### Files Deleted
-3. **`src/frontend/playwright.config.ts`** — Playwright configuration
-4. **`src/frontend/tests/upload.spec.ts`** — Playwright E2E test for document upload UI
-5. **`src/frontend/playwright-report/`** — Generated Playwright report directory (contained `index.html`)
+### Visual Verification
+- Used `USE_MOCK_DATA = true` flag in `conversationStore.ts` to bypass backend (document processing not complete in local DB)
+- Temporarily rendered in `DocumentDetailPage.tsx` with a flex layout
+- All UI states verified: loading skeleton, conversation list, active highlighting, hover delete, inline delete confirmation, new chat creation
+- ✅ Approved by user
 
-### Docker Cleanup
-6. Ran `docker container prune -f` and `docker image prune -f` — no dangling resources found
-
-### Verification
-7. Ran `docker-compose exec frontend npx vitest run` — **69 tests pass across 7 test files**
-   - 2 pre-existing failures (unrelated to Playwright): missing `@radix-ui/react-dialog` and `@radix-ui/react-progress` in container's `node_modules`
-   - All Playwright-related tests are gone
-   - All Vitest logic tests still work
+### Cleanup After Verification
+- Removed `USE_MOCK_DATA` flag and all mock logic from `conversationStore.ts` (restored to original)
+- Removed temporary `ConversationSidebar` rendering and `activeConvId` state from `DocumentDetailPage.tsx`
+- No changes to `docs/references/database-schema.md` or `docs/references/api-registry.md` (no schema/API changes)
 
 ## Current State of Code
-- Playwright is completely removed from the project
-- Vitest remains as the only test runner for frontend logic tests
-- All 69 Vitest tests pass successfully
-- No Docker containers or images need rebuilding (Playwright was only a devDependency)
+- `ConversationSidebar.tsx` is production-ready at `src/frontend/src/components/chat/ConversationSidebar.tsx`
+- `DocumentDetailPage.tsx` is restored to its original state (no temporary rendering)
+- `conversationStore.ts` is restored to its original state (no mock data)
+- All existing tests remain unaffected
 
 ## Next Step
-Proceed to the next planned task (e.g., Task 3: Create chat UI components).
+Proceed to **Task 4: MessageBubble Component** — implement the message bubble UI component for displaying individual chat messages.

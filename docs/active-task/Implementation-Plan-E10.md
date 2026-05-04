@@ -74,9 +74,8 @@ T1 (API Layer) → T2 (Store) → T3, T4, T5 (parallel) → T6 (ChatWindow) → 
 ---
 
 ### TASK 3 — ConversationSidebar Component
-**File to Create:** [`src/frontend/src/components/chat/ConversationSidebar.tsx`](src/frontend/src/components/chat/ConversationSidebar.tsx)  
-**Test File:** [`src/frontend/tests/components/ConversationSidebar.spec.ts`](src/frontend/tests/components/ConversationSidebar.spec.ts)  
-**Test Type:** Visual First → Playwright  
+**File to Create:** [`src/frontend/src/components/chat/ConversationSidebar.tsx`](src/frontend/src/components/chat/ConversationSidebar.tsx)
+**Test Type:** Visual First — Manual UI verification only
 **Depends On:** TASK 2
 
 **What to do:**
@@ -89,17 +88,13 @@ T1 (API Layer) → T2 (Store) → T3, T4, T5 (parallel) → T6 (ChatWindow) → 
    - Loading state: 3 skeleton divs
    - Delete flow: inline confirmation "Delete? [Yes] [No]"
 3. Wire to `conversationStore`
-4. **Visual First:** Implement → wait for browser approval → write Playwright tests
-
-**Playwright scenarios (after approval):**
-- Skeleton loaders, conversation list, click selection, hover delete, delete confirmation, "New Chat" creation, empty state
+4. **Visual First:** Implement → wait for browser approval → done (no automated tests)
 
 ---
 
 ### TASK 4 — MessageBubble Component
-**File to Create:** [`src/frontend/src/components/chat/MessageBubble.tsx`](src/frontend/src/components/chat/MessageBubble.tsx)  
-**Test File:** [`src/frontend/tests/components/MessageBubble.spec.ts`](src/frontend/tests/components/MessageBubble.spec.ts)  
-**Test Type:** Visual First → Playwright  
+**File to Create:** [`src/frontend/src/components/chat/MessageBubble.tsx`](src/frontend/src/components/chat/MessageBubble.tsx)
+**Test Type:** Visual First — Manual UI verification only
 **Depends On:** Nothing (pure presentational)
 
 **What to do:**
@@ -110,14 +105,13 @@ T1 (API Layer) → T2 (Store) → T3, T4, T5 (parallel) → T6 (ChatWindow) → 
 5. **Source citations:** collapsible section (shadcn/ui `Collapsible`), toggle text, each source as `Card` with page range + score + content preview
 6. **Token usage:** tiny muted text
 7. **Timestamp:** `HH:mm` format
-8. **Visual First:** Implement with mock props → wait for approval → Playwright tests
+8. **Visual First:** Implement with mock props → wait for approval → done (no automated tests)
 
 ---
 
 ### TASK 5 — MessageInput Component
-**File to Create:** [`src/frontend/src/components/chat/MessageInput.tsx`](src/frontend/src/components/chat/MessageInput.tsx)  
-**Test File:** [`src/frontend/tests/components/MessageInput.spec.ts`](src/frontend/tests/components/MessageInput.spec.ts)  
-**Test Type:** Visual First → Playwright  
+**File to Create:** [`src/frontend/src/components/chat/MessageInput.tsx`](src/frontend/src/components/chat/MessageInput.tsx)
+**Test Type:** Visual First — Manual UI verification only
 **Depends On:** Nothing (pure presentational)
 
 **What to do:**
@@ -128,14 +122,13 @@ T1 (API Layer) → T2 (Store) → T3, T4, T5 (parallel) → T6 (ChatWindow) → 
 5. After send: clear input, refocus
 6. While disabled: spinner (`Loader2`), placeholder = "Waiting for response..."
 7. Character counter `X / 10,000` when length > 500
-8. **Visual First:** Implement → wait for approval → Playwright tests
+8. **Visual First:** Implement → wait for approval → done (no automated tests)
 
 ---
 
 ### TASK 6 — ChatWindow Component (Orchestrator)
-**File to Create:** [`src/frontend/src/components/chat/ChatWindow.tsx`](src/frontend/src/components/chat/ChatWindow.tsx)  
-**Test File:** [`src/frontend/tests/components/ChatWindow.spec.ts`](src/frontend/tests/components/ChatWindow.spec.ts)  
-**Test Type:** Visual First → Playwright  
+**File to Create:** [`src/frontend/src/components/chat/ChatWindow.tsx`](src/frontend/src/components/chat/ChatWindow.tsx)
+**Test Type:** Visual First — Manual UI verification only
 **Depends On:** TASK 3, TASK 4, TASK 5
 
 **What to do:**
@@ -145,7 +138,7 @@ T1 (API Layer) → T2 (Store) → T3, T4, T5 (parallel) → T6 (ChatWindow) → 
 4. **Empty state (0 messages):** centered icon + "Ask your first question" + 3 clickable starter chips
 5. **Sending flow:** `onSend` → `store.sendMessage()`, optimistic user message, streaming bubble
 6. **Error handling:** non-blocking `Alert` above input for 429/502/generic errors, "Try again" button
-7. **Visual First:** Implement → wait for approval → Playwright tests
+7. **Visual First:** Implement → wait for approval → done (no automated tests)
 
 ---
 
@@ -155,8 +148,7 @@ T1 (API Layer) → T2 (Store) → T3, T4, T5 (parallel) → T6 (ChatWindow) → 
 - [`src/frontend/src/App.tsx`](src/frontend/src/App.tsx) ← **modify** to add route
 - [`src/frontend/src/pages/documents/DocumentDetailPage.tsx`](src/frontend/src/pages/documents/DocumentDetailPage.tsx) ← **modify** "Chat with Document" button
 
-**Test File:** [`src/frontend/tests/e2e/chat.spec.ts`](src/frontend/tests/e2e/chat.spec.ts)  
-**Test Type:** Visual First → Playwright E2E  
+**Test Type:** Visual First — Manual UI verification only
 **Depends On:** TASK 6
 
 **What to do:**
@@ -169,7 +161,7 @@ T1 (API Layer) → T2 (Store) → T3, T4, T5 (parallel) → T6 (ChatWindow) → 
 5. Sidebar selection → navigate via `useNavigate`
 6. **Mobile (< `md`):** sidebar hidden, "☰ Chats" button opens slide-over drawer
 7. **DocumentDetailPage:** Add "Chat with Document" button (`MessageSquare` icon), only visible when `document.status === 'completed'`
-8. **Visual First:** Implement → wait for approval → Playwright E2E tests
+8. **Visual First:** Implement → wait for approval → done (no automated tests)
 
 ---
 
@@ -186,7 +178,7 @@ T1 (API Layer) → T2 (Store) → T3, T4, T5 (parallel) → T6 (ChatWindow) → 
 3. **Focus Management:** after send, focus returns to textarea
 4. Message list: `aria-live="polite"` + `aria-busy` while loading
 5. **Page Title:** `document.title = "Chat — {document_title} | DocuChat"`
-6. **Visual First:** Implement → manual browser accessibility audit → Playwright tests
+6. **Visual First:** Implement → manual browser accessibility audit → done (no automated tests)
 
 ---
 
@@ -208,7 +200,7 @@ flowchart LR
 1. **API Client Pattern:** Follow existing [`authApi.ts`](src/frontend/src/api/authApi.ts) pattern — use `apiClient` from [`axios.ts`](src/frontend/src/api/axios.ts) (handles auth tokens, refresh, base URL)
 2. **Store Pattern:** Follow [`authStore.ts`](src/frontend/src/stores/authStore.ts) pattern — Zustand with separated state/actions interfaces
 3. **Routing:** Add chat routes inside the existing `PrivateRoute` → `AppShell` layout in [`App.tsx`](src/frontend/src/App.tsx)
-4. **Testing:** Vitest for pure logic (T1, T2), Playwright for UI components (T3–T8) — NO React Testing Library
+4. **Testing:** Vitest for pure logic (T1, T2), Visual First manual verification for UI components (T3–T8) — NO Playwright, NO React Testing Library
 5. **No DB/API changes:** All backend work is complete; this is purely frontend
 
 ## Files to Create (Summary)
@@ -237,11 +229,6 @@ flowchart LR
 |---|------|------|
 | 1 | `src/frontend/tests/api/conversations.test.ts` | Vitest (TDD) |
 | 2 | `src/frontend/tests/stores/conversationStore.test.ts` | Vitest (TDD) |
-| 3 | `src/frontend/tests/components/ConversationSidebar.spec.ts` | Playwright |
-| 4 | `src/frontend/tests/components/MessageBubble.spec.ts` | Playwright |
-| 5 | `src/frontend/tests/components/MessageInput.spec.ts` | Playwright |
-| 6 | `src/frontend/tests/components/ChatWindow.spec.ts` | Playwright |
-| 7 | `src/frontend/tests/e2e/chat.spec.ts` | Playwright E2E |
 
 ---
 

@@ -1,9 +1,9 @@
 # PRD — Epic E10: Frontend Chat Interface
-**Status:** Ready for Implementation  
-**Epic ID:** E10  
-**Depends On:** E08 (Auth & Layout ✅), E09 (Document Management ⏳), E07 (RAG Backend ✅)  
-**Stack:** React + Vite + TypeScript + TailwindCSS + shadcn/ui  
-**Test Strategy:** Visual First → Playwright (NO RTL, NO Vitest for UI)
+**Status:** Ready for Implementation
+**Epic ID:** E10
+**Depends On:** E08 (Auth & Layout ✅), E09 (Document Management ⏳), E07 (RAG Backend ✅)
+**Stack:** React + Vite + TypeScript + TailwindCSS + shadcn/ui
+**Test Strategy:** Visual First — Manual UI verification only (NO Playwright, NO RTL, NO Vitest for UI)
 
 ---
 
@@ -122,7 +122,7 @@ interface ConversationState {
 ---
 
 ### TASK 3 — ConversationSidebar Component
-**Effort:** Medium | **Test Type:** Visual First → Playwright after approval
+**Effort:** Medium | **Test Type:** Visual First — Manual UI verification only
 
 **Goal:** Left sidebar listing all conversations for the current document. Allows creating, selecting, and deleting conversations.
 
@@ -146,27 +146,18 @@ interface Props {
 6. **Delete Flow:** Inline confirmation (no modal): "Delete? [Yes] [No]" — Yes calls `deleteConversation`, No cancels.
 7. **"New Chat" action:** Calls `createConversation(documentId)` then calls `onSelect` with new id.
 
-**Styling:** Use shadcn/ui `ScrollArea` for the list. TailwindCSS only — no inline styles.
+**Styling:** TailwindCSS only — no inline styles. Use a `div` with `overflow-y-auto` for the scrollable list.
 
 **Visual First Steps:**
 1. Implement component. Wire to store.
 2. Integrate into a test route or Document Detail page.
 3. STOP — wait for user browser approval.
-4. Write Playwright tests: `src/frontend/tests/components/ConversationSidebar.spec.ts`
-
-**Playwright Test Scenarios (write AFTER approval):**
-- [ ] Renders skeleton loaders while loading
-- [ ] Renders conversation list after load
-- [ ] Clicking conversation calls `onSelect`
-- [ ] Hover reveals delete icon
-- [ ] Delete confirmation — Yes deletes, No cancels
-- [ ] "New Chat" creates conversation and triggers `onSelect`
-- [ ] Empty state shown when list is empty
+4. No automated tests needed — manual verification only.
 
 ---
 
 ### TASK 4 — MessageBubble Component
-**Effort:** Medium | **Test Type:** Visual First → Playwright after approval
+**Effort:** Medium | **Test Type:** Visual First — Manual UI verification only
 
 **Goal:** Renders a single chat message for both user and assistant roles, with source citations.
 
@@ -205,20 +196,12 @@ interface Props {
 1. Install `react-markdown`.
 2. Implement component with hardcoded mock props to verify layout.
 3. STOP — wait for user browser approval.
-4. Write Playwright tests: `src/frontend/tests/components/MessageBubble.spec.ts`
-
-**Playwright Test Scenarios (write AFTER approval):**
-- [ ] User message is right-aligned
-- [ ] Assistant message renders markdown (bold, code blocks)
-- [ ] Streaming cursor visible when `isStreaming=true`
-- [ ] Sources section collapsed by default
-- [ ] Sources expand on toggle click
-- [ ] Source card shows correct page range and score percentage
+4. No automated tests needed — manual verification only.
 
 ---
 
 ### TASK 5 — MessageInput Component
-**Effort:** Small | **Test Type:** Visual First → Playwright after approval
+**Effort:** Small | **Test Type:** Visual First — Manual UI verification only
 
 **Goal:** Auto-growing textarea at bottom of chat for composing and submitting questions.
 
@@ -244,20 +227,12 @@ interface Props {
 **Visual First Steps:**
 1. Implement component.
 2. STOP — wait for user browser approval.
-3. Write Playwright tests: `src/frontend/tests/components/MessageInput.spec.ts`
-
-**Playwright Test Scenarios (write AFTER approval):**
-- [ ] Enter key submits and clears input
-- [ ] Shift+Enter adds newline without submitting
-- [ ] Send button disabled when empty
-- [ ] Spinner shown when `isDisabled=true`
-- [ ] Counter appears after 500 chars
-- [ ] Counter hidden below 500 chars
+3. No automated tests needed — manual verification only.
 
 ---
 
 ### TASK 6 — ChatWindow Component (Orchestrator)
-**Effort:** Large | **Test Type:** Visual First → Playwright after approval
+**Effort:** Large | **Test Type:** Visual First — Manual UI verification only
 
 **Goal:** Main chat panel. Composes `MessageBubble` + `MessageInput`. Manages scroll, loading, and error states.
 
@@ -297,24 +272,12 @@ interface Props { conversationId: string; }
 **Visual First Steps:**
 1. Implement. Wire to store.
 2. STOP — wait for user browser approval.
-3. Write Playwright tests: `src/frontend/tests/components/ChatWindow.spec.ts`
-
-**Playwright Test Scenarios (write AFTER approval):**
-- [ ] Loading skeleton shown on mount
-- [ ] Messages render after load
-- [ ] Optimistic user bubble appears immediately on send
-- [ ] Streaming "thinking" bubble appears while waiting
-- [ ] Auto-scroll to bottom on new message
-- [ ] Empty state shows starter chips
-- [ ] Clicking chip populates input
-- [ ] Error alert appears on 502 response
-- [ ] Rate limit error shows correct message
-- [ ] "Try again" dismisses error
+3. No automated tests needed — manual verification only.
 
 ---
 
 ### TASK 7 — ChatPage Route & Layout Integration
-**Effort:** Medium | **Test Type:** Visual First → Playwright E2E after approval
+**Effort:** Medium | **Test Type:** Visual First — Manual UI verification only
 
 **Goal:** Full-page chat route. Integrates `ConversationSidebar` + `ChatWindow` into router and layout shell.
 
@@ -352,16 +315,7 @@ interface Props { conversationId: string; }
 1. Implement `ChatPage.tsx` and update router.
 2. Add "Chat with Document" link in `DocumentDetailPage`.
 3. STOP — wait for user browser approval of full flow.
-4. Write E2E tests: `src/frontend/tests/e2e/chat.spec.ts`
-
-**Playwright E2E Test Scenarios (write AFTER approval):**
-- [ ] `/documents/:id/chat` renders two-panel layout
-- [ ] Sidebar shows existing conversations
-- [ ] "New Chat" creates conversation and loads ChatWindow
-- [ ] Full send → receive message flow end-to-end
-- [ ] Refreshing page with `conversationId` in URL restores conversation
-- [ ] "Chat with Document" button absent when `status !== 'completed'`
-- [ ] Mobile: sidebar hidden by default, opens on "Chats" button click
+4. No automated tests needed — manual verification only.
 
 ---
 
@@ -388,7 +342,7 @@ interface Props { conversationId: string; }
 **Visual First Steps:**
 1. Implement all changes.
 2. STOP — manual browser accessibility audit.
-3. Write Playwright accessibility tests after approval.
+3. No automated tests needed — manual verification only.
 
 ---
 
@@ -410,15 +364,14 @@ T1 (API Layer) → T2 (Store) → T3, T4, T5 (parallel) → T6 (ChatWindow) → 
 
 - [ ] T1: Conversation API module — typed, Vitest-tested
 - [ ] T2: Zustand store with optimistic updates — Vitest-tested
-- [ ] T3: ConversationSidebar — approved, Playwright-tested
-- [ ] T4: MessageBubble with markdown + citations — approved, Playwright-tested
-- [ ] T5: MessageInput with keyboard behavior — approved, Playwright-tested
-- [ ] T6: ChatWindow orchestrator — approved, Playwright-tested
-- [ ] T7: ChatPage route + integration — approved, E2E Playwright-tested
-- [ ] T8: Error boundary + accessibility — approved, Playwright-tested
+- [ ] T3: ConversationSidebar — approved, manually verified
+- [ ] T4: MessageBubble with markdown + citations — approved, manually verified
+- [ ] T5: MessageInput with keyboard behavior — approved, manually verified
+- [ ] T6: ChatWindow orchestrator — approved, manually verified
+- [ ] T7: ChatPage route + integration — approved, manually verified
+- [ ] T8: Error boundary + accessibility — approved, manually verified
 - [ ] No `any` TypeScript types in new files
 - [ ] No React Testing Library used anywhere
-- [ ] All tests pass: `docker-compose exec frontend npx playwright test`
 - [ ] `wip-context.md` updated after every micro-task
 - [ ] No DB schema changes, no new API endpoints
 
