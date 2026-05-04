@@ -1,38 +1,35 @@
-# WIP Context — Task 2: Conversation Store (Zustand)
+# WIP Context — Playwright Cleanup
 
 ## What Was Just Completed
 
-Created the Zustand conversation store following TDD (RED → GREEN → REFACTOR).
+Complete removal of Playwright (E2E UI testing) from the DocuChat project. All UI testing will now be done **manually** per the project's `.clinerules` (Visual First approach).
 
-### Files Created
+### Files Modified
+1. **`src/frontend/package.json`** — Removed:
+   - `@playwright/test` from `devDependencies`
+   - Scripts: `test:e2e`, `test:e2e:ui`, `test:e2e:headed`
 
-1. **`src/frontend/src/stores/conversationStore.ts`** — Zustand store with:
-   - **State**: `conversations`, `activeConversation`, `isLoadingConversations`, `isLoadingMessages`, `isSendingMessage`, `error`
-   - **Actions**: `fetchConversations`, `createConversation`, `loadConversation`, `sendMessage`, `deleteConversation`, `clearActiveConversation`, `clearError`
-   - **Optimistic updates** in `sendMessage`: appends user message immediately with temp ID, appends assistant response on success, rolls back on error
-   - **List caching**: `createConversation` prepends to local list (no full refetch)
-   - **Error handling**: all async actions catch errors and set `error` state with meaningful messages
-   - **No `any` types** — uses proper TypeScript types from `@/api/conversations`
-   - **No direct `fetch` calls** — delegates entirely to `@/api/conversations`
-   - **Helper**: `generateTempId()` using `crypto.randomUUID()` with fallback
+2. **`.gitignore`** — Added `playwright-report/` entry
 
-2. **`src/frontend/tests/stores/conversationStore.test.ts`** — 14 test cases across 6 describe blocks:
-   - `fetchConversations`: 2 tests (success sets conversations/clears loading, failure sets error)
-   - `createConversation`: 2 tests (appends to list on success, propagates error without modifying list)
-   - `loadConversation`: 2 tests (sets activeConversation on success, sets error on failure)
-   - `sendMessage — Optimistic Update`: 4 tests (optimistic append with temp id, success appends assistant, error rolls back, isSendingMessage lifecycle)
-   - `deleteConversation`: 2 tests (removes from list + clears activeConversation, sets error on failure)
-   - `clearActiveConversation / clearError`: 2 tests (sets to null)
+### Files Deleted
+3. **`src/frontend/playwright.config.ts`** — Playwright configuration
+4. **`src/frontend/tests/upload.spec.ts`** — Playwright E2E test for document upload UI
+5. **`src/frontend/playwright-report/`** — Generated Playwright report directory (contained `index.html`)
 
-### Test Results
-- **14/14 tests passing** via `docker-compose exec frontend npx vitest run tests/stores/conversationStore.test.ts`
+### Docker Cleanup
+6. Ran `docker container prune -f` and `docker image prune -f` — no dangling resources found
+
+### Verification
+7. Ran `docker-compose exec frontend npx vitest run` — **69 tests pass across 7 test files**
+   - 2 pre-existing failures (unrelated to Playwright): missing `@radix-ui/react-dialog` and `@radix-ui/react-progress` in container's `node_modules`
+   - All Playwright-related tests are gone
+   - All Vitest logic tests still work
 
 ## Current State of Code
-
-- `src/frontend/src/stores/conversationStore.ts` — Complete, clean, no `any` types
-- `src/frontend/tests/stores/conversationStore.test.ts` — Complete, all 14 tests passing
-- No changes to existing files
+- Playwright is completely removed from the project
+- Vitest remains as the only test runner for frontend logic tests
+- All 69 Vitest tests pass successfully
+- No Docker containers or images need rebuilding (Playwright was only a devDependency)
 
 ## Next Step
-
-Proceed to **Task 3**: Create the chat UI components that consume this store.
+Proceed to the next planned task (e.g., Task 3: Create chat UI components).

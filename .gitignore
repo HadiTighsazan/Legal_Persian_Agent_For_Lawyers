@@ -175,6 +175,9 @@ dump.rdb
 celerybeat-schedule
 celerybeat.pid
 
+# Playwright
+playwright-report/
+
 # PyTest
 .pytest_cache/
 .coverage
