@@ -258,6 +258,108 @@ def run_rag_query(
     }
 
 
+def run_rag_query_stream(
+    question: str,
+    document_id: str,
+    conversation_history: list[dict[str, str]] | None = None,
+    top_k: int = 5,
+) -> Any:
+    """Execute the RAG pipeline with streaming response.
+
+    Same as :func:`run_rag_query` but yields tokens as they arrive from the
+    chat provider, then yields the final metadata (sources, token_usage).
+
+    Yields:
+        ``(type: str, data: dict)`` tuples where ``type`` is one of:
+        - ``"token"``: A content token. ``data`` = ``{"content": str}``.
+        - ``"done"``: Streaming complete. ``data`` = ``{"message_id": str, "sources": list, "token_usage": dict}``.
+
+    Raises:
+        RAGServiceException: If any step of the pipeline fails.
+    """
+    # Step 1: Embed the question
+    logger.info("run_rag_query_stream: Embedding question for document %s", document_id)
+    try:
+        query_embedding = embed_query(question)
+    except Exception as e:
+        raise RAGServiceException(f"Failed to embed question: {e}") from e
+
+    # Step 2: Search for relevant chunks
+    logger.info(
+        "run_rag_query_stream: Searching chunks for document %s (top_k=%d)",
+        document_id,
+        top_k,
+    )
+    try:
+        chunks = search_chunks(
+            document_id=document_id,
+            query_vector=query_embedding,
+            top_k=top_k,
+        )
+    except Exception as e:
+        raise RAGServiceException(f"Failed to search chunks: {e}") from e
+
+    # Step 3: Build context from chunks
+    context = build_context(chunks)
+
+    # Step 4: Build messages array
+    messages: list[dict[str, str]] = []
+
+    document_title = _get_document_title(document_id)
+    system_prompt = build_system_prompt(document_title)
+    messages.append({"role": "system", "content": system_prompt})
+
+    if conversation_history:
+        max_turns = settings.RAG_MAX_HISTORY_TURNS
+        recent_history = conversation_history[-(max_turns * 2):]
+        messages.extend(recent_history)
+
+    user_message = (
+        f"Context:\n{context}\n\n"
+        f"Question: {question}"
+    )
+    messages.append({"role": "user", "content": user_message})
+
+    # Step 5: Stream from the chat provider
+    logger.info("run_rag_query_stream: Calling chat provider (streaming)")
+    try:
+        provider = get_chat_provider()
+        full_content: list[str] = []
+        final_token_usage: dict[str, int] | None = None
+
+        for token_text, is_last, metadata in provider.chat_stream(
+            messages=messages,
+            max_tokens=settings.CHAT_MAX_TOKENS,
+        ):
+            if token_text:
+                full_content.append(token_text)
+                yield "token", {"content": token_text}
+
+            if is_last and metadata:
+                final_token_usage = metadata.get("token_usage")
+
+        response_content = "".join(full_content)
+
+    except Exception as e:
+        logger.exception("run_rag_query_stream: Chat provider API call failed")
+        raise RAGServiceException(f"Chat provider API call failed: {e}") from e
+
+    # Step 6: Extract citations from the full response
+    sources = extract_citations(response_content, chunks)
+
+    # Step 7: Yield done event
+    token_usage = final_token_usage or {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+    yield "done", {
+        "content": response_content,
+        "sources": sources,
+        "token_usage": token_usage,
+    }
+
+
 def _get_document_title(document_id: str) -> str:
     """Retrieve the document title from the database.
 

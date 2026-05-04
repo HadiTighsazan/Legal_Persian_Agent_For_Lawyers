@@ -4,7 +4,9 @@ vi.mock('@/api/conversations', () => ({
   createConversation: vi.fn(),
   getConversation: vi.fn(),
   sendMessage: vi.fn(),
+  sendMessageStream: vi.fn(),
   deleteConversation: vi.fn(),
+  renameConversation: vi.fn(),
 }));
 
 // ── Mock data ──────────────────────────────────────────────────────────
@@ -83,6 +85,8 @@ async function resetStore() {
     isLoadingConversations: false,
     isLoadingMessages: false,
     isSendingMessage: false,
+    isCreatingConversation: false,
+    streamingContent: '',
     error: null,
   });
   return useConversationStore;
@@ -293,6 +297,159 @@ describe('ConversationStore', () => {
 
       // After resolve
       expect(useConversationStore.getState().isSendingMessage).toBe(false);
+    });
+  });
+
+  describe('renameConversation', () => {
+    it('updates conversation title in list and activeConversation on success', async () => {
+      const api = await import('@/api/conversations');
+      const updated = { ...mockConversation, title: 'Renamed Title' };
+      vi.mocked(api.renameConversation).mockResolvedValue(updated);
+
+      const useConversationStore = await resetStore();
+      useConversationStore.setState({
+        conversations: [mockConversation],
+        activeConversation: { ...mockConversationDetail },
+      });
+
+      await useConversationStore.getState().renameConversation('conv-1', 'Renamed Title');
+
+      expect(api.renameConversation).toHaveBeenCalledWith('conv-1', 'Renamed Title');
+      const state = useConversationStore.getState();
+      expect(state.conversations[0].title).toBe('Renamed Title');
+      expect(state.activeConversation?.title).toBe('Renamed Title');
+      expect(state.error).toBeNull();
+    });
+
+    it('sets error on failure', async () => {
+      const api = await import('@/api/conversations');
+      vi.mocked(api.renameConversation).mockRejectedValue(new Error('Rename failed'));
+
+      const useConversationStore = await resetStore();
+      useConversationStore.setState({
+        conversations: [mockConversation],
+      });
+
+      await useConversationStore.getState().renameConversation('conv-1', 'New Title');
+
+      const state = useConversationStore.getState();
+      expect(state.error).toBe('Rename failed');
+      expect(state.conversations[0].title).toBe('Questions about Chapter 5');
+    });
+  });
+
+  describe('sendMessageStream — Streaming Updates', () => {
+    it('adds optimistic user + temp assistant messages immediately', async () => {
+      const api = await import('@/api/conversations');
+      // Use a deferred pattern: capture callbacks so we can control resolution
+      let capturedOnDone!: (data: { message_id: string; sources: unknown[]; token_usage: unknown }) => void;
+      vi.mocked(api.sendMessageStream).mockImplementation(
+        (_conversationId: string, _content: string, _onToken: (token: string) => void, onDone: (data: { message_id: string; sources: unknown[]; token_usage: unknown }) => void, _onError: (error: Error) => void) => {
+          capturedOnDone = onDone;
+          return new AbortController();
+        },
+      );
+
+      const useConversationStore = await resetStore();
+      useConversationStore.setState({
+        activeConversation: { ...mockConversationDetail },
+      });
+
+      // Trigger sendMessageStream but don't await it yet
+      const sendPromise = useConversationStore.getState().sendMessageStream('conv-1', 'Hello');
+
+      // Check optimistic state synchronously (before onDone is called)
+      const state = useConversationStore.getState();
+      expect(state.isSendingMessage).toBe(true);
+      expect(state.activeConversation).not.toBeNull();
+      // Original 2 messages + optimistic user + temp assistant = 4
+      expect(state.activeConversation!.messages).toHaveLength(
+        mockConversationDetail.messages.length + 2,
+      );
+      const lastMsg = state.activeConversation!.messages[
+        state.activeConversation!.messages.length - 1
+      ];
+      expect(lastMsg.role).toBe('assistant');
+      expect(lastMsg.content).toBe('');
+      expect(lastMsg.id).toMatch(/^temp-assistant-/);
+
+      // Now resolve the promise by calling onDone
+      capturedOnDone({
+        message_id: 'real-msg-id',
+        sources: [],
+        token_usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      });
+
+      // Wait for the promise to resolve
+      await expect(sendPromise).resolves.toBeUndefined();
+    });
+
+    it('on done, replaces temp assistant with real message', async () => {
+      const api = await import('@/api/conversations');
+      vi.mocked(api.sendMessageStream).mockImplementation(
+        (_conversationId: string, _content: string, _onToken: (token: string) => void, onDone: (data: { message_id: string; sources: unknown[]; token_usage: unknown }) => void, _onError: (error: Error) => void) => {
+          // Simulate streaming completion
+          setTimeout(() => {
+            onDone({
+              message_id: 'real-msg-id',
+              sources: [],
+              token_usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+            });
+          }, 0);
+          return new AbortController();
+        },
+      );
+
+      const useConversationStore = await resetStore();
+      useConversationStore.setState({
+        activeConversation: { ...mockConversationDetail },
+      });
+
+      await useConversationStore.getState().sendMessageStream('conv-1', 'Hello');
+
+      const state = useConversationStore.getState();
+      expect(state.isSendingMessage).toBe(false);
+      expect(state.streamingContent).toBe('');
+      expect(state.error).toBeNull();
+      // Original 2 + optimistic user + real assistant = 4
+      expect(state.activeConversation!.messages).toHaveLength(
+        mockConversationDetail.messages.length + 2,
+      );
+      const lastMsg = state.activeConversation!.messages[
+        state.activeConversation!.messages.length - 1
+      ];
+      expect(lastMsg.id).toBe('real-msg-id');
+    });
+
+    it('on error, removes temp messages and sets error', async () => {
+      const api = await import('@/api/conversations');
+      vi.mocked(api.sendMessageStream).mockImplementation(
+        (_conversationId: string, _content: string, _onToken: (token: string) => void, _onDone: (data: unknown) => void, onError: (error: Error) => void) => {
+          // Simulate error
+          setTimeout(() => {
+            onError(new Error('Stream failed'));
+          }, 0);
+          return new AbortController();
+        },
+      );
+
+      const useConversationStore = await resetStore();
+      useConversationStore.setState({
+        activeConversation: { ...mockConversationDetail },
+      });
+
+      await expect(
+        useConversationStore.getState().sendMessageStream('conv-1', 'Hello'),
+      ).rejects.toThrow('Stream failed');
+
+      const state = useConversationStore.getState();
+      expect(state.isSendingMessage).toBe(false);
+      expect(state.streamingContent).toBe('');
+      expect(state.error).toBe('Stream failed');
+      // Messages should be back to original length (temp messages removed)
+      expect(state.activeConversation!.messages).toHaveLength(
+        mockConversationDetail.messages.length,
+      );
     });
   });
 

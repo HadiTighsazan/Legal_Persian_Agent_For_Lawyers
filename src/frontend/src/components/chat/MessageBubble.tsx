@@ -66,7 +66,7 @@ function SourceCitations({ sources }: SourceCitationsProps) {
 
               {/* Content preview */}
               {source.content_preview && (
-                <p className="text-xs text-muted-foreground/80 line-clamp-3">
+                <p className="text-xs text-muted-foreground/80 line-clamp-3" dir="auto">
                   {source.content_preview}
                 </p>
               )}
@@ -111,9 +111,9 @@ export default function MessageBubble({
           )}
         >
           {isUser ? (
-            <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+            <p className="text-sm whitespace-pre-wrap" dir="auto">{message.content}</p>
           ) : (
-            <div className="prose prose-sm dark:prose-invert max-w-none">
+            <div className="prose prose-sm dark:prose-invert max-w-none" dir="auto">
               <ReactMarkdown>{message.content}</ReactMarkdown>
               {isStreaming && (
                 <span className="animate-pulse ml-0.5">▌</span>

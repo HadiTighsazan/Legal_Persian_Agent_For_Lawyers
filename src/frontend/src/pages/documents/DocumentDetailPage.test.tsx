@@ -126,7 +126,7 @@ describe("DocumentDetailPage", () => {
 
     // Action buttons
     expect(
-      screen.getByRole("button", { name: /start chat/i }),
+      screen.getByRole("button", { name: /chat with document/i }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /delete/i })).toBeInTheDocument();
 

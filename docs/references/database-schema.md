@@ -31,10 +31,10 @@
 | file_size | BIGINT | NOT NULL | File size in bytes |
 | mime_type | VARCHAR(100) | NOT NULL | File MIME type |
 | total_pages | INTEGER | NULL | Total page count |
-| status | VARCHAR(50) | DEFAULT 'uploaded' | processing status: uploaded, processing, completed, failed |
+| status | VARCHAR(50) | DEFAULT 'uploaded' | Upload lifecycle status: uploaded → processing → completed/failed. This is the **authoritative** status for external consumers. Updated by pipeline tasks. |
 | error_message | TEXT | NULL | Error details if failed |
 | **storage_type** | **VARCHAR(20)** | **DEFAULT 'local', INDEXED** | **Storage backend: local / s3 (added in E03-P1)** |
-| **processing_status** | **VARCHAR(20)** | **DEFAULT 'pending'** | **Pipeline processing status: pending, processing, completed, failed (added in E04-T2)** |
+| **processing_status** | **VARCHAR(20)** | **DEFAULT 'pending'** | **Pipeline granular status: pending → processing → completed/failed. Internal field for pipeline tracking; NOT authoritative for external consumers (use `status` instead). (added in E04-T2)** |
 | **total_chunks** | **INTEGER** | **DEFAULT 0** | **Total number of text chunks after splitting (added in E04-T2)** |
 | **extracted_text_length** | **INTEGER** | **DEFAULT 0** | **Length of extracted text in characters (added in E04-T2)** |
 | **processing_error** | **TEXT** | **NULL** | **Error details from pipeline processing (added in E04-T2)** |

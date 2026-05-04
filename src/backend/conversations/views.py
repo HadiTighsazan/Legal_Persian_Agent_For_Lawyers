@@ -2,16 +2,19 @@
 Views for the conversations app.
 
 Provides ``ConversationListCreateView`` (POST + GET /conversations/),
-``ConversationDetailView`` (GET + DELETE /conversations/{conversation_id}),
-and ``ConversationMessageView`` (POST /conversations/{conversation_id}/messages/)
+``ConversationDetailView`` (GET + PATCH + DELETE /conversations/{conversation_id}),
+``ConversationMessageView`` (POST /conversations/{conversation_id}/messages/),
+and ``ConversationMessageStreamView`` (POST /conversations/{conversation_id}/messages/stream/)
 for CRUD operations on conversations and asking questions (Epic E-07, Tasks 4 & 5).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 
 from django.db.models import Count
+from django.http import StreamingHttpResponse
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
@@ -21,7 +24,7 @@ from rest_framework.views import APIView
 
 from conversations.models import Conversation, Message
 from documents.models import Document
-from conversations.rag_service import RAGServiceException, run_rag_query
+from conversations.rag_service import RAGServiceException, run_rag_query, run_rag_query_stream
 from conversations.serializers import (
     AskQuestionSerializer,
     ConversationCreateSerializer,
@@ -160,15 +163,23 @@ class ConversationListCreateView(APIView):
 
 
 class ConversationDetailView(APIView):
-    """Retrieve or delete a conversation.
+    """Retrieve, update, or delete a conversation.
 
-    **Endpoint:** ``GET /conversations/{conversation_id}/`` and
+    **Endpoint:** ``GET /conversations/{conversation_id}/``,
+    ``PATCH /conversations/{conversation_id}/``, and
     ``DELETE /conversations/{conversation_id}/``
 
     **Authentication:** Required (JWT via ``rest_framework_simplejwt``).
 
     **GET Responses:**
         - ``200 OK`` — Conversation returned successfully.
+        - ``403 Forbidden`` — Conversation belongs to another user.
+        - ``404 Not Found`` — Conversation does not exist.
+        - ``401 Unauthorized`` — Missing or invalid authentication.
+
+    **PATCH Responses:**
+        - ``200 OK`` — Conversation title updated successfully.
+        - ``400 Bad Request`` — Title is empty or invalid.
         - ``403 Forbidden`` — Conversation belongs to another user.
         - ``404 Not Found`` — Conversation does not exist.
         - ``401 Unauthorized`` — Missing or invalid authentication.
@@ -211,6 +222,42 @@ class ConversationDetailView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     # ------------------------------------------------------------------
+    # PATCH — Update conversation title (rename)
+    # ------------------------------------------------------------------
+
+    def patch(self, request: Request, conversation_id: str) -> Response:
+        """Handle the conversation rename PATCH request."""
+        conversation, error = _get_conversation_or_error(
+            conversation_id,
+            request,
+        )
+        if error:
+            return error
+
+        title = request.data.get("title", "").strip()
+        if not title:
+            return Response(
+                {
+                    "error": "validation_error",
+                    "message": "Title cannot be empty.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        conversation.title = title
+        conversation.save(update_fields=["title"])
+
+        logger.info(
+            "Conversation %s renamed to '%s' by user=%s",
+            conversation_id,
+            title,
+            request.user,
+        )
+
+        serializer = ConversationListSerializer(conversation)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    # ------------------------------------------------------------------
     # DELETE — Delete a conversation
     # ------------------------------------------------------------------
 
@@ -232,13 +279,6 @@ class ConversationDetailView(APIView):
         )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-    # ------------------------------------------------------------------
-    # DELETE — Delete a conversation
-    # ------------------------------------------------------------------
-
-
-
 class ConversationMessageView(APIView):
     """Handle asking a question in a conversation.
 
@@ -351,6 +391,114 @@ class ConversationMessageView(APIView):
         return Response(
             response_serializer.data,
             status=status.HTTP_201_CREATED,
+        )
+
+
+class ConversationMessageStreamView(APIView):
+    """Handle asking a question with a streaming SSE response.
+
+    **Endpoint:** ``POST /conversations/{conversation_id}/messages/stream/``
+
+    **Authentication:** Required (JWT via ``rest_framework_simplejwt``).
+
+    Returns a ``text/event-stream`` response where each event is a JSON line
+    prefixed with ``data: ``.
+
+    **Event types:**
+        - ``data: {"type": "token", "content": "..."}`` — A content token.
+        - ``data: {"type": "done", "message_id": "...", "sources": [...], "token_usage": {...}}``
+          — Streaming complete.
+
+    **POST Responses:**
+        - ``200 OK`` — SSE stream of tokens.
+        - ``400 Bad Request`` — Validation error (empty content, etc.).
+        - ``401 Unauthorized`` — Missing or invalid authentication.
+        - ``403 Forbidden`` — Conversation belongs to another user.
+        - ``404 Not Found`` — Conversation does not exist.
+        - ``429 Too Many Requests`` — OpenAI API rate limit exceeded.
+        - ``502 Bad Gateway`` — RAG service error.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, conversation_id: str) -> Response:
+        """Handle the streaming question-asking POST request."""
+        # 1. Fetch conversation + ownership check
+        conversation, error = _get_conversation_or_error(conversation_id, request)
+        if error:
+            return error
+
+        # 2. Validate input
+        serializer = AskQuestionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
+        question = validated_data["content"]
+
+        # 3. Persist the user message
+        Message.objects.create(
+            conversation=conversation,
+            role="user",
+            content=question,
+        )
+
+        # 4. Build conversation history
+        all_messages = conversation.messages.all().order_by("created_at")
+        conversation_history = [
+            {"role": msg.role, "content": msg.content}
+            for msg in all_messages
+        ]
+
+        # 5. Create a streaming SSE response
+        def event_stream():
+            try:
+                for event_type, data in run_rag_query_stream(
+                    question=question,
+                    document_id=str(conversation.document_id),
+                    conversation_history=conversation_history,
+                    top_k=5,
+                ):
+                    if event_type == "token":
+                        yield f"data: {json.dumps({'type': 'token', 'content': data['content']})}\n\n"
+                    elif event_type == "done":
+                        # Persist the assistant message
+                        assistant_message = Message.objects.create(
+                            conversation=conversation,
+                            role="assistant",
+                            content=data["content"],
+                            sources=data["sources"],
+                            token_usage=data["token_usage"],
+                        )
+                        # Touch conversation.updated_at
+                        conversation.save()
+
+                        # Send done event with message metadata
+                        yield f"data: {json.dumps({'type': 'done', 'message_id': str(assistant_message.id), 'sources': data['sources'], 'token_usage': data['token_usage']})}\n\n"
+
+            except RAGServiceException as e:
+                error_msg = str(e).lower()
+                if "rate limit" in error_msg or "429" in error_msg:
+                    yield f"data: {json.dumps({'type': 'error', 'error': 'rate_limit_exceeded', 'message': 'AI provider rate limit exceeded. Please try again later.'})}\n\n"
+                else:
+                    logger.error(
+                        "RAG stream query failed for conversation %s: %s",
+                        conversation_id,
+                        e,
+                    )
+                    yield f"data: {json.dumps({'type': 'error', 'error': 'rag_error', 'message': str(e)})}\n\n"
+            except Exception as e:
+                logger.exception(
+                    "Unexpected error in stream for conversation %s",
+                    conversation_id,
+                )
+                yield f"data: {json.dumps({'type': 'error', 'error': 'internal_error', 'message': 'An unexpected error occurred.'})}\n\n"
+
+        return StreamingHttpResponse(
+            streaming_content=event_stream(),
+            content_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
         )
 
 

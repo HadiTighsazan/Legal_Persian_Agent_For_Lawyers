@@ -6,6 +6,7 @@ import DashboardPage from '@/pages/DashboardPage';
 import DocumentListPage from '@/pages/documents/DocumentListPage';
 import UploadPage from '@/pages/documents/UploadPage';
 import DocumentDetailPage from '@/pages/documents/DocumentDetailPage';
+import ChatPage from '@/pages/ChatPage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
 
@@ -24,6 +25,10 @@ const router = createBrowserRouter([
   {
     element: <PrivateRoute />,
     children: [
+      // Chat routes — outside AppShell (no container padding)
+      { path: '/documents/:documentId/chat', element: <ChatPage /> },
+      { path: '/documents/:documentId/chat/:conversationId', element: <ChatPage /> },
+      // AppShell routes (with container padding)
       {
         element: <AppShell />,
         children: [

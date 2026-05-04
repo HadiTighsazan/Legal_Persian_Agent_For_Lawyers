@@ -11,6 +11,7 @@ from conversations.views import (
     ConversationDetailView,
     ConversationListCreateView,
     ConversationMessageView,
+    ConversationMessageStreamView,
 )
 
 app_name = "conversations"
@@ -25,6 +26,11 @@ urlpatterns = [
         "<uuid:conversation_id>/messages/",
         ConversationMessageView.as_view(),
         name="conversation-messages",
+    ),
+    path(
+        "<uuid:conversation_id>/messages/stream/",
+        ConversationMessageStreamView.as_view(),
+        name="conversation-messages-stream",
     ),
     path(
         "<uuid:conversation_id>/",

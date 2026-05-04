@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Generator
 
 from django.conf import settings
 
@@ -86,3 +86,67 @@ class OpenAIChatProvider(BaseChatProvider):
             "content": response_content,
             "token_usage": token_usage,
         }
+
+    # ------------------------------------------------------------------
+    # Streaming
+    # ------------------------------------------------------------------
+
+    def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        max_tokens: int | None = None,
+        model: str | None = None,
+    ) -> Generator[tuple[str, bool, dict | None], None, None]:
+        """Stream a chat completion response token by token.
+
+        Uses OpenAI's ``stream=True`` option to yield tokens as they arrive.
+
+        Yields:
+            ``(token_text, is_last, metadata)`` tuples.
+            - ``token_text``: The next token string.
+            - ``is_last``: ``True`` only for the final yield.
+            - ``metadata``: ``None`` for intermediate tokens; on the final
+              yield, contains ``{"token_usage": {...}}``.
+        """
+        try:
+            stream = self.client.chat.completions.create(
+                model=model or self.model,
+                messages=messages,  # type: ignore[arg-type]
+                max_tokens=max_tokens or self.max_tokens,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
+        except Exception as e:
+            logger.exception("OpenAIChatProvider.chat_stream: API call failed")
+            if "rate limit" in str(e).lower() or "429" in str(e):
+                raise RateLimitError(str(e)) from e
+            raise
+
+        full_content: list[str] = []
+        final_token_usage: dict[str, int] | None = None
+
+        for chunk in stream:
+            if chunk.choices and len(chunk.choices) > 0:
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    token = delta.content
+                    full_content.append(token)
+                    yield token, False, None
+
+            # Capture token usage from the final chunk (stream_options={"include_usage": True})
+            if chunk.usage:
+                final_token_usage = {
+                    "prompt_tokens": chunk.usage.prompt_tokens or 0,
+                    "completion_tokens": chunk.usage.completion_tokens or 0,
+                    "total_tokens": chunk.usage.total_tokens or 0,
+                }
+
+        # Final yield with token usage
+        metadata = {"token_usage": final_token_usage} if final_token_usage else None
+        yield "", True, metadata
+
+        logger.info(
+            "OpenAIChatProvider.chat_stream: Completed (model=%s, total_tokens=%d)",
+            model or self.model,
+            (final_token_usage or {}).get("total_tokens", 0),
+        )

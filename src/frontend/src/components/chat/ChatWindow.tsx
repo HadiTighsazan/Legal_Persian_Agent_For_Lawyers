@@ -129,6 +129,7 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
   const error = useConversationStore((s) => s.error);
   const loadConversation = useConversationStore((s) => s.loadConversation);
   const sendMessage = useConversationStore((s) => s.sendMessage);
+  const sendMessageStream = useConversationStore((s) => s.sendMessageStream);
   const clearError = useConversationStore((s) => s.clearError);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -147,18 +148,27 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
   }, [messages.length, isSendingMessage]);
 
   const handleSend = useCallback(
-    (content: string) => {
+    async (content: string) => {
       lastAttemptedContent.current = content;
-      sendMessage(conversationId, content);
+      // Use streaming if available, fall back to non-streaming
+      try {
+        await sendMessageStream(conversationId, content);
+      } catch {
+        await sendMessage(conversationId, content);
+      }
     },
-    [conversationId, sendMessage],
+    [conversationId, sendMessageStream, sendMessage],
   );
 
-  const handleRetry = useCallback(() => {
+  const handleRetry = useCallback(async () => {
     if (lastAttemptedContent.current) {
-      sendMessage(conversationId, lastAttemptedContent.current);
+      try {
+        await sendMessageStream(conversationId, lastAttemptedContent.current);
+      } catch {
+        await sendMessage(conversationId, lastAttemptedContent.current);
+      }
     }
-  }, [conversationId, sendMessage]);
+  }, [conversationId, sendMessageStream, sendMessage]);
 
   // ── Render ─────────────────────────────────────────────────────────────
 

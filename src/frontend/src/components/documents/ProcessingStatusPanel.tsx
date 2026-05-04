@@ -7,7 +7,10 @@ import { Loader2 } from "lucide-react";
 
 interface ProcessingStatusPanelProps {
   documentId: string;
+  /** The document's `processing_status` field — used for display in the panel */
   processingStatus: string;
+  /** The document's `status` field — used for action-button visibility logic */
+  documentStatus: string;
   statusData: ProcessingStatusResponse | null;
   isPolling: boolean;
   onStartProcessing: () => void;
@@ -33,6 +36,7 @@ const DEFAULT_TASK_LABEL = "Unknown Task";
  */
 export default function ProcessingStatusPanel({
   processingStatus,
+  documentStatus,
   statusData,
   isPolling,
   onStartProcessing,
@@ -67,7 +71,16 @@ export default function ProcessingStatusPanel({
   }
 
   // ── Determine which action buttons to show ────────────────────────────
-  const showStartProcessing = processingStatus === "uploaded";
+  // Show "Start Processing" only when:
+  //   1. The document's upload lifecycle `status` is `'uploaded'` (i.e. it has
+  //      been uploaded but processing has never been triggered), AND
+  //   2. The pipeline `processing_status` is NOT already `'processing'` or
+  //      `'completed'` (to avoid showing the button while the pipeline is
+  //      actively running or already finished).
+  const showStartProcessing =
+    documentStatus === "uploaded" &&
+    processingStatus !== "processing" &&
+    processingStatus !== "completed";
   const showRetry = processingStatus === "failed";
   const showGenerateEmbeddings =
     processingStatus === "completed" && statusData.tasks.length > 0;

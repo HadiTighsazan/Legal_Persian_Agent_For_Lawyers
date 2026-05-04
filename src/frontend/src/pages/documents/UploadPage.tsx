@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import DropZone from "@/components/documents/DropZone";
-import { uploadDocument } from "@/lib/api/documents";
+import { uploadDocument, triggerProcessing } from "@/lib/api/documents";
 import { useToast } from "@/hooks/use-toast";
 
 export default function UploadPage() {
@@ -41,12 +41,28 @@ export default function UploadPage() {
       onProgress: (percentage: number) => {
         setProgress(percentage);
       },
-      onSuccess: (response) => {
+      onSuccess: async (response) => {
         setUploading(false);
         toast({
           title: "Document uploaded!",
-          description: "Redirecting...",
+          description: "Starting processing...",
         });
+
+        // Auto-trigger the document processing pipeline (text extraction + chunking).
+        // This eliminates the need for the user to manually click "Start Processing"
+        // on the document detail page.
+        try {
+          await triggerProcessing(response.id);
+        } catch {
+          // Processing trigger failure is non-fatal — the user can still manually
+          // trigger it from the document detail page.
+          toast({
+            variant: "destructive",
+            title: "Processing trigger failed",
+            description: "You can start processing manually from the document page.",
+          });
+        }
+
         navigate(`/documents/${response.id}`);
       },
       onError: (error) => {

@@ -111,9 +111,10 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         processing_task.started_at = timezone.now()
         processing_task.save(update_fields=["celery_task_id", "status", "started_at"])
 
-    # Mark the document as processing.
+    # Mark the document as processing (both pipeline-granular and lifecycle status).
     document.processing_status = "processing"
-    document.save(update_fields=["processing_status"])
+    document.status = "processing"
+    document.save(update_fields=["processing_status", "status"])
 
     try:
         # Resolve the PDF content using the storage backend.
@@ -244,7 +245,8 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         logger.info("chunk_document: Document %s has no extracted text — skipping chunking", document_id)
         document.total_chunks = 0
         document.processing_status = "completed"
-        document.save(update_fields=["total_chunks", "processing_status"])
+        document.status = "completed"
+        document.save(update_fields=["total_chunks", "processing_status", "status"])
 
         chunk_task.status = "completed"
         chunk_task.completed_at = timezone.now()
@@ -284,10 +286,11 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
             )
             return
 
-        # Update document metadata.
+        # Update document metadata (both pipeline-granular and lifecycle status).
         document.total_chunks = len(chunks_to_create)
         document.processing_status = "completed"
-        document.save(update_fields=["total_chunks", "processing_status"])
+        document.status = "completed"
+        document.save(update_fields=["total_chunks", "processing_status", "status"])
 
         # Mark the chunk ProcessingTask as completed.
         chunk_task.status = "completed"
@@ -357,10 +360,11 @@ def _handle_chain_error(self, document_id: str, task_type: str = "extract") -> N
     # Also mark the document as failed if it's not already in a terminal state.
     if document.processing_status not in ("completed", "failed"):
         document.processing_status = "failed"
+        document.status = "failed"
         document.processing_error = (
             document.processing_error
             or "Chain-level failure: the Celery pipeline encountered an unrecoverable error"
         )
-        document.save(update_fields=["processing_status", "processing_error"])
+        document.save(update_fields=["processing_status", "status", "processing_error"])
 
 

@@ -771,9 +771,45 @@ Both fields are optional. At least one should be provided for meaningful updates
 
 ---
 
+#### PATCH /conversations/{conversation_id}
+**Description:** Rename conversation (update title)
+**Auth Required:** Yes
+**View Class:** `ConversationDetailView.patch()`
+**Implementation Date:** 2026-05-04 (Deep Refactor — Issue 2)
+**Request Body:**
+```json
+{
+  "title": "New Conversation Title"
+}
+```
+**Response:** `200 OK`
+```json
+{
+  "id": "uuid",
+  "document_id": "uuid",
+  "document_title": "Document Title",
+  "title": "New Conversation Title",
+  "message_count": 8,
+  "created_at": "2026-04-18T10:00:00Z",
+  "updated_at": "2026-04-18T11:00:00Z"
+}
+```
+**Error Responses:**
+- `400 Bad Request`: Title is empty or invalid
+- `403 Forbidden`: Conversation belongs to another user
+- `404 Not Found`: Conversation does not exist
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies conversation ownership (403 if wrong user, 404 if not found)
+- Validates that `title` is a non-empty string
+- Returns the updated conversation via `ConversationListSerializer`
+
+---
+
 #### DELETE /conversations/{conversation_id}
-**Description:** Delete conversation and all messages  
-**Auth Required:** Yes  
+**Description:** Delete conversation and all messages
+**Auth Required:** Yes
 **Response:** `204 No Content`
 
 ---

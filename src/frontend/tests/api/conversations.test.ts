@@ -3,12 +3,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockPost = vi.fn();
 const mockGet = vi.fn();
+const mockPatch = vi.fn();
 const mockDelete = vi.fn();
 
 vi.mock('@/api/axios', () => ({
   apiClient: {
     post: mockPost,
     get: mockGet,
+    patch: mockPatch,
     delete: mockDelete,
   },
 }));
@@ -459,6 +461,98 @@ describe('conversations API', () => {
       await expect(directQuery('doc-1', 'question')).rejects.toMatchObject({
         status: 502,
         message: 'RAG service unavailable',
+      });
+    });
+  
+    describe('renameConversation', () => {
+      it('calls apiClient.patch with conversations/{id}/ and { title }', async () => {
+        mockPatch.mockResolvedValueOnce({ data: mockConversation });
+  
+        const { renameConversation } = await import('@/api/conversations');
+        await renameConversation('conv-1', 'New Title');
+  
+        expect(mockPatch).toHaveBeenCalledWith('conversations/conv-1/', {
+          title: 'New Title',
+        });
+      });
+  
+      it('returns the updated Conversation on success', async () => {
+        const updated = { ...mockConversation, title: 'Updated Title' };
+        mockPatch.mockResolvedValueOnce({ data: updated });
+  
+        const { renameConversation } = await import('@/api/conversations');
+        const result = await renameConversation('conv-1', 'Updated Title');
+  
+        expect(result.title).toBe('Updated Title');
+        expect(result).toEqual(updated);
+      });
+  
+      it('throws ApiError on 400 (empty title)', async () => {
+        const error = createAxiosError(400, { error: 'validation_error', message: 'Title cannot be empty' });
+        mockPatch.mockRejectedValue(error);
+  
+        const { renameConversation, ApiError } = await import('@/api/conversations');
+        await expect(renameConversation('conv-1', '')).rejects.toThrow(ApiError);
+        await expect(renameConversation('conv-1', '')).rejects.toMatchObject({
+          status: 400,
+          message: 'Title cannot be empty',
+        });
+      });
+  
+      it('throws ApiError on 403 (not owned)', async () => {
+        const error = createAxiosError(403, { error: 'permission_denied', message: 'Conversation belongs to another user' });
+        mockPatch.mockRejectedValue(error);
+  
+        const { renameConversation, ApiError } = await import('@/api/conversations');
+        await expect(renameConversation('conv-other', 'New Title')).rejects.toThrow(ApiError);
+        await expect(renameConversation('conv-other', 'New Title')).rejects.toMatchObject({
+          status: 403,
+          message: 'Conversation belongs to another user',
+        });
+      });
+  
+      it('throws ApiError on 404 (not found)', async () => {
+        const error = createAxiosError(404, { error: 'not_found', message: 'Conversation not found' });
+        mockPatch.mockRejectedValue(error);
+  
+        const { renameConversation, ApiError } = await import('@/api/conversations');
+        await expect(renameConversation('nonexistent', 'Title')).rejects.toThrow(ApiError);
+        await expect(renameConversation('nonexistent', 'Title')).rejects.toMatchObject({
+          status: 404,
+          message: 'Conversation not found',
+        });
+      });
+    });
+  
+    describe('sendMessageStream', () => {
+      beforeEach(() => {
+        // Mock localStorage for token retrieval
+        vi.spyOn(Storage.prototype, 'getItem').mockReturnValue('test-token');
+      });
+  
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+  
+      it('returns an AbortController', async () => {
+        const { sendMessageStream } = await import('@/api/conversations');
+        const controller = sendMessageStream(
+          'conv-1',
+          'Hello',
+          vi.fn(),
+          vi.fn(),
+          vi.fn(),
+        );
+        expect(controller).toBeInstanceOf(AbortController);
+      });
+  
+      it('reads access_token from localStorage', async () => {
+        const getItemSpy = vi.spyOn(Storage.prototype, 'getItem');
+  
+        const { sendMessageStream } = await import('@/api/conversations');
+        sendMessageStream('conv-1', 'Hello', vi.fn(), vi.fn(), vi.fn());
+  
+        expect(getItemSpy).toHaveBeenCalledWith('access_token');
       });
     });
   });

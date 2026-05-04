@@ -4,9 +4,11 @@ import {
   createConversation as apiCreateConversation,
   getConversation,
   sendMessage as apiSendMessage,
+  sendMessageStream as apiSendMessageStream,
   deleteConversation as apiDeleteConversation,
+  renameConversation as apiRenameConversation,
 } from '@/api/conversations';
-import type { Conversation, ConversationDetail, Message } from '@/api/conversations';
+import type { Conversation, ConversationDetail, Message, MessageSource, TokenUsage } from '@/api/conversations';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -30,6 +32,8 @@ interface ConversationState {
   isLoadingConversations: boolean;
   isLoadingMessages: boolean;
   isSendingMessage: boolean;
+  isCreatingConversation: boolean;
+  streamingContent: string;
   error: string | null;
 }
 
@@ -38,6 +42,8 @@ interface ConversationActions {
   createConversation: (documentId: string, title?: string) => Promise<Conversation>;
   loadConversation: (conversationId: string) => Promise<void>;
   sendMessage: (conversationId: string, content: string) => Promise<void>;
+  sendMessageStream: (conversationId: string, content: string) => Promise<void>;
+  renameConversation: (conversationId: string, title: string) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
   clearActiveConversation: () => void;
   clearError: () => void;
@@ -53,6 +59,8 @@ const initialState: ConversationState = {
   isLoadingConversations: false,
   isLoadingMessages: false,
   isSendingMessage: false,
+  isCreatingConversation: false,
+  streamingContent: '',
   error: null,
 };
 
@@ -73,11 +81,18 @@ export const useConversationStore = create<ConversationStore>((set) => ({
   },
 
   createConversation: async (documentId: string, title?: string): Promise<Conversation> => {
-    const newConv = await apiCreateConversation(documentId, title);
-    set((state) => ({
-      conversations: [newConv, ...state.conversations],
-    }));
-    return newConv;
+    set({ isCreatingConversation: true, error: null });
+    try {
+      const newConv = await apiCreateConversation(documentId, title);
+      set((state) => ({
+        conversations: [newConv, ...state.conversations],
+        isCreatingConversation: false,
+      }));
+      return newConv;
+    } catch (error: unknown) {
+      set({ isCreatingConversation: false });
+      throw error;
+    }
   },
 
   loadConversation: async (conversationId: string): Promise<void> => {
@@ -139,6 +154,125 @@ export const useConversationStore = create<ConversationStore>((set) => ({
             }
           : null,
       }));
+    }
+  },
+
+  sendMessageStream: async (conversationId: string, content: string): Promise<void> => {
+    const tempId = generateTempId();
+    const tempAssistantId = 'temp-assistant-' + crypto.randomUUID();
+
+    const optimisticMessage: Message = {
+      id: tempId,
+      role: 'user',
+      content,
+      sources: [],
+      token_usage: null,
+      created_at: new Date().toISOString(),
+    };
+
+    const tempAssistantMessage: Message = {
+      id: tempAssistantId,
+      role: 'assistant',
+      content: '',
+      sources: [],
+      token_usage: null,
+      created_at: new Date().toISOString(),
+    };
+
+    set((state) => ({
+      isSendingMessage: true,
+      streamingContent: '',
+      error: null,
+      activeConversation: state.activeConversation
+        ? {
+            ...state.activeConversation,
+            messages: [...state.activeConversation.messages, optimisticMessage, tempAssistantMessage],
+          }
+        : null,
+    }));
+
+    return new Promise<void>((resolve, reject) => {
+      apiSendMessageStream(
+        conversationId,
+        content,
+        // onToken
+        (token: string) => {
+          set((state) => {
+            const newStreamingContent = state.streamingContent + token;
+            return {
+              streamingContent: newStreamingContent,
+              activeConversation: state.activeConversation
+                ? {
+                    ...state.activeConversation,
+                    messages: state.activeConversation.messages.map((msg) =>
+                      msg.id === tempAssistantId
+                        ? { ...msg, content: newStreamingContent }
+                        : msg,
+                    ),
+                  }
+                : null,
+            };
+          });
+        },
+        // onDone
+        (data: { message_id: string; sources: MessageSource[]; token_usage: TokenUsage }) => {
+          set((state) => ({
+            isSendingMessage: false,
+            streamingContent: '',
+            activeConversation: state.activeConversation
+              ? {
+                  ...state.activeConversation,
+                  messages: state.activeConversation.messages.map((msg) =>
+                    msg.id === tempAssistantId
+                      ? {
+                          ...msg,
+                          id: data.message_id,
+                          sources: data.sources,
+                          token_usage: data.token_usage,
+                        }
+                      : msg,
+                  ),
+                }
+              : null,
+          }));
+          resolve();
+        },
+        // onError
+        (error: Error) => {
+          set((state) => ({
+            isSendingMessage: false,
+            streamingContent: '',
+            error: error.message,
+            activeConversation: state.activeConversation
+              ? {
+                  ...state.activeConversation,
+                  messages: state.activeConversation.messages.filter(
+                    (m) => m.id !== tempAssistantId && m.id !== tempId,
+                  ),
+                }
+              : null,
+          }));
+          reject(error);
+        },
+      );
+    });
+  },
+
+  renameConversation: async (conversationId: string, title: string): Promise<void> => {
+    try {
+      const updated = await apiRenameConversation(conversationId, title);
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === conversationId ? { ...c, title: updated.title } : c,
+        ),
+        activeConversation:
+          state.activeConversation?.id === conversationId
+            ? { ...state.activeConversation, title: updated.title }
+            : state.activeConversation,
+      }));
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to rename conversation';
+      set({ error: message });
     }
   },
 

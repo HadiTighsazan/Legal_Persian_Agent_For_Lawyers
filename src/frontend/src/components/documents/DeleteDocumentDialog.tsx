@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
-import type { PointerDownOutsideEvent, FocusOutsideEvent } from "@radix-ui/react-dialog";
 import { deleteDocument } from "@/lib/api/documents";
 import { toast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -49,7 +48,7 @@ export default function DeleteDocumentDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        onInteractOutside={(e: PointerDownOutsideEvent | FocusOutsideEvent) => {
+        onInteractOutside={(e: Event) => {
           if (isDeleting) e.preventDefault();
         }}
         onEscapeKeyDown={(e: KeyboardEvent) => {

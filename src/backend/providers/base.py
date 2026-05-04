@@ -80,3 +80,26 @@ class BaseChatProvider(ABC):
         - token_usage: dict with prompt_tokens, completion_tokens, total_tokens
         """
         ...
+
+    def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        max_tokens: int | None = None,
+        model: str | None = None,
+    ):
+        """Stream a chat completion response token by token.
+
+        This is an optional method. The default implementation falls back to
+        calling :meth:`chat` and yielding the full response as a single token.
+
+        Subclasses that support streaming should override this to yield
+        ``(token_text, is_last)`` tuples, where ``is_last`` is ``True`` only
+        for the final yield (which should include the token_usage dict).
+
+        Yields:
+            ``(token_text: str, is_last: bool, metadata: dict | None)`` tuples.
+            When ``is_last`` is ``True``, ``metadata`` contains ``token_usage``.
+            Otherwise ``metadata`` is ``None``.
+        """
+        result = self.chat(messages, max_tokens=max_tokens, model=model)
+        yield result["content"], True, {"token_usage": result["token_usage"]}

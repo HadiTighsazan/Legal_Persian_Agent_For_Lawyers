@@ -154,6 +154,25 @@ export async function getConversation(
 }
 
 /**
+ * Rename a conversation.
+ * PATCH /conversations/{id}/
+ */
+export async function renameConversation(
+  conversationId: string,
+  title: string,
+): Promise<Conversation> {
+  try {
+    const { data } = await apiClient.patch<Conversation>(
+      `conversations/${conversationId}/`,
+      { title },
+    );
+    return data;
+  } catch (error) {
+    handleError(error);
+  }
+}
+
+/**
  * Delete a conversation and all its messages.
  * DELETE /conversations/{id}/
  */
@@ -184,6 +203,99 @@ export async function sendMessage(
   } catch (error) {
     handleError(error);
   }
+}
+
+/**
+ * Send a message with SSE streaming response.
+ * POST /conversations/{id}/messages/stream/
+ *
+ * Uses the Fetch API with ReadableStream to parse Server-Sent Events.
+ *
+ * @param conversationId - The conversation ID.
+ * @param content - The message content.
+ * @param onToken - Callback for each content token.
+ * @param onDone - Callback when streaming completes, receives the final message metadata.
+ * @param onError - Callback for errors.
+ * @returns An AbortController to cancel the stream.
+ */
+export function sendMessageStream(
+  conversationId: string,
+  content: string,
+  onToken: (token: string) => void,
+  onDone: (data: { message_id: string; sources: MessageSource[]; token_usage: TokenUsage }) => void,
+  onError: (error: Error) => void,
+): AbortController {
+  const controller = new AbortController();
+  const token = localStorage.getItem('access_token');
+
+  (async () => {
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/'}conversations/${conversationId}/messages/stream/`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ content }),
+          signal: controller.signal,
+        },
+      );
+
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}: ${errorBody || response.statusText}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('Response body is not readable');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data: ')) continue;
+
+          try {
+            const data = JSON.parse(trimmed.slice(6));
+
+            if (data.type === 'token') {
+              onToken(data.content);
+            } else if (data.type === 'done') {
+              onDone({
+                message_id: data.message_id,
+                sources: data.sources,
+                token_usage: data.token_usage,
+              });
+            } else if (data.type === 'error') {
+              onError(new Error(data.message || 'Stream error'));
+            }
+          } catch {
+            // Skip malformed JSON lines
+          }
+        }
+      }
+    } catch (error: unknown) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return; // Cancelled, not an error
+      }
+      onError(error instanceof Error ? error : new Error(String(error)));
+    }
+  })();
+
+  return controller;
 }
 
 /**

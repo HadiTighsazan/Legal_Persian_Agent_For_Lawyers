@@ -111,8 +111,9 @@ def fail_processing_task(
     processing_task.save(update_fields=["status", "error_message", "completed_at"])
 
     document.processing_status = "failed"
+    document.status = "failed"
     document.processing_error = error_message
-    document.save(update_fields=["processing_status", "processing_error"])
+    document.save(update_fields=["processing_status", "status", "processing_error"])
 
     logger.exception(
         "fail_processing_task: Document %s failed — %s",

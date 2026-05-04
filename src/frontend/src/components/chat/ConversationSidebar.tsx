@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
-import { PlusIcon, Trash2, MessageSquare } from 'lucide-react';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { PlusIcon, Trash2, Pencil, MessageSquare, Check, X, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { useConversationStore } from '@/stores/conversationStore';
+import { toast } from '@/hooks/use-toast';
 import type { Conversation } from '@/api/conversations';
 
 // ── Props ──────────────────────────────────────────────────────────────────
@@ -61,38 +63,75 @@ interface ConversationItemProps {
   conversation: Conversation;
   isActive: boolean;
   confirmingDeleteId: string | null;
+  renamingId: string | null;
   onSelect: (id: string) => void;
   onDeleteClick: (id: string) => void;
   onConfirmDelete: (id: string) => void;
   onCancelDelete: () => void;
+  onRenameStart: (id: string) => void;
+  onRenameCancel: () => void;
+  onRenameConfirm: (id: string, title: string) => void;
 }
 
 function ConversationItem({
   conversation,
   isActive,
   confirmingDeleteId,
+  renamingId,
   onSelect,
   onDeleteClick,
   onConfirmDelete,
   onCancelDelete,
+  onRenameStart,
+  onRenameCancel,
+  onRenameConfirm,
 }: ConversationItemProps) {
   const isConfirming = confirmingDeleteId === conversation.id;
+  const isRenaming = renamingId === conversation.id;
+  const [editTitle, setEditTitle] = useState(conversation.title || '');
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  return (
-    <div
-      className={cn(
-        'flex items-center justify-between rounded-md px-3 py-2 text-sm cursor-pointer group',
-        isActive
-          ? 'bg-primary/10 text-primary border-l-2 border-primary'
-          : 'hover:bg-accent',
-      )}
-      onClick={() => {
-        if (!isConfirming) {
-          onSelect(conversation.id);
-        }
-      }}
-    >
-      {isConfirming ? (
+  // Focus input when rename starts
+  useEffect(() => {
+    if (isRenaming && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isRenaming]);
+
+  // Reset edit title when conversation changes
+  useEffect(() => {
+    setEditTitle(conversation.title || '');
+  }, [conversation.title]);
+
+  const handleRenameSubmit = useCallback(() => {
+    const trimmed = editTitle.trim();
+    if (trimmed && trimmed !== (conversation.title || '')) {
+      onRenameConfirm(conversation.id, trimmed);
+    } else {
+      onRenameCancel();
+    }
+  }, [editTitle, conversation.id, conversation.title, onRenameConfirm, onRenameCancel]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        handleRenameSubmit();
+      } else if (e.key === 'Escape') {
+        onRenameCancel();
+      }
+    },
+    [handleRenameSubmit, onRenameCancel],
+  );
+
+  if (isConfirming) {
+    return (
+      <div
+        className={cn(
+          'flex items-center justify-between rounded-md px-3 py-2 text-sm',
+          isActive ? 'bg-primary/10' : 'hover:bg-accent',
+        )}
+      >
         <div className="text-xs text-muted-foreground flex items-center gap-1 w-full">
           <span>Delete?</span>
           <button
@@ -115,6 +154,49 @@ function ConversationItem({
             No
           </button>
         </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        'flex items-center justify-between rounded-md px-3 py-2 text-sm cursor-pointer group',
+        isActive
+          ? 'bg-primary/10 text-primary border-l-2 border-primary'
+          : 'hover:bg-accent',
+      )}
+      onClick={() => {
+        if (!isRenaming) {
+          onSelect(conversation.id);
+        }
+      }}
+    >
+      {isRenaming ? (
+        <div className="flex items-center gap-1 w-full" onClick={(e) => e.stopPropagation()}>
+          <Input
+            ref={inputRef}
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            onKeyDown={handleKeyDown}
+            className="h-7 text-sm px-2 py-1"
+            placeholder="Conversation title"
+          />
+          <button
+            className="shrink-0 p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+            onClick={handleRenameSubmit}
+            aria-label="Confirm rename"
+          >
+            <Check className="h-3.5 w-3.5" />
+          </button>
+          <button
+            className="shrink-0 p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+            onClick={onRenameCancel}
+            aria-label="Cancel rename"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
       ) : (
         <>
           <span className="truncate flex-1">
@@ -125,6 +207,16 @@ function ConversationItem({
           </span>
           <button
             className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRenameStart(conversation.id);
+            }}
+            aria-label={`Rename conversation ${conversation.title || 'Untitled Chat'}`}
+          >
+            <Pencil className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+          </button>
+          <button
+            className="ml-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
             onClick={(e) => {
               e.stopPropagation();
               onDeleteClick(conversation.id);
@@ -147,12 +239,15 @@ export default function ConversationSidebar({
   onSelect,
 }: ConversationSidebarProps) {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
 
   const conversations = useConversationStore((state) => state.conversations);
   const isLoadingConversations = useConversationStore((state) => state.isLoadingConversations);
+  const isCreatingConversation = useConversationStore((state) => state.isCreatingConversation);
   const fetchConversations = useConversationStore((state) => state.fetchConversations);
   const createConversation = useConversationStore((state) => state.createConversation);
   const deleteConversation = useConversationStore((state) => state.deleteConversation);
+  const renameConversation = useConversationStore((state) => state.renameConversation);
 
   // ── Fetch conversations on mount ────────────────────────────────────────
   useEffect(() => {
@@ -166,12 +261,17 @@ export default function ConversationSidebar({
       const newConv = await createConversation(documentId);
       onSelect(newConv.id);
     } catch {
-      // Error is handled by the store
+      toast({
+        title: 'Error',
+        description: 'Failed to create a new conversation. Please try again.',
+        variant: 'destructive',
+      });
     }
   };
 
   const handleDeleteClick = (id: string) => {
     setConfirmingDeleteId(id);
+    setRenamingId(null);
   };
 
   const handleConfirmDelete = async (id: string) => {
@@ -179,7 +279,11 @@ export default function ConversationSidebar({
     try {
       await deleteConversation(id);
     } catch {
-      // Error is handled by the store
+      toast({
+        title: 'Error',
+        description: 'Failed to delete conversation. Please try again.',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -187,10 +291,32 @@ export default function ConversationSidebar({
     setConfirmingDeleteId(null);
   };
 
+  const handleRenameStart = (id: string) => {
+    setRenamingId(id);
+    setConfirmingDeleteId(null);
+  };
+
+  const handleRenameCancel = () => {
+    setRenamingId(null);
+  };
+
+  const handleRenameConfirm = async (id: string, title: string) => {
+    setRenamingId(null);
+    try {
+      await renameConversation(id, title);
+    } catch {
+      toast({
+        title: 'Error',
+        description: 'Failed to rename conversation. Please try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="w-72 h-full border-r bg-background flex flex-col">
+    <div className="h-full bg-background flex flex-col">
       {/* Header */}
       <div className="p-4 border-b space-y-3">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
@@ -201,9 +327,14 @@ export default function ConversationSidebar({
           size="sm"
           className="w-full justify-start gap-2"
           onClick={handleNewChat}
+          disabled={isCreatingConversation}
         >
-          <PlusIcon className="h-4 w-4" />
-          New Chat
+          {isCreatingConversation ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <PlusIcon className="h-4 w-4" />
+          )}
+          {isCreatingConversation ? 'Creating...' : 'New Chat'}
         </Button>
       </div>
 
@@ -220,10 +351,14 @@ export default function ConversationSidebar({
               conversation={conv}
               isActive={conv.id === activeConversationId}
               confirmingDeleteId={confirmingDeleteId}
+              renamingId={renamingId}
               onSelect={onSelect}
               onDeleteClick={handleDeleteClick}
               onConfirmDelete={handleConfirmDelete}
               onCancelDelete={handleCancelDelete}
+              onRenameStart={handleRenameStart}
+              onRenameCancel={handleRenameCancel}
+              onRenameConfirm={handleRenameConfirm}
             />
           ))
         )}

@@ -108,6 +108,21 @@ export default function DocumentDetailPage() {
     fetchDocument();
   }, [fetchDocument]);
 
+  // ── Re-fetch document when processing pipeline reaches a terminal state ─
+  // The useProcessingStatus hook polls GET /documents/{id}/processing-status/
+  // which returns the pipeline-granular status (processing_status). When that
+  // reaches "completed" or "failed", we re-fetch the full document to get the
+  // updated document.status (upload lifecycle), which controls visibility of
+  // action buttons like "Chat with Document".
+  useEffect(() => {
+    if (
+      statusData &&
+      (statusData.status === "completed" || statusData.status === "failed")
+    ) {
+      fetchDocument();
+    }
+  }, [statusData, fetchDocument]);
+
   // ── Handlers ───────────────────────────────────────────────────────────
 
   const handleBack = () => {
@@ -115,7 +130,7 @@ export default function DocumentDetailPage() {
   };
 
   const handleStartChat = () => {
-    navigate(`/conversations/new?documentId=${documentId}`);
+    navigate(`/documents/${documentId}/chat`);
   };
 
   const handleDeleteClick = () => {
@@ -221,7 +236,12 @@ export default function DocumentDetailPage() {
   }
 
   // ── Render: Data ───────────────────────────────────────────────────────
-  const processingStatus = document.processing_status ?? document.status;
+  // Two status fields serve different purposes:
+  //   - `document.status`           → upload lifecycle (uploaded → processing → completed / failed)
+  //   - `document.processing_status` → pipeline granular status (pending → processing → completed / failed)
+  // We use `document.status` for action-button visibility (e.g. "Start Processing",
+  // "Chat with Document") and `processing_status` for the ProcessingStatusPanel display.
+  const processingStatus = document.processing_status ?? 'pending';
 
   return (
     <div className="space-y-6">
@@ -281,6 +301,7 @@ export default function DocumentDetailPage() {
         <ProcessingStatusPanel
           documentId={document.id}
           processingStatus={processingStatus}
+          documentStatus={document.status}
           statusData={statusData}
           isPolling={isPolling}
           onStartProcessing={handleStartProcessing}
@@ -291,10 +312,12 @@ export default function DocumentDetailPage() {
 
       {/* ── Action buttons ───────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-3">
-        <Button onClick={handleStartChat}>
-          <MessageSquare className="mr-2 h-4 w-4" />
-          Start Chat
-        </Button>
+        {document.status === 'completed' && (
+          <Button onClick={handleStartChat}>
+            <MessageSquare className="mr-2 h-4 w-4" />
+            Chat with Document
+          </Button>
+        )}
 
         <Button
           variant="destructive"
