@@ -1,40 +1,35 @@
-# WIP Context — Task 3: ConversationSidebar Component
+# WIP Context — Task 5: MessageInput Component ✅
 
 ## What Was Just Completed
 
-**Task 3: ConversationSidebar Component** — fully implemented and visually verified.
+**Task 5: MessageInput Component** — fully implemented, visually verified, and approved.
 
-### Files Created
-1. **`src/frontend/src/components/chat/ConversationSidebar.tsx`** — Left sidebar component listing conversations for a given document.
+### Files Created (permanent)
+1. **`src/frontend/src/components/ui/textarea.tsx`** — shadcn/ui Textarea component (follows `input.tsx` pattern)
+2. **`src/frontend/src/components/chat/MessageInput.tsx`** — Main MessageInput component — pure presentational, no side effects
 
-### Key Features Implemented
-- **Props:** `documentId`, `activeConversationId`, `onSelect` — all strictly typed
-- **Loading state:** 3 skeleton divs with `animate-pulse` and `bg-muted`
-- **Empty state:** Centered `MessageSquare` icon + "No conversations yet." text
-- **Conversation list:** Maps over `conversations` array, shows title (or "Untitled Chat" fallback) + relative time
-- **Active state:** `bg-primary/10 text-primary` + `border-l-2 border-primary` left accent
-- **Relative time helper:** `formatRelativeTime()` — "just now", "2 mins ago", "3 hours ago", "5 days ago", date fallback
-- **Hover delete:** `Trash2` icon with `opacity-0 group-hover:opacity-100` transition
-- **Delete confirmation:** Inline "Delete? **Yes** / **No**" replaces row content on click
-- **New Chat button:** Calls `createConversation(documentId)` then `onSelect(newConv.id)`
-- **No `any` types** — all properly typed with `Conversation` from API module
+### Files Deleted (cleanup after verification)
+1. **`src/frontend/src/pages/MessageInputTestPage.tsx`** — Temporary test harness (removed after approval)
 
-### Visual Verification
-- Used `USE_MOCK_DATA = true` flag in `conversationStore.ts` to bypass backend (document processing not complete in local DB)
-- Temporarily rendered in `DocumentDetailPage.tsx` with a flex layout
-- All UI states verified: loading skeleton, conversation list, active highlighting, hover delete, inline delete confirmation, new chat creation
-- ✅ Approved by user
+### Files Modified
+1. **`src/frontend/src/App.tsx`** — Temporarily added `/test-message-input` route (reverted after approval)
+2. **`docs/active-task/wip-context.md`** — Updated with completion status
 
-### Cleanup After Verification
-- Removed `USE_MOCK_DATA` flag and all mock logic from `conversationStore.ts` (restored to original)
-- Removed temporary `ConversationSidebar` rendering and `activeConvId` state from `DocumentDetailPage.tsx`
-- No changes to `docs/references/database-schema.md` or `docs/references/api-registry.md` (no schema/API changes)
+### Acceptance Criteria Met
+1. ✅ Auto-growing `Textarea` (max 5 lines, then scroll)
+2. ✅ Send button (`SendHorizontal`) — disabled when empty or `isDisabled`
+3. ✅ `Enter` submits, `Shift+Enter` adds newline
+4. ✅ After send: clear input, refocus
+5. ✅ While disabled: spinner (`Loader2`), placeholder = "Waiting for response..."
+6. ✅ Character counter `X / 10,000` when length > 500
+7. ✅ No automated tests written (Visual First approach)
+8. ✅ Component is pure presentational — no side effects, no API calls
 
 ## Current State of Code
-- `ConversationSidebar.tsx` is production-ready at `src/frontend/src/components/chat/ConversationSidebar.tsx`
-- `DocumentDetailPage.tsx` is restored to its original state (no temporary rendering)
-- `conversationStore.ts` is restored to its original state (no mock data)
-- All existing tests remain unaffected
+- `MessageInput.tsx` is production-ready at `src/frontend/src/components/chat/MessageInput.tsx`
+- `textarea.tsx` is available at `src/frontend/src/components/ui/textarea.tsx`
+- `App.tsx` is restored to its original state (no temporary routes)
+- No changes to `docs/references/database-schema.md` or `docs/references/api-registry.md` (no schema/API changes)
 
 ## Next Step
-Proceed to **Task 4: MessageBubble Component** — implement the message bubble UI component for displaying individual chat messages.
+**WAITING** — User has requested to stop here. Do NOT proceed to Task 6 until explicitly prompted.
