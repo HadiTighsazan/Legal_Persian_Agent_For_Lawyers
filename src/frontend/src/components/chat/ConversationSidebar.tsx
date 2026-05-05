@@ -166,6 +166,8 @@ function ConversationItem({
           ? 'bg-primary/10 text-primary border-l-2 border-primary'
           : 'hover:bg-accent',
       )}
+      role="button"
+      aria-label={`Conversation: ${conversation.title || 'Untitled Chat'}`}
       onClick={() => {
         if (!isRenaming) {
           onSelect(conversation.id);
@@ -316,7 +318,11 @@ export default function ConversationSidebar({
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="h-full bg-background flex flex-col">
+    <div
+      className="h-full bg-background flex flex-col"
+      role="navigation"
+      aria-label="Conversations"
+    >
       {/* Header */}
       <div className="p-4 border-b space-y-3">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
@@ -328,6 +334,7 @@ export default function ConversationSidebar({
           className="w-full justify-start gap-2"
           onClick={handleNewChat}
           disabled={isCreatingConversation}
+          aria-label="Create new conversation"
         >
           {isCreatingConversation ? (
             <Loader2 className="h-4 w-4 animate-spin" />

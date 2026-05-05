@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import ConversationSidebar from '@/components/chat/ConversationSidebar';
 import ChatWindow from '@/components/chat/ChatWindow';
+import ChatErrorBoundary from '@/components/chat/ChatErrorBoundary';
 import { useConversationStore } from '@/stores/conversationStore';
 import { apiClient } from '@/api/axios';
 
@@ -79,6 +80,19 @@ export default function ChatPage() {
         .catch(() => setDocumentTitle(null));
     }
   }, [documentId, activeConversation?.document_title]);
+
+  // Dynamic page title
+  useEffect(() => {
+    const title = documentTitle
+      ? `Chat — ${documentTitle} | DocuChat`
+      : 'Chat | DocuChat';
+    document.title = title;
+
+    // Cleanup: restore default title on unmount
+    return () => {
+      document.title = 'DocuChat';
+    };
+  }, [documentTitle]);
 
   // ── Handlers ──────────────────────────────────────────────────────────
 
@@ -190,7 +204,9 @@ export default function ChatPage() {
 
         {/* Chat content */}
         {conversationId ? (
-          <ChatWindow conversationId={conversationId} />
+          <ChatErrorBoundary>
+            <ChatWindow conversationId={conversationId} />
+          </ChatErrorBoundary>
         ) : (
           <NoConversationSelected documentId={documentId!} />
         )}

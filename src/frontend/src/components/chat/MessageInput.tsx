@@ -97,7 +97,7 @@ export default function MessageInput({
             'min-h-[40px] resize-none py-2 pr-12 text-sm',
             'scrollbar-thin',
           )}
-          aria-label="Message input"
+          aria-label="Ask a question"
         />
         {/* Character counter */}
         {showCharCounter && (

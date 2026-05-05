@@ -1,147 +1,59 @@
-# WIP Context — Fix Ollama `host.docker.internal` DNS Resolution for Backend Service
+# WIP Context — TASK 8: Accessibility, Polish & Error Boundaries
 
 ## What Was Just Completed
 
-**Added `extra_hosts` to the `backend` service in `docker-compose.yml` to fix `host.docker.internal` DNS resolution.**
+**Task 8 of Epic E10 (Frontend Chat Interface) — Accessibility, Polish & Error Boundaries.**
 
-### The Problem
+All 5 items from the task prompt were implemented:
 
-When a user uploads a document and asks a question via "Start Chat", the RAG pipeline fails with:
+### 1. Created `ChatErrorBoundary.tsx`
+- **File:** [`src/frontend/src/components/chat/ChatErrorBoundary.tsx`](src/frontend/src/components/chat/ChatErrorBoundary.tsx)
+- Class component with `getDerivedStateFromError` + `componentDidCatch`
+- Displays a centered error state with `AlertCircle` icon, "Something went wrong" heading, descriptive message, and a "Reload" button that calls `window.location.reload()`
+- Logs errors to `console.error` for debugging
 
-```
-Error: Failed to embed question: Failed to embed query:
-HTTPConnectionPool(host='host.docker.internal', port=11434):
-Max retries exceeded with url: /api/embed
-(Caused by NameResolutionError("... Failed to resolve 'host.docker.internal'"))
-```
+### 2. Integrated Error Boundary in `ChatPage.tsx`
+- Wrapped `<ChatWindow>` on line 193 with `<ChatErrorBoundary>...</ChatErrorBoundary>`
+- Imported `ChatErrorBoundary` from `@/components/chat/ChatErrorBoundary`
 
-The `backend` service runs the Django API server which handles the synchronous POST to `/messages/`. It needs to resolve `host.docker.internal` to reach Ollama running on the host machine, but was missing the `extra_hosts` entry.
+### 3. Added Dynamic Page Title in `ChatPage.tsx`
+- Added `useEffect` that sets `document.title` to `"Chat — {documentTitle} | DocuChat"` when a document title is available, or `"Chat | DocuChat"` otherwise
+- Cleanup restores `document.title` to `"DocuChat"` on unmount
 
-### The Fix
+### 4. Audited & Fixed ARIA Labels
 
-Added `extra_hosts` to the `backend` service in `docker-compose.yml` (line 73-74):
+| Component | Change |
+|-----------|--------|
+| [`MessageInput.tsx`](src/frontend/src/components/chat/MessageInput.tsx) | Textarea `aria-label` changed from `"Message input"` to `"Ask a question"` |
+| [`ConversationSidebar.tsx`](src/frontend/src/components/chat/ConversationSidebar.tsx) | Root `<div>`: added `role="navigation"` + `aria-label="Conversations"` |
+| | Conversation items: added `role="button"` + `aria-label="Conversation: {title}"` |
+| | "New Chat" button: added `aria-label="Create new conversation"` |
+| [`ChatWindow.tsx`](src/frontend/src/components/chat/ChatWindow.tsx) | Starter chips: added `aria-label="Ask: {question}"` |
+| [`MessageBubble.tsx`](src/frontend/src/components/chat/MessageBubble.tsx) | Message container: added `aria-label="Your message"` (user) / `aria-label="AI response"` (assistant) |
+| | Source citations toggle: added `aria-expanded={open}` + `aria-controls="sources-{message.id}"` |
+| | Source citations content: added `id="sources-{message.id}"` |
 
-```yaml
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-```
-
-This entry was already present on `celery_worker` and `celery_beat` services, but was missing from `backend`.
-
-## Files Modified
-
-### `docker-compose.yml`
-- Added `extra_hosts` to `backend` service (line 73-74)
-
-## Current State of Code
-- `docker-compose.yml` updated with `extra_hosts` for all three services that need Ollama connectivity: `backend`, `celery_worker`, and `celery_beat`
-- All 7 containers are running and healthy
-
-## Next Steps
-1. Rebuild and restart all services: `docker-compose down && docker-compose up -d`
-2. Verify Ollama connectivity from backend:
-   ```bash
-   docker-compose exec backend python -c "import requests; r = requests.get('http://host.docker.internal:11434/api/tags', timeout=5); print(r.status_code, r.json())"
-   ```
-3. Test by uploading a document, waiting for processing, starting a chat, and asking a question
-4. Check logs: `docker-compose logs backend`
-
-### Root Causes & Fixes
-
-#### RC#1 (Most Likely): Ollama unreachable from Celery Worker container
-- **Problem:** The Celery worker runs inside a Docker container on the `docuchat_network` bridge network. `host.docker.internal` is a Docker Desktop feature that may not resolve reliably without explicit configuration. When `embed_batch()` gets a `ConnectionError`, it raises `EmbeddingBatchError`, which is caught in `embed_document` and sets `document.status = "failed"`.
-- **Fix:** Added `extra_hosts` to both `celery_worker` and `celery_beat` services in `docker-compose.yml`:
-  ```yaml
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
-  ```
-
-#### RC#2 (Likely): File path mismatch between Backend and Celery Worker
-- **Problem:** `LocalStorageBackend.save_file()` returned an **absolute path** (e.g., `/app/media/documents/uuid.pdf`). This absolute path was stored in the database. When the Celery worker tried to open the file using `storage.open(document.file_path)`, it worked because both containers mount the same `backend_media` volume at `/app/media`. However, the backend also has a bind mount `./src/backend:/app` which overlays `/app`. If the file was saved to the bind-mounted path vs the volume-mounted path, there could be a discrepancy.
-- **Fix:** Changed `save_file()` to return a **relative path** (the same `relative_path` passed in) instead of an absolute path. Both containers resolve relative paths against their own `LOCAL_STORAGE_PATH` setting, ensuring consistency. Updated `delete_file()` to also resolve relative paths against the storage root.
-
-#### RC#3: error_handler.py crash vulnerability
-- **Problem:** `_has_pdf_magic_bytes()` opened the file directly from the filesystem path using `open(file_path, "rb")`. If the file didn't exist at that path in the worker container, this raised an unhandled `FileNotFoundError` inside `classify_pdf_error()`, causing an unhandled exception.
-- **Fix:** Wrapped the file open in a `try/except (FileNotFoundError, PermissionError, OSError)` block, returning `False` instead of crashing. Also added a module-level `logger` instance that was missing.
-
-#### Improved error message persistence
-- **Problem:** The `except Exception` block in `embed_document` stored only `str(e)` in `document.processing_error`, which didn't include the exception type or traceback, making debugging difficult.
-- **Fix:** Enhanced the error message to include `[ExceptionTypeName]: message` format and the full traceback via `traceback.format_exc()`. Also added detailed logging with `logger.exception()` in the `extract_text_from_pdf` catch-all block.
-
-#### Added detailed logging for diagnostics
-- Added logging of `document.file_path` before `storage.open()` in `extract_text_from_pdf`
-- Added `error_type` to log messages in `embed_document` exception handler
-
-## Files Modified
-
-### `docker-compose.yml`
-- Added `extra_hosts` to `celery_worker` service (line 126)
-- Added `extra_hosts` to `celery_beat` service (line 170)
-
-### `src/backend/documents/storage/local.py`
-- `save_file()` now returns a **relative path** instead of absolute path
-- `delete_file()` now resolves relative paths against the storage root (backward compat with absolute paths preserved)
-
-### `src/backend/documents/services/error_handler.py`
-- Added module-level `logger = logging.getLogger(__name__)`
-- `_has_pdf_magic_bytes()` now catches `FileNotFoundError`, `PermissionError`, and `OSError` gracefully, returning `False`
-
-### `src/backend/documents/tasks/document_processing.py`
-- Added detailed logging of `document.file_path` before `storage.open()` in `extract_text_from_pdf`
-- Added `logger.exception()` with error type in the catch-all `except Exception` block
-
-### `src/backend/documents/tasks/embedding_tasks.py`
-- Enhanced error messages to include exception type name: `[TypeName]: message`
-- Added full traceback to `processing_error` and `error_message` fields
-- Added `error_type` to log output
-
-## New Test Files
-
-### `src/backend/tests/test_storage_local.py` (7 tests)
-- `test_save_file_returns_relative_path` — verifies `save_file` returns relative path
-- `test_open_relative_path` — verifies `open` resolves relative paths
-- `test_open_absolute_path_backward_compat` — verifies `open` still works with absolute paths
-- `test_open_nonexistent_file_raises_storage_error` — verifies proper error for missing files
-- `test_delete_file_relative_path` — verifies `delete_file` works with relative paths
-- `test_delete_file_nonexistent_returns_false` — verifies graceful handling of missing files
-- `test_get_file_url_returns_path_as_is` — verifies `get_file_url` returns path unchanged
-
-### `src/backend/documents/tests/test_error_handler.py` (6 tests)
-- `test_nonexistent_file_returns_false` — verifies `_has_pdf_magic_bytes` doesn't crash on missing file
-- `test_permission_error_returns_false` — verifies graceful handling of permission errors
-- `test_valid_pdf_header_returns_true` — verifies correct detection of PDF magic bytes
-- `test_non_pdf_header_returns_false` — verifies non-PDF files return False
-- `test_empty_file_returns_false` — verifies empty files return False
-- `test_nonexistent_file_path_does_not_crash` — verifies `classify_pdf_error` doesn't crash on missing file
-
-## Test Results
-- ✅ All **13 new tests** pass
-- ✅ All **243 existing tests** pass (plus 30 subtests)
+### 5. Focus Management
+- [`MessageInput.tsx`](src/frontend/src/components/chat/MessageInput.tsx) already had correct focus management via `requestAnimationFrame` after send — no changes needed
 
 ## Current State of Code
-- All 7 containers are running and healthy
-- `docker-compose.yml` updated with `extra_hosts` for Ollama connectivity
-- Storage backend returns relative paths for cross-container consistency
-- Error handler is resilient to missing/unreadable files
-- Error messages include full exception details for debugging
+
+- All chat components have proper ARIA labels for screen reader accessibility
+- `ChatErrorBoundary` wraps `ChatWindow` to catch unhandled errors gracefully
+- Page title dynamically updates based on document context
+- Source citations toggle has proper `aria-expanded` and `aria-controls` for accessibility
+- All containers are running; frontend was rebuilt with `docker-compose up -d --build frontend`
 
 ## Next Steps
-1. Restart all services: `docker-compose down && docker-compose up -d`
-2. Verify Ollama connectivity from Celery worker:
-   ```bash
-   docker-compose exec celery_worker python -c "import requests; r = requests.get('http://host.docker.internal:11434/api/tags', timeout=5); print(r.status_code, r.json())"
-   ```
-3. Verify file path consistency:
-   ```bash
-   docker-compose exec celery_worker ls -la /app/media/documents/
-   docker-compose exec backend ls -la /app/media/documents/
-   ```
-4. Test embedding directly:
-   ```bash
-   docker-compose exec celery_worker python -c "
-   from documents.services.embedding_service import generate_embedding
-   result = generate_embedding('test text')
-   print('Embedding result:', result[:5] if result else 'None')
-   "
-   ```
-5. Upload a document through the frontend and verify it reaches `"completed"` status
+
+1. **Manual browser accessibility audit** (pending):
+   - Open browser DevTools → Accessibility panel
+   - Navigate to a chat page (`/documents/{id}/chat/{convId}`)
+   - Verify Error Boundary: temporarily throw an error in ChatWindow and confirm fallback UI
+   - Verify ARIA labels on all interactive elements
+   - Verify focus returns to textarea after sending a message
+   - Verify `aria-live="polite"` region announces new messages
+   - Verify page title updates to "Chat — {document_title} | DocuChat"
+   - Remove any test error throws before finalizing
+
+2. No remaining items for Epic E10 — this is the final polish task.

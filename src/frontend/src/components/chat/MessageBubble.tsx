@@ -35,14 +35,20 @@ function formatTime(dateString: string): string {
 
 interface SourceCitationsProps {
   sources: Message['sources'];
+  messageId: string;
 }
 
-function SourceCitations({ sources }: SourceCitationsProps) {
+function SourceCitations({ sources, messageId }: SourceCitationsProps) {
   const [open, setOpen] = useState(false);
+  const sourcesId = `sources-${messageId}`;
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="pt-2">
-      <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+      <CollapsibleTrigger
+        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        aria-expanded={open}
+        aria-controls={sourcesId}
+      >
         {open ? (
           <ChevronDown className="h-3 w-3" />
         ) : (
@@ -52,7 +58,7 @@ function SourceCitations({ sources }: SourceCitationsProps) {
           {sources.length} source{sources.length > 1 ? 's' : ''}
         </span>
       </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-2 pt-2">
+      <CollapsibleContent className="space-y-2 pt-2" id={sourcesId}>
         {sources.map((source) => (
           <Card key={source.chunk_id} className="border-muted">
             <CardContent className="p-3 space-y-1.5">
@@ -100,6 +106,7 @@ export default function MessageBubble({
           'flex flex-col max-w-[80%]',
           isUser ? 'items-end' : 'items-start',
         )}
+        aria-label={isUser ? 'Your message' : 'AI response'}
       >
         {/* Bubble */}
         <div
@@ -141,7 +148,7 @@ export default function MessageBubble({
 
         {/* Source citations (assistant only) */}
         {!isUser && message.sources.length > 0 && (
-          <SourceCitations sources={message.sources} />
+          <SourceCitations sources={message.sources} messageId={message.id} />
         )}
       </div>
     </div>

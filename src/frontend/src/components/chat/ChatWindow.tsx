@@ -62,6 +62,7 @@ function StarterChips({ onSend }: StarterChipsProps) {
           size="sm"
           onClick={() => onSend(question)}
           className="rounded-full text-xs"
+          aria-label={`Ask: ${question}`}
         >
           {question}
         </Button>
