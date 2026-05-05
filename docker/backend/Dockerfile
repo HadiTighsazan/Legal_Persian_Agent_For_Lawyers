@@ -36,11 +36,15 @@ RUN pip install -r requirements.txt && \
 # Copy Django project
 COPY src/backend /app/
 
+# Copy entrypoint script (outside /app to survive volume mount)
+COPY docker/backend/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Create directory for static files
 RUN mkdir -p /app/static /app/media
 
 # Expose port
 EXPOSE 8000
 
-# Run Gunicorn
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3"]
+# Use entrypoint to run migrations before starting Gunicorn
+ENTRYPOINT ["/entrypoint.sh"]
