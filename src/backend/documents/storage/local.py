@@ -63,8 +63,9 @@ class LocalStorageBackend(StorageBackend):
         """
         Open a stored file for reading.
 
-        If *storage_path* is an absolute path, it is used directly.
-        Otherwise, it is resolved relative to the storage root.
+        If *storage_path* is an absolute path, it is used directly (backward
+        compatibility with previously stored absolute paths).  Otherwise, it
+        is resolved relative to the storage root.
 
         Returns an in-memory ``BytesIO`` buffer so the returned stream is
         seekable and compatible with libraries (e.g. PyMuPDF) that expect
@@ -107,7 +108,9 @@ class LocalStorageBackend(StorageBackend):
             relative_path: Relative path under the storage root.
 
         Returns:
-            str: The absolute filesystem path of the saved file.
+            str: The **relative** path of the saved file (relative to the
+            storage root). This ensures the path is portable across containers
+            that share the same volume mount point.
         """
         destination = self._resolve_path(relative_path)
 
@@ -128,7 +131,9 @@ class LocalStorageBackend(StorageBackend):
                 f"Failed to write file to '{destination}': {exc}"
             ) from exc
 
-        return str(destination)
+        # Return the relative path so it resolves correctly in any container
+        # that mounts the same volume at the same LOCAL_STORAGE_PATH.
+        return relative_path
 
     def get_file_url(self, storage_path: str) -> str:
         """
@@ -146,13 +151,19 @@ class LocalStorageBackend(StorageBackend):
         """
         Delete a file from the local filesystem.
 
+        If *storage_path* is a relative path, it is resolved against the
+        storage root.  Absolute paths are used directly (backward compat).
+
         Args:
-            storage_path: The absolute path returned by save_file().
+            storage_path: The storage path returned by save_file().
 
         Returns:
             bool: True if the file was deleted, False if it did not exist.
         """
-        path = Path(storage_path)
+        if os.path.isabs(storage_path):
+            path = Path(storage_path)
+        else:
+            path = self._resolve_path(storage_path)
 
         if not path.exists():
             logger.warning("File not found for deletion: %s", storage_path)

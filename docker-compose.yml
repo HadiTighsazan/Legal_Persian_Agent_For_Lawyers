@@ -125,6 +125,8 @@ services:
       dockerfile: ./docker/backend/Dockerfile
     container_name: docuchat_celery_worker
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -169,6 +171,8 @@ services:
       dockerfile: ./docker/backend/Dockerfile
     container_name: docuchat_celery_beat
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

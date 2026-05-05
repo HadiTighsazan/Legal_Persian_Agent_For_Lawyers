@@ -119,6 +119,11 @@ def extract_text_from_pdf(self, document_id: str) -> str:
     try:
         # Resolve the PDF content using the storage backend.
         storage = get_storage_backend()
+        logger.info(
+            "extract_text_from_pdf: Opening file_path=%s for document %s",
+            document.file_path,
+            document_id,
+        )
         pdf_content = storage.open(document.file_path)
         
         # Check PDF magic bytes before attempting to open.
@@ -137,6 +142,13 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         return ""
     except Exception as e:
         error_msg = classify_pdf_error(e, document.file_path)
+        logger.exception(
+            "extract_text_from_pdf: Unhandled exception for document %s "
+            "(file_path=%s, error_type=%s)",
+            document_id,
+            document.file_path,
+            type(e).__name__,
+        )
         fail_processing_task(processing_task, document, error_msg, logger)
         return ""
 

@@ -20,6 +20,9 @@ from documents.models import Document
 from tasks.models import ProcessingTask
 
 
+logger = logging.getLogger(__name__)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -33,10 +36,19 @@ def _has_pdf_magic_bytes(file_path: str) -> bool:
 
     Returns:
         ``True`` if the first 4 bytes are ``b"%PDF"``, ``False`` otherwise.
+        Returns ``False`` if the file does not exist or cannot be read.
     """
-    with open(file_path, "rb") as f:
-        header = f.read(4)
-    return header == b"%PDF"
+    try:
+        with open(file_path, "rb") as f:
+            header = f.read(4)
+        return header == b"%PDF"
+    except (FileNotFoundError, PermissionError, OSError) as exc:
+        logger.warning(
+            "_has_pdf_magic_bytes: Cannot read file '%s' — %s",
+            file_path,
+            exc,
+        )
+        return False
 
 
 # ---------------------------------------------------------------------------

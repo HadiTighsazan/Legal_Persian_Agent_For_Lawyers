@@ -9,6 +9,7 @@ Provides a single Celery task:
 from __future__ import annotations
 
 import logging
+import traceback
 from typing import Any
 
 from celery import shared_task
@@ -130,16 +131,20 @@ def embed_document(self, document_id: str, task_id: str) -> None:
         if isinstance(e, EmbeddingBatchError):
             error_message = f"Embedding failed after partial progress: {e}"
         else:
-            error_message = f"Embedding failed: {e}"
+            error_message = f"Embedding failed [{type(e).__name__}]: {e}"
         
+        # Include full traceback for detailed diagnostics.
+        detailed_error = f"{error_message}\n{traceback.format_exc()}"
+
         logger.exception(
-            "embed_document: %s (document=%s, task=%s)",
+            "embed_document: %s (document=%s, task=%s, error_type=%s)",
             error_message,
             document_id,
             task_id,
+            type(e).__name__,
         )
         processing_task.status = "failed"
-        processing_task.error_message = error_message
+        processing_task.error_message = detailed_error
         processing_task.completed_at = timezone.now()
         processing_task.save(update_fields=["status", "error_message", "completed_at"])
 
@@ -149,7 +154,7 @@ def embed_document(self, document_id: str, task_id: str) -> None:
         # processing_status and status accordingly.
         document.processing_status = "failed"
         document.status = "failed"
-        document.processing_error = error_message
+        document.processing_error = detailed_error
         document.save(update_fields=["processing_status", "status", "processing_error"])
 
 
