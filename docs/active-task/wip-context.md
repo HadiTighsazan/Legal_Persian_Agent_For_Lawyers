@@ -1,8 +1,50 @@
-# WIP Context — Fix Document "failed" Status After Upload
+# WIP Context — Fix Ollama `host.docker.internal` DNS Resolution for Backend Service
 
 ## What Was Just Completed
 
-**Fixed the document processing pipeline that was setting documents to `"failed"` status after upload.**
+**Added `extra_hosts` to the `backend` service in `docker-compose.yml` to fix `host.docker.internal` DNS resolution.**
+
+### The Problem
+
+When a user uploads a document and asks a question via "Start Chat", the RAG pipeline fails with:
+
+```
+Error: Failed to embed question: Failed to embed query:
+HTTPConnectionPool(host='host.docker.internal', port=11434):
+Max retries exceeded with url: /api/embed
+(Caused by NameResolutionError("... Failed to resolve 'host.docker.internal'"))
+```
+
+The `backend` service runs the Django API server which handles the synchronous POST to `/messages/`. It needs to resolve `host.docker.internal` to reach Ollama running on the host machine, but was missing the `extra_hosts` entry.
+
+### The Fix
+
+Added `extra_hosts` to the `backend` service in `docker-compose.yml` (line 73-74):
+
+```yaml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+This entry was already present on `celery_worker` and `celery_beat` services, but was missing from `backend`.
+
+## Files Modified
+
+### `docker-compose.yml`
+- Added `extra_hosts` to `backend` service (line 73-74)
+
+## Current State of Code
+- `docker-compose.yml` updated with `extra_hosts` for all three services that need Ollama connectivity: `backend`, `celery_worker`, and `celery_beat`
+- All 7 containers are running and healthy
+
+## Next Steps
+1. Rebuild and restart all services: `docker-compose down && docker-compose up -d`
+2. Verify Ollama connectivity from backend:
+   ```bash
+   docker-compose exec backend python -c "import requests; r = requests.get('http://host.docker.internal:11434/api/tags', timeout=5); print(r.status_code, r.json())"
+   ```
+3. Test by uploading a document, waiting for processing, starting a chat, and asking a question
+4. Check logs: `docker-compose logs backend`
 
 ### Root Causes & Fixes
 

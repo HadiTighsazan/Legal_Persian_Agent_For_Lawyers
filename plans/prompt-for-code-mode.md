@@ -1,144 +1,70 @@
-# Prompt for Code Mode — Fix Document "failed" Status After Upload
+# Prompt for Code Mode — Fix Ollama `host.docker.internal` DNS Resolution
 
-## Context
+## Problem
 
-The system runs fully containerized via Docker. When a user uploads a file through the frontend, the document status changes to `"failed"` after a few seconds.
+When a user uploads a document and asks a question via "Start Chat", the RAG pipeline fails with:
 
-**Tech Stack:**
-- Backend: Django + DRF + Celery + Redis
-- Embeddings: Ollama (`nomic-embed-text`) running on the **host machine** (Windows)
-- Chat: DeepSeek API (OpenAI-compatible)
-- Storage: Local filesystem via `LocalStorageBackend`
-- PDF extraction: PyMuPDF (fitz)
-
-**Confirmed:** The `nomic-embed-text` model IS available on the host (`ollama list` shows it).
-
-## The Processing Pipeline
-
-When a file is uploaded:
-
-1. **Frontend** (`UploadPage.tsx`) → calls `POST /documents/upload/` → creates Document record with `status="uploaded"`
-2. **Frontend** → calls `POST /documents/{id}/process/` → triggers `process_document()` in [`processing_service.py`](src/backend/documents/services/processing_service.py:174)
-3. **Celery Chain** is created: `extract_text_from_pdf → chunk_document → embed_document`
-4. If any step fails → `fail_processing_task()` is called → sets `document.status = "failed"`
-
-## Suspected Root Causes (both need investigation & fixing)
-
-### RC#1 (Most Likely): Ollama unreachable from Celery Worker container
-
-**Evidence:**
-- [`docker-compose.yml:149`](docker-compose.yml:149): `OLLAMA_BASE_URL=http://host.docker.internal:11434`
-- [`docker-compose.yml:160`](docker-compose.yml:160): Celery worker command: `celery -A config worker --loglevel=info --concurrency=4`
-- The Celery worker runs inside a Docker container on the `docuchat_network` bridge network
-- `host.docker.internal` is a Docker Desktop feature that may not work reliably
-- When [`embed_batch()`](src/backend/providers/ollama_embedding.py:163) gets a `ConnectionError`, it raises `EmbeddingBatchError`
-- This is caught in [`embed_document`](src/backend/documents/tasks/embedding_tasks.py:129-153), which sets `document.status = "failed"`
-
-**Fix:** Either:
-- **Option A:** Add `extra_hosts` to the `celery_worker` service in `docker-compose.yml`:
-  ```yaml
-  celery_worker:
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-  ```
-- **Option B:** Run Ollama as a Docker service in `docker-compose.yml` and change `OLLAMA_BASE_URL` to `http://ollama:11434`
-- **Option C:** Use the host machine's actual IP address instead of `host.docker.internal`
-
-### RC#2 (Likely): File path mismatch between Backend and Celery Worker
-
-**Evidence:**
-- [`LocalStorageBackend.save_file()`](src/backend/documents/storage/local.py:131) returns an **absolute path** like `/app/media/documents/uuid.pdf`
-- The `file_path` is stored in the database as this absolute path
-- When [`extract_text_from_pdf`](src/backend/documents/tasks/document_processing.py:122) runs in the Celery worker, it calls `storage.open(document.file_path)` using this path
-- The Celery worker mounts `backend_media:/app/media` at [`docker-compose.yml:158-159`](docker-compose.yml:158)
-- The backend also mounts `backend_media:/app/media` at [`docker-compose.yml:108`](docker-compose.yml:108)
-- **BUT** the backend also mounts `./src/backend:/app` as a bind mount at line 106, which **overlays** the `/app` directory
-- The Celery worker also mounts `./src/backend:/app` at line 158
-- If the file was saved to the **bind-mounted** path (e.g., `./src/backend/media/documents/uuid.pdf`) vs the **volume-mounted** path (`/app/media/`), there could be a discrepancy
-
-**Additionally**, there's a bug in [`error_handler.py:37`](src/backend/documents/services/error_handler.py:37): `_has_pdf_magic_bytes()` opens the file directly from the filesystem path using `open(file_path, "rb")`. If the file doesn't exist at that path in the worker container, this will raise a `FileNotFoundError` which is **not caught** inside `classify_pdf_error()`, causing an unhandled exception.
-
-**Fix:** 
-- Ensure the storage path is consistent between containers
-- Fix `_has_pdf_magic_bytes()` to handle `FileNotFoundError` gracefully
-
-## Tasks for Code Mode
-
-### Task 1: Diagnose the exact failure point
-
-Add temporary detailed logging to identify which step fails:
-
-1. In [`extract_text_from_pdf`](src/backend/documents/tasks/document_processing.py:59), add logging before `storage.open()` to log the `file_path`
-2. In [`embed_document`](src/backend/documents/tasks/embedding_tasks.py:129), log the full exception details including the error type
-
-### Task 2: Fix Ollama connectivity (RC#1)
-
-**Approach:** Add `extra_hosts` to the Celery worker service in `docker-compose.yml` so `host.docker.internal` resolves properly.
-
-**File to modify:** [`docker-compose.yml`](docker-compose.yml)
-
-Add under `celery_worker` service:
-```yaml
-celery_worker:
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
+```
+Error: Failed to embed question: Failed to embed query:
+HTTPConnectionPool(host='host.docker.internal', port=11434):
+Max retries exceeded with url: /api/embed
+(Caused by NameResolutionError("... Failed to resolve 'host.docker.internal'"))
 ```
 
-Also add the same to `celery_beat` service for consistency.
+## Root Cause
 
-### Task 3: Fix file path / storage consistency (RC#2)
+The [`backend`](docker-compose.yml:66) service in [`docker-compose.yml`](docker-compose.yml) is **missing** the `extra_hosts` entry that maps `host.docker.internal` to `host-gateway`. This entry **is** present on [`celery_worker`](docker-compose.yml:128-129) and [`celery_beat`](docker-compose.yml:174-175), but not on `backend`.
 
-**Approach:** Change `LocalStorageBackend` to store **relative paths** instead of absolute paths, so both containers resolve them correctly against their own `LOCAL_STORAGE_PATH`.
+Since the `backend` service runs the Django API server (which handles the synchronous POST to `/messages/`), it needs to resolve `host.docker.internal` to reach Ollama running on the host machine.
 
-**Files to modify:**
-- [`src/backend/documents/storage/local.py`](src/backend/documents/storage/local.py): Change `save_file()` to return a relative path instead of absolute
-- [`src/backend/documents/storage/local.py`](src/backend/documents/storage/local.py): Update `open()` to handle both relative and absolute paths (backward compat)
+## Task
 
-### Task 4: Fix error_handler.py crash vulnerability
+Apply **Option A** from the plan at [`plans/plan-fix-ollama-host-resolution.md`](plans/plan-fix-ollama-host-resolution.md):
 
-**File to modify:** [`src/backend/documents/services/error_handler.py`](src/backend/documents/services/error_handler.py)
+### Step 1: Add `extra_hosts` to `backend` service
 
-Wrap `_has_pdf_magic_bytes()` in a try/except to handle `FileNotFoundError` and `PermissionError` gracefully, returning `False` instead of crashing.
+In [`docker-compose.yml`](docker-compose.yml), add the following block to the `backend` service definition (after `restart: unless-stopped` on line 72, before `depends_on:` on line 73):
 
-### Task 5: Improve error message persistence
+```yaml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
 
-**File to modify:** [`src/backend/documents/tasks/embedding_tasks.py`](src/backend/documents/tasks/embedding_tasks.py)
+The final result should look like this (around lines 70-78):
 
-In the `except Exception` block at line 129, ensure the actual error message (including the exception type and message) is stored in `document.processing_error` so the user can see what went wrong.
+```yaml
+  backend:
+    build:
+      context: .
+      dockerfile: ./docker/backend/Dockerfile
+    image: docuchat_backend
+    container_name: docuchat_backend
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+```
 
-## Verification Steps
+### Step 2: Update WIP Context
 
-After implementing fixes:
+After making the change, update [`docs/active-task/wip-context.md`](docs/active-task/wip-context.md) with:
+1. What was completed (added `extra_hosts` to `backend` service)
+2. Current state (docker-compose.yml updated)
+3. Next step (verify the fix by rebuilding and testing)
 
-1. **Test Ollama connectivity:**
-   ```bash
-   docker-compose exec celery_worker python -c "import requests; r = requests.get('http://host.docker.internal:11434/api/tags', timeout=5); print(r.status_code, r.json())"
-   ```
+### Step 3: Verify
 
-2. **Test file path consistency:**
-   ```bash
-   docker-compose exec celery_worker ls -la /app/media/documents/
-   docker-compose exec backend ls -la /app/media/documents/
-   ```
+Run the following to rebuild and restart:
+```bash
+docker-compose down && docker-compose up -d
+```
 
-3. **Test embedding directly:**
-   ```bash
-   docker-compose exec celery_worker python -c "
-   from documents.services.embedding_service import generate_embedding
-   result = generate_embedding('test text')
-   print('Embedding result:', result[:5] if result else 'None')
-   "
-   ```
-
-4. **Full flow test:** Upload a document through the frontend and verify it reaches `"completed"` status.
-
-## Important Notes
-
-- The project uses `docker-compose` (v1) not `docker compose` (v2)
-- All services must be restarted after changes: `docker-compose down && docker-compose up -d`
-- The `backend_media` volume is shared between `backend` and `celery_worker` services
-- Do NOT modify the frontend code — the issue is entirely backend-side
-- Follow TDD flow for backend changes: write test first (RED), then code (GREEN), then refactor
-- Update `docs/active-task/wip-context.md` after each step
-- Update `docs/references/database-schema.md` if any model changes are made
-- Update `docs/references/api-registry.md` if any API changes are made
+Then test by:
+1. Uploading a document
+2. Waiting for processing to complete
+3. Starting a chat and asking a question
+4. Checking logs: `docker-compose logs backend`

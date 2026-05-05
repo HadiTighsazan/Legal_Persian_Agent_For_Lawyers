@@ -70,6 +70,8 @@ services:
     image: docuchat_backend
     container_name: docuchat_backend
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
