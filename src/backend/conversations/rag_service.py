@@ -6,8 +6,10 @@ building context, calling the configured chat provider, and extracting
 citations.
 
 The RAG pipeline uses **hybrid search** (vector + keyword with RRF fusion)
-by default, with a ``legal_status: "valid"`` filter to exclude obsolete or
-repealed laws from the retrieved context.
+by default.  For ``reference_law`` documents, a ``legal_status: "valid"``
+filter is applied to exclude obsolete or repealed laws.  For regular
+``user_upload`` documents, no filter is applied, ensuring all chunks are
+retrievable.
 """
 
 from __future__ import annotations
@@ -158,6 +160,33 @@ def extract_citations(content: str, chunks: list[dict]) -> list[dict]:
     return citations
 
 
+def _get_rag_filters(document_id: str) -> dict | None:
+    """Determine RAG search filters based on document type.
+
+    For ``reference_law`` documents, only include chunks with
+    ``legal_status="valid"`` (i.e., non-obsolete laws).  For regular
+    ``user_upload`` documents, no filters are applied, ensuring all
+    chunks are retrievable regardless of their ``legal_status`` value.
+
+    Args:
+        document_id: UUID of the document to check.
+
+    Returns:
+        A filter dict (e.g. ``{"legal_status": "valid"}``) for legal
+        reference documents, or ``None`` for regular user uploads.
+    """
+    try:
+        doc = Document.objects.only("document_type").get(id=document_id)
+        if doc.document_type == "reference_law":
+            return {"legal_status": "valid"}
+    except (Document.DoesNotExist, ValidationError):
+        logger.warning(
+            "_get_rag_filters: Document %s not found, defaulting to no filters",
+            document_id,
+        )
+    return None
+
+
 def run_rag_query(
     question: str,
     document_id: str,
@@ -200,19 +229,20 @@ def run_rag_query(
     except Exception as e:
         raise RAGServiceException(f"Failed to embed question: {e}") from e
 
-    # Step 2: Hybrid search with default legal_status filter
+    # Step 2: Hybrid search with document-type-aware filters
     logger.info(
         "run_rag_query: Hybrid searching chunks for document %s (top_k=%d)",
         document_id,
         top_k,
     )
     try:
+        filters = _get_rag_filters(document_id)
         chunks = hybrid_search(
             document_id=document_id,
             query_vector=query_embedding,
             query_text=question,
             top_k=top_k,
-            filters={"legal_status": "valid"},
+            filters=filters,
         )
     except Exception as e:
         raise RAGServiceException(f"Failed to search chunks: {e}") from e
@@ -297,19 +327,20 @@ def run_rag_query_stream(
     except Exception as e:
         raise RAGServiceException(f"Failed to embed question: {e}") from e
 
-    # Step 2: Hybrid search with default legal_status filter
+    # Step 2: Hybrid search with document-type-aware filters
     logger.info(
         "run_rag_query_stream: Hybrid searching chunks for document %s (top_k=%d)",
         document_id,
         top_k,
     )
     try:
+        filters = _get_rag_filters(document_id)
         chunks = hybrid_search(
             document_id=document_id,
             query_vector=query_embedding,
             query_text=question,
             top_k=top_k,
-            filters={"legal_status": "valid"},
+            filters=filters,
         )
     except Exception as e:
         raise RAGServiceException(f"Failed to search chunks: {e}") from e

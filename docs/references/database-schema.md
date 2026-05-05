@@ -38,6 +38,7 @@
 | **total_chunks** | **INTEGER** | **DEFAULT 0** | **Total number of text chunks after splitting (added in E04-T2)** |
 | **extracted_text_length** | **INTEGER** | **DEFAULT 0** | **Length of extracted text in characters (added in E04-T2)** |
 | **processing_error** | **TEXT** | **NULL** | **Error details from pipeline processing (added in E04-T2)** |
+| **document_type** | **VARCHAR(20)** | **DEFAULT 'user_upload', INDEXED** | **Document type: 'user_upload' for regular files, 'reference_law' for system reference legal texts. Used by RAG service to determine whether to apply legal_status filters. (added in migration 0007)** |
 | created_at | TIMESTAMP | DEFAULT NOW() | Upload timestamp |
 | updated_at | TIMESTAMP | DEFAULT NOW() | Last update timestamp |
 
@@ -46,6 +47,7 @@
 - `idx_documents_status` on `status`
 - `idx_documents_created_at` on `created_at`
 - `idx_documents_storage_type` on `storage_type`
+- `idx_documents_document_type` on `document_type`
 
 ---
 
@@ -221,6 +223,15 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 - Use CASCADE delete for related records
 - **Epic 6 (migration 0006):** Added `search_vector` (TSVECTOR with GIN index), denormalized metadata columns (`law_name`, `legal_status`, `approval_date`, `legal_type`), and a DB trigger `trg_chunk_search_vector` that auto-populates `search_vector` from `content` using `to_tsvector('simple', ...)` on INSERT/UPDATE.
 - JSONB for flexible metadata storage
+
+### Migration 0007 — Add `document_type` to `documents` Table
+- **File:** `src/backend/documents/migrations/0007_add_document_type.py`
+- **Changes:**
+  - Added `document_type` column to `documents` table: `VARCHAR(20)`, default `'user_upload'`, indexed
+  - Choices: `'user_upload'` (regular user-uploaded files), `'reference_law'` (system reference legal texts)
+  - All existing rows default to `'user_upload'` (backward compatible)
+  - Created `idx_documents_document_type` index on `document_type`
+  - **Purpose:** Enables the RAG service to conditionally apply `legal_status` filters — only for `reference_law` documents
 
 ### Migration 0004 (E05-T1 — pgvector Embedding Support)
 - **File:** `src/backend/documents/migrations/0004_alter_documentchunk_embedding.py`

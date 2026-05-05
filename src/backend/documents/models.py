@@ -44,6 +44,11 @@ class Document(models.Model):
         ('completed', 'Completed'),
         ('failed', 'Failed'),
     ]
+
+    DOCUMENT_TYPE_CHOICES = [
+        ('user_upload', 'User Upload'),
+        ('reference_law', 'Reference Law'),
+    ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='documents')
@@ -57,6 +62,14 @@ class Document(models.Model):
     total_pages = models.IntegerField(null=True, blank=True)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='uploaded')
     error_message = models.TextField(null=True, blank=True)
+    document_type = models.CharField(
+        max_length=20,
+        choices=DOCUMENT_TYPE_CHOICES,
+        default='user_upload',
+        db_index=True,
+        help_text="Type of document: 'user_upload' for regular files, "
+                  "'reference_law' for system reference legal texts.",
+    )
     
     # Document processing pipeline fields
     processing_status = models.CharField(max_length=20, default='pending')
@@ -73,6 +86,7 @@ class Document(models.Model):
             models.Index(fields=['user']),
             models.Index(fields=['status']),
             models.Index(fields=['created_at']),
+            models.Index(fields=['document_type']),
         ]
     
     def __str__(self):

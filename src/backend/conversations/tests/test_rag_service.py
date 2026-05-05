@@ -521,5 +521,5 @@ class RunRagQueryTests:
             query_vector=[0.1] * 768,
             query_text="Test?",
             top_k=3,
-            filters={"legal_status": "valid"},
+            filters=None,
         )
