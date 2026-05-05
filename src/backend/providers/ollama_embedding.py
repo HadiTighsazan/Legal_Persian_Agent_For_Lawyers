@@ -60,10 +60,40 @@ class OllamaEmbeddingProvider(BaseEmbeddingProvider):
                 len(embedding),
             )
             return embedding
+        except requests.exceptions.HTTPError as e:
+            logger.error(
+                "OllamaEmbeddingProvider.embed: HTTP %s — %s (url=%s, model=%s)",
+                e.response.status_code if e.response is not None else "N/A",
+                e,
+                url,
+                self.model,
+            )
+            if e.response is not None:
+                logger.error(
+                    "OllamaEmbeddingProvider.embed: Response body — %s",
+                    e.response.text[:500],
+                )
+            return None
+        except requests.exceptions.ConnectionError as e:
+            logger.error(
+                "OllamaEmbeddingProvider.embed: Connection refused — %s "
+                "(is Ollama running at %s?)",
+                e,
+                self.base_url,
+            )
+            return None
+        except requests.exceptions.Timeout as e:
+            logger.error(
+                "OllamaEmbeddingProvider.embed: Timeout after 60s — %s (url=%s)",
+                e,
+                url,
+            )
+            return None
         except Exception as e:
             logger.error(
-                "OllamaEmbeddingProvider.embed: Failed — %s",
+                "OllamaEmbeddingProvider.embed: Unexpected error — %s (type=%s)",
                 e,
+                type(e).__name__,
             )
             return None
 
@@ -108,13 +138,55 @@ class OllamaEmbeddingProvider(BaseEmbeddingProvider):
                 results[original_idx] = emb
 
             logger.info(
-                "OllamaEmbeddingProvider.embed_batch: Generated %d embeddings",
+                "OllamaEmbeddingProvider.embed_batch: Generated %d embeddings "
+                "(url=%s, model=%s)",
                 len(valid_texts),
+                url,
+                self.model,
             )
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response is not None else "N/A"
+            response_body = e.response.text[:500] if e.response is not None else "N/A"
+            logger.error(
+                "OllamaEmbeddingProvider.embed_batch: HTTP %s — %s "
+                "(url=%s, model=%s, response=%s)",
+                status_code,
+                e,
+                url,
+                self.model,
+                response_body,
+            )
+            raise EmbeddingBatchError(
+                f"Ollama batch embedding failed (HTTP {status_code}): {e}",
+                partial_results=results,
+            ) from e
+        except requests.exceptions.ConnectionError as e:
+            logger.error(
+                "OllamaEmbeddingProvider.embed_batch: Connection refused — %s "
+                "(is Ollama running at %s?)",
+                e,
+                self.base_url,
+            )
+            raise EmbeddingBatchError(
+                f"Ollama batch embedding failed — connection refused: {e}",
+                partial_results=results,
+            ) from e
+        except requests.exceptions.Timeout as e:
+            logger.error(
+                "OllamaEmbeddingProvider.embed_batch: Timeout after 120s — %s "
+                "(url=%s)",
+                e,
+                url,
+            )
+            raise EmbeddingBatchError(
+                f"Ollama batch embedding failed — timeout: {e}",
+                partial_results=results,
+            ) from e
         except Exception as e:
             logger.error(
-                "OllamaEmbeddingProvider.embed_batch: Failed — %s",
+                "OllamaEmbeddingProvider.embed_batch: Unexpected error — %s (type=%s)",
                 e,
+                type(e).__name__,
             )
             raise EmbeddingBatchError(
                 f"Ollama batch embedding failed: {e}",
@@ -149,13 +221,44 @@ class OllamaEmbeddingProvider(BaseEmbeddingProvider):
             embedding: list[float] = data["embeddings"][0]
             logger.info(
                 "OllamaEmbeddingProvider.embed_query: Generated embedding "
-                "(dimensions=%d)",
+                "(dimensions=%d, url=%s, model=%s)",
                 len(embedding),
+                url,
+                self.model,
             )
             return embedding
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response is not None else "N/A"
+            response_body = e.response.text[:500] if e.response is not None else "N/A"
+            logger.error(
+                "OllamaEmbeddingProvider.embed_query: HTTP %s — %s "
+                "(url=%s, model=%s, response=%s)",
+                status_code,
+                e,
+                url,
+                self.model,
+                response_body,
+            )
+            raise
+        except requests.exceptions.ConnectionError as e:
+            logger.error(
+                "OllamaEmbeddingProvider.embed_query: Connection refused — %s "
+                "(is Ollama running at %s?)",
+                e,
+                self.base_url,
+            )
+            raise
+        except requests.exceptions.Timeout as e:
+            logger.error(
+                "OllamaEmbeddingProvider.embed_query: Timeout after 60s — %s (url=%s)",
+                e,
+                url,
+            )
+            raise
         except Exception as e:
             logger.error(
-                "OllamaEmbeddingProvider.embed_query: Failed — %s",
+                "OllamaEmbeddingProvider.embed_query: Unexpected error — %s (type=%s)",
                 e,
+                type(e).__name__,
             )
             raise

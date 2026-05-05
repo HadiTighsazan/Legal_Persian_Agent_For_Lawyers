@@ -86,6 +86,13 @@ def embed_document(self, document_id: str, task_id: str) -> None:
         processing_task.progress = 100
         processing_task.completed_at = timezone.now()
         processing_task.save(update_fields=["status", "progress", "completed_at"])
+
+        # Mark the Document pipeline as complete (final link in the chain).
+        document.processing_status = "completed"
+        document.status = "completed"
+        document.save(update_fields=["processing_status", "status"])
+
+        log_milestone(logger, document_id, "Pipeline complete")
         return
 
     # ── Step 4: Process chunks via shared helper ──────────────────────
@@ -95,11 +102,19 @@ def embed_document(self, document_id: str, task_id: str) -> None:
             progress_callback=lambda p: _update_progress(processing_task, p, total_count),
         )
 
-        # ── Step 5: Mark as completed ─────────────────────────────────
+        # ── Step 5: Mark embed ProcessingTask as completed ────────────
         processing_task.status = "completed"
         processing_task.progress = 100
         processing_task.completed_at = timezone.now()
         processing_task.save(update_fields=["status", "progress", "completed_at"])
+
+        # ── Step 6: Mark the Document pipeline as complete ────────────
+        # This is the final link in the Celery chain, so we set both
+        # processing_status and status to "completed" here. Previously
+        # this was done prematurely in chunk_document (Bug A).
+        document.processing_status = "completed"
+        document.status = "completed"
+        document.save(update_fields=["processing_status", "status"])
 
         log_milestone(
             logger,
@@ -109,6 +124,7 @@ def embed_document(self, document_id: str, task_id: str) -> None:
             total_chunks=total_count,
             embedded=processed_count,
         )
+        log_milestone(logger, document_id, "Pipeline complete")
 
     except Exception as e:
         if isinstance(e, EmbeddingBatchError):
@@ -126,6 +142,15 @@ def embed_document(self, document_id: str, task_id: str) -> None:
         processing_task.error_message = error_message
         processing_task.completed_at = timezone.now()
         processing_task.save(update_fields=["status", "error_message", "completed_at"])
+
+        # ── Step 7: Mark the Document as failed ───────────────────────
+        # Since embed_document is the final link in the chain, a failure
+        # here means the entire pipeline has failed. Update the document's
+        # processing_status and status accordingly.
+        document.processing_status = "failed"
+        document.status = "failed"
+        document.processing_error = error_message
+        document.save(update_fields=["processing_status", "status", "processing_error"])
 
 
 def _update_progress(task: ProcessingTask, processed: int, total: int) -> None:

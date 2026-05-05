@@ -240,17 +240,18 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         started_at=timezone.now(),
     )
 
-    # Handle empty text.
+    # Handle empty text — mark as failed so the user knows extraction produced nothing.
     if not extracted_text or not extracted_text.strip():
-        logger.info("chunk_document: Document %s has no extracted text — skipping chunking", document_id)
-        document.total_chunks = 0
-        document.processing_status = "completed"
-        document.status = "completed"
-        document.save(update_fields=["total_chunks", "processing_status", "status"])
-
-        chunk_task.status = "completed"
-        chunk_task.completed_at = timezone.now()
-        chunk_task.save(update_fields=["status", "completed_at"])
+        logger.warning(
+            "chunk_document: Document %s has no extracted text — marking as failed",
+            document_id,
+        )
+        fail_processing_task(
+            chunk_task,
+            document,
+            "Text extraction produced no content. The PDF may be image-based, scanned, or contain unsupported characters.",
+            logger,
+        )
         return
 
     try:
@@ -286,11 +287,15 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
             )
             return
 
-        # Update document metadata (both pipeline-granular and lifecycle status).
+        # Update document metadata (chunk count only).
+        # NOTE: processing_status and status are NOT set to "completed" here.
+        # The embed_document task (the final link in the Celery chain) is
+        # responsible for marking the pipeline as complete once all embeddings
+        # have been generated. Setting them prematurely would cause the
+        # frontend to stop polling and hide the progress panel before
+        # embeddings are ready (Bug A).
         document.total_chunks = len(chunks_to_create)
-        document.processing_status = "completed"
-        document.status = "completed"
-        document.save(update_fields=["total_chunks", "processing_status", "status"])
+        document.save(update_fields=["total_chunks"])
 
         # Mark the chunk ProcessingTask as completed.
         chunk_task.status = "completed"
@@ -301,7 +306,6 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
             logger, document_id, "Chunking complete",
             chunks=len(chunks_to_create),
         )
-        log_milestone(logger, document_id, "Pipeline complete")
 
     except Exception:
         error_message = traceback.format_exc()
@@ -318,14 +322,29 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
 
 
 @shared_task(bind=True)
-def _handle_chain_error(self, document_id: str, task_type: str = "extract") -> None:
+def _handle_chain_error(
+    self,
+    request: Any,
+    exc: Exception,
+    traceback_obj: Any,
+    document_id: str,
+    task_type: str = "extract",
+) -> None:
     """Error callback for the Celery chain.
 
     When the chain fails (e.g., worker crash, unhandled exception), this task
     is triggered via ``link_error`` to update the ``ProcessingTask`` status
     to ``"failed"`` so it doesn't remain stuck at ``"pending"`` forever.
 
+    Celery's ``link_error`` passes ``(request, exc, traceback)`` as positional
+    args **before** the signature args (``document_id``, ``task_type``).
+    The signature must accept all of these to avoid:
+        TypeError: _handle_chain_error() got multiple values for argument 'task_type'
+
     Args:
+        request: The Celery task request object.
+        exc: The exception that caused the chain to fail.
+        traceback_obj: The traceback object.
         document_id: The UUID (as a string) of the :class:`Document`.
         task_type: The ``ProcessingTask.task_type`` to mark as failed
             (default ``"extract"``).

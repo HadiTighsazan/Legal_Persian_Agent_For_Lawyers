@@ -444,9 +444,9 @@ Both fields are optional. At least one should be provided for meaningful updates
 ---
 
 #### POST /documents/{document_id}/process/
-**Description:** Start document processing (extract, chunk)
+**Description:** Start document processing pipeline (extract → chunk → embed)
 **Auth Required:** Yes
-**Implementation Date:** 2026-04-24
+**Implementation Date:** 2026-04-24 (updated 2026-05-04: added auto-embedding)
 **View:** `DocumentProcessView`
 **Response:** `202 Accepted`
 ```json
@@ -466,6 +466,8 @@ Both fields are optional. At least one should be provided for meaningful updates
 - Verifies document ownership via `document.user != request.user`
 - Prevents duplicate processing if `processing_status in ("processing", "completed")`
 - Calls `process_document(document_id)` directly (regular Python function, not a Celery task)
+- The Celery chain now includes 3 steps: `extract_text_from_pdf → chunk_document → embed_document`
+- Embeddings are automatically generated for all chunks after chunking completes
 - Returns `202 Accepted` with Celery chain task ID
 - Error responses follow standard format: `{"error": "error_code", "message": "..."}`
 
@@ -481,7 +483,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 {
   "document_id": "uuid",
   "status": "processing",
-  "progress": 50,
+  "progress": 33,
   "tasks": [
     {
       "task_type": "extract",
@@ -493,6 +495,12 @@ Both fields are optional. At least one should be provided for meaningful updates
       "task_type": "chunk",
       "status": "running",
       "progress": 60,
+      "error_message": null
+    },
+    {
+      "task_type": "embed",
+      "status": "pending",
+      "progress": 0,
       "error_message": null
     }
   ]
@@ -506,6 +514,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 - Uses `IsAuthenticated` permission class
 - Verifies document ownership
 - Queries `ProcessingTask.objects.filter(document=document).order_by("created_at")`
+- The pipeline now includes 3 tasks: `extract`, `chunk`, and `embed`
 - Per-task progress: completed=100, failed=0, running=task.progress, pending=0
 - Overall progress: average of all task progress values (0 if no tasks)
 - Uses `ProcessingStatusSerializer` for response validation
@@ -887,7 +896,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 **Implementation Date:** 2026-04-28
 **View Class:** `DocumentDirectQueryView`
 **Test Coverage:** 11 tests in `DocumentDirectQueryViewTests`
-**Implementation Notes:** Stateless RAG query endpoint. Fetches document with ownership check (404/403), validates `processing_status == 'completed'` (422), validates input with `DirectQuerySerializer`, calls `run_rag_query` with `conversation_history=[]`, and returns `answer`, `sources`, `token_usage` without persisting any `Message` or `Conversation` objects. `RAGServiceException` → 502, rate limit → 429 with `retry_after: 60`.
+**Implementation Notes:** Stateless RAG query endpoint. Fetches document with ownership check (404/403), validates `document.status == 'completed'` (422) — uses the authoritative upload lifecycle field, not `processing_status`, validates input with `DirectQuerySerializer`, calls `run_rag_query` with `conversation_history=[]`, and returns `answer`, `sources`, `token_usage` without persisting any `Message` or `Conversation` objects. `RAGServiceException` → 502, rate limit → 429 with `retry_after: 60`.
 **Request Body:**
 ```json
 {

@@ -79,9 +79,18 @@ export default function DocumentDetailPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   // ── Processing status polling ──────────────────────────────────────────
+  // Polling is enabled when the document has been loaded and its
+  // processing_status is not in a terminal state (completed/failed).
+  // The useProcessingStatus hook also stops polling internally when the
+  // computed status from ProcessingTask records reaches a terminal state.
+  const shouldPoll =
+    !isLoading &&
+    document !== null &&
+    document.processing_status !== "completed" &&
+    document.processing_status !== "failed";
   const { statusData, isPolling } = useProcessingStatus(
     documentId,
-    !isLoading && document !== null && document.processing_status !== "completed",
+    shouldPoll,
   );
 
   // ── Fetch document details ─────────────────────────────────────────────

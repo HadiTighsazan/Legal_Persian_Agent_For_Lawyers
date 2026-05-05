@@ -384,10 +384,14 @@ class FullPipelineIntegrationTests(TestCase):
         self.assertIsNotNone(chunk_task.started_at)
         self.assertIsNotNone(chunk_task.completed_at)
 
-        # Verify document final state.
+        # Verify document state after chunking (embed step not yet run).
+        # processing_status remains "processing" because chunk_document no longer
+        # sets it to "completed" — that responsibility moved to embed_document
+        # (the final link in the Celery chain) to prevent the frontend from
+        # stopping polling before embeddings are generated (Bug A fix).
         self.document.refresh_from_db()
         self.assertEqual(self.document.total_chunks, len(chunks))
-        self.assertEqual(self.document.processing_status, "completed")
+        self.assertEqual(self.document.processing_status, "processing")
 
 
 # ===================================================================

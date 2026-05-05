@@ -43,6 +43,8 @@ def _create_document(
     **kwargs,
 ) -> Document:
     """Create a Document with sensible defaults for testing."""
+    # Keep status in sync with processing_status by default.
+    status = kwargs.get("status", processing_status if processing_status == "completed" else "uploaded")
     return Document.objects.create(
         user=user,
         title=kwargs.get("title", "test-doc.pdf"),
@@ -52,6 +54,7 @@ def _create_document(
         file_size=kwargs.get("file_size", 2048),
         mime_type=kwargs.get("mime_type", "application/pdf"),
         processing_status=processing_status,
+        status=status,
     )
 
 

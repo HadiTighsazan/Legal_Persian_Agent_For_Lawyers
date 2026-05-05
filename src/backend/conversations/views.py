@@ -547,7 +547,7 @@ class DocumentDirectQueryView(APIView):
         # ------------------------------------------------------------------
         # 2. Validate document processing status
         # ------------------------------------------------------------------
-        if document.processing_status != "completed":
+        if document.status != "completed":
             return Response(
                 {
                     "error": "processing_incomplete",

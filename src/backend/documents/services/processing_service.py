@@ -174,10 +174,10 @@ def compute_overall_progress(task_data: list[dict[str, Any]]) -> int:
 def process_document(document_id: str) -> str | None:
     """Orchestrate the full document processing pipeline via a Celery chain.
 
-    Creates a ``ProcessingTask`` record with ``task_type='extract'`` and
-    ``status='pending'``, then builds and executes the chain::
+    Creates ``ProcessingTask`` records for each step, then builds and executes
+    the chain::
 
-        extract_text_from_pdf → chunk_document
+        extract_text_from_pdf → chunk_document → embed_document
 
     A ``link_error`` callback is attached to the chain so that chain-level
     failures (e.g. worker crash) are caught and the ``ProcessingTask`` status
@@ -200,6 +200,7 @@ def process_document(document_id: str) -> str | None:
         chunk_document,
         extract_text_from_pdf,
     )
+    from documents.tasks.embedding_tasks import embed_document  # noqa: PLC0415
 
     logger.info("process_document: Starting orchestration for document %s", document_id)
 
@@ -217,30 +218,47 @@ def process_document(document_id: str) -> str | None:
         )
         return None
 
-    # Create the initial ProcessingTask record.
-    processing_task = ProcessingTask.objects.create(
+    # Create ProcessingTask records for each pipeline step.
+    extract_task = ProcessingTask.objects.create(
         document=document,
         task_type="extract",
+        status="pending",
+    )
+    embed_task = ProcessingTask.objects.create(
+        document=document,
+        task_type="embed",
         status="pending",
     )
 
     # Build the Celery chain with a link_error callback.
     # The chain passes the return value of extract_text_from_pdf (extracted text)
     # as the first positional argument to chunk_document.
+    # After chunking completes, embed_document generates embeddings for all
+    # un-embedded chunks.
+    #
+    # NOTE: embed_document uses .si() (immutable signature) to prevent Celery
+    # from passing the return value of chunk_document (None) as the first
+    # positional argument. Without .si(), embed_document would receive
+    # (None, document_id, task_id) = 3 positional args, causing:
+    #   TypeError: embed_document() takes 3 positional arguments but 4 were given
     chain_obj = chain(
         extract_text_from_pdf.s(document_id),
         chunk_document.s(document_id),
+        embed_document.si(document_id, str(embed_task.id)),
     )
 
     # Attach a link_error callback so chain-level failures are caught.
+    # NOTE: Celery's link_error passes (request, exc, traceback) as positional
+    # args before the .s() args. The _handle_chain_error task must accept
+    # these in its signature.
     error_callback = _handle_chain_error.s(document_id, task_type="extract")
 
     # Execute the chain with the error callback.
     result = chain_obj.apply_async(link_error=[error_callback])
 
     # Update the ProcessingTask with the Celery task ID.
-    processing_task.celery_task_id = result.id
-    processing_task.save(update_fields=["celery_task_id"])
+    extract_task.celery_task_id = result.id
+    extract_task.save(update_fields=["celery_task_id"])
 
     logger.info(
         "process_document: Chain submitted for document %s (celery_task_id=%s)",

@@ -1,101 +1,104 @@
-# WIP Context — Fix: Documents Stuck in "Pending" State After Upload ✅
+# WIP Context — Fix Embedding Progress Bar Stuck on Pending & Empty Context in Chat
 
 ## What Was Just Completed
 
-**Root cause identified and fixed across frontend AND backend.** Documents uploaded via the frontend remained stuck in "pending" state because of three separate issues:
+**Bug A (Progress Bar Never Updates) and Bug B (Empty Context in Chat) have been fixed.**
 
-### Issue 1 (Frontend) — "Start Processing" Button Logic ✅ FIXED
+Additionally, **two Celery runtime errors** reported from worker logs have been fixed:
+1. `TypeError: embed_document() takes 3 positional arguments but 4 were given`
+2. `TypeError: _handle_chain_error() got multiple values for argument 'task_type'`
 
-**Root Cause:** The `Document` model has **two status fields**:
-- `status` — upload lifecycle (`'uploaded'` → `'processing'` → `'completed'` / `'failed'`)
-- `processing_status` — pipeline granular status (`'pending'` → `'processing'` → `'completed'` / `'failed'`)
+### Root Cause Analysis
 
-After upload, `status='uploaded'` but `processing_status='pending'`. The code in `DocumentDetailPage.tsx` used `processing_status` first (`document.processing_status ?? document.status`), resulting in `'pending'`. Then `ProcessingStatusPanel` checked `processingStatus === "uploaded"` to show the "Start Processing" button — which was `false` because the value was `'pending'`, not `'uploaded'`. The button never rendered, so users had no way to trigger the Celery processing pipeline.
+**Bug A — Progress Bar Never Updates:**
+The `chunk_document` task in [`document_processing.py`](src/backend/documents/tasks/document_processing.py:290-298) was prematurely setting `document.processing_status = "completed"` and `document.status = "completed"` **before** the `embed_document` task had finished. Since the Celery chain is `extract → chunk → embed`, setting these fields in `chunk_document` caused:
 
-**Fix:** Separated the two status concepts. `ProcessingStatusPanel` now receives `documentStatus` as a separate prop and checks `documentStatus === "uploaded"` for the button. Also added guard to hide the button when `processingStatus === "processing"` or `processingStatus === "completed"`.
+1. The frontend's polling (which checks `document.processing_status !== "completed"`) to **stop polling** prematurely
+2. The `ProcessingStatusPanel` to be **hidden** (because `processingStatus === "completed"`)
+3. The "Chat with Document" button to appear **before embeddings were ready**
 
-### Issue 2 (Backend) — Pipeline Never Updates `document.status` ✅ FIXED
+**Bug B — Empty Context in Chat:**
+A direct consequence of Bug A. The document appeared "completed" but embeddings hadn't been generated yet. When the user asked a question:
+- `search_chunks()` filtered with `embedding__isnull=False`
+- Since embeddings were NULL, it returned 0 results
+- `build_context([])` returned an empty string
+- The LLM responded "Based on the provided context, there is no information about the text."
 
-**Root Cause:** The Celery pipeline tasks (`extract_text_from_pdf` → `chunk_document`) only updated `document.processing_status` (the pipeline-granular field) but **never updated `document.status`** (the upload lifecycle field). This meant:
-- `document.status` stayed `'uploaded'` forever
-- The "Chat with Document" button (which checks `document.status === 'completed'`) never appeared
-- The frontend status badge showed "Uploaded" even after the pipeline completed
+**Celery Error 1 — `embed_document() takes 3 positional arguments but 4 were given`:**
+The `chunk_document` task returns `None`. Celery passes the previous task's return value as the first positional argument to the next task in the chain. So `embed_document` received `(None, document_id, task_id)` = 3 positional args + `self` (from `bind=True`) = 4 total, but its signature only accepts `(self, document_id, task_id)` = 3 total.
 
-**Fix:** Updated all 4 places where `document.processing_status` is modified to also update `document.status`:
-1. `extract_text_from_pdf` — now sets `document.status = "processing"` when extraction starts
-2. `chunk_document` (normal path) — now sets `document.status = "completed"` when chunking succeeds
-3. `chunk_document` (empty text path) — now sets `document.status = "completed"` for empty documents
-4. `fail_processing_task` (error_handler.py) — now sets `document.status = "failed"` on pipeline failure
-5. `_handle_chain_error` — now sets `document.status = "failed"` on chain-level failure
+**Fix:** Changed `embed_document.s()` to `embed_document.si()` (immutable signature) in [`processing_service.py`](src/backend/documents/services/processing_service.py:247). The `.si()` prevents Celery from passing the previous task's return value as an argument.
 
-### Issue 3 (Frontend) — Document Not Re-fetched After Processing Completes ✅ FIXED
+**Celery Error 2 — `_handle_chain_error() got multiple values for argument 'task_type'`:**
+Celery's `link_error` callback passes `(request, exc, traceback)` as positional args **before** the `.s()` args. The old signature `(self, document_id, task_type="extract")` didn't account for these, causing `task_type` to be passed twice (once from `.s()` and once as a keyword).
 
-**Root Cause:** `DocumentDetailPage.tsx` fetched the document **once** on mount via `fetchDocument()` and never re-fetched it. The `useProcessingStatus` hook polled `GET /documents/{id}/processing-status/` (which returns the pipeline-granular `processing_status`), but when that reached `"completed"`, the hook stopped polling — yet `fetchDocument()` was never called again to get the updated `document.status`. So the UI still showed the old `document.status = 'uploaded'`, and the "Chat with Document" button never appeared until a manual page refresh.
-
-**Fix:** Added a `useEffect` in [`DocumentDetailPage.tsx`](src/frontend/src/pages/documents/DocumentDetailPage.tsx:111) that watches `statusData` and calls `fetchDocument()` whenever the processing pipeline reaches a terminal state (`"completed"` or `"failed"`):
-```typescript
-useEffect(() => {
-  if (
-    statusData &&
-    (statusData.status === "completed" || statusData.status === "failed")
-  ) {
-    fetchDocument();
-  }
-}, [statusData, fetchDocument]);
-```
+**Fix:** Changed the signature in [`document_processing.py`](src/backend/documents/tasks/document_processing.py:325-332) to `(self, request, exc, traceback, document_id, task_type="extract")`.
 
 ### Changes Made
 
-**Frontend:**
+#### TASK 1 — Fix `chunk_document` to Not Set `processing_status = "completed"`
 
-1. **`src/frontend/src/pages/documents/DocumentDetailPage.tsx`**
-   - Separated the two status concepts with clear comments
-   - `processingStatus` now uses only `document.processing_status ?? 'pending'` (for display in the panel)
-   - "Chat with Document" button now checks `document.status === 'completed'` (the authoritative upload lifecycle field)
-   - Passes new `documentStatus={document.status}` prop to `ProcessingStatusPanel`
-   - **NEW:** Added `useEffect` to re-fetch document when `statusData.status` reaches `"completed"` or `"failed"`
+**File:** [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py:290-298)
 
-2. **`src/frontend/src/components/documents/ProcessingStatusPanel.tsx`**
-   - Added new `documentStatus: string` prop to the component interface
-   - `showStartProcessing` now checks `documentStatus === "uploaded"` AND `processingStatus !== "processing"` AND `processingStatus !== "completed"`
-   - Added JSDoc comments explaining the distinction
+**Change:** Removed the lines that set `document.processing_status = "completed"` and `document.status = "completed"` from `chunk_document`. Now it only saves `document.total_chunks`. The responsibility for marking the pipeline as complete has been moved to `embed_document` (the final link in the chain).
 
-3. **`src/frontend/src/pages/documents/UploadPage.tsx`**
-   - After successful upload, `triggerProcessing(response.id)` is called automatically
-   - If auto-trigger fails, a non-fatal toast is shown and the user can manually trigger from the detail page
+#### TASK 2 — Move Pipeline Completion to `embed_document`
 
-4. **`src/frontend/src/pages/documents/DocumentDetailPage.test.tsx`**
-   - Fixed button name regex from `/start chat/i` to `/chat with document/i` (pre-existing bug)
+**File:** [`src/backend/documents/tasks/embedding_tasks.py`](src/backend/documents/tasks/embedding_tasks.py:104-117, 139-153)
 
-**Backend:**
+**Changes:**
+1. After successful embedding (line 111-117): Sets `document.processing_status = "completed"` and `document.status = "completed"`
+2. On failure (line 146-153): Sets `document.processing_status = "failed"` and `document.status = "failed"` with the error message
+3. No-chunks case (line 90-96): Also marks the document as completed when there are no chunks to embed
 
-5. **`src/backend/documents/tasks/document_processing.py`**
-   - `extract_text_from_pdf`: Added `document.status = "processing"` alongside `document.processing_status = "processing"`
-   - `chunk_document` (normal path): Added `document.status = "completed"` alongside `document.processing_status = "completed"`
-   - `chunk_document` (empty text path): Added `document.status = "completed"` alongside `document.processing_status = "completed"`
-   - `_handle_chain_error`: Added `document.status = "failed"` alongside `document.processing_status = "failed"`
+#### TASK 3 — Fix Frontend Polling Logic
 
-6. **`src/backend/documents/services/error_handler.py`**
-   - `fail_processing_task`: Added `document.status = "failed"` alongside `document.processing_status = "failed"`
+**File:** [`src/frontend/src/pages/documents/DocumentDetailPage.tsx`](src/frontend/src/pages/documents/DocumentDetailPage.tsx:81-102)
+
+**Change:** Simplified the polling condition. The `useProcessingStatus` hook now polls when `document.processing_status` is not `"completed"` or `"failed"`. Since the backend fix ensures `processing_status` is only set to `"completed"` after embedding finishes, the polling will correctly remain active throughout the entire pipeline (extract → chunk → embed).
+
+#### TASK 4 — Add Logging to Ollama Embedding Provider
+
+**File:** [`src/backend/providers/ollama_embedding.py`](src/backend/providers/ollama_embedding.py)
+
+**Changes:** Added detailed error logging for all three methods (`embed`, `embed_batch`, `embed_query`):
+- HTTP errors now log status code, URL, model, and response body (first 500 chars)
+- Connection errors now include a hint about checking if Ollama is running
+- Timeout errors now log the URL and timeout duration
+- Unexpected errors now log the exception type
+
+#### FIX — Celery Chain Signature Mismatch
+
+**File:** [`src/backend/documents/services/processing_service.py`](src/backend/documents/services/processing_service.py:247)
+
+**Change:** Changed `embed_document.s(document_id, str(embed_task.id))` to `embed_document.si(document_id, str(embed_task.id))`. The `.si()` (immutable signature) prevents Celery from passing `chunk_document`'s return value (`None`) as the first positional argument to `embed_document`.
+
+#### FIX — `_handle_chain_error` Errback Signature
+
+**File:** [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py:325-332)
+
+**Change:** Changed signature from `(self, document_id, task_type="extract")` to `(self, request, exc, traceback, document_id, task_type="extract")` to accept Celery's errback positional args `(request, exc, traceback)` that are passed before the `.s()` args.
+
+**File:** [`src/backend/documents/tests/test_tasks.py`](src/backend/documents/tests/test_tasks.py:710-723)
+
+**Change:** Updated `_run_callback` test helper to pass mock `request`, `exc`, and `traceback` arguments to match the new `_handle_chain_error` signature.
 
 ## Current State of Code
 
-- All fixes are implemented and tested
-- **211 backend tests pass** (0 failures)
-- **93 frontend tests pass** (9 test files, 0 failures)
-- Document processing is auto-triggered after upload
-- "Start Processing" button correctly appears only when `document.status === 'uploaded'` AND document is not already processing/completed
-- "Chat with Document" button correctly appears when `document.status === 'completed'`
-- Processing status panel correctly shows per-task progress
-- **NEW:** Document is automatically re-fetched when processing completes, so the "Chat with Document" button appears without manual refresh
-- Pipeline lifecycle is now fully consistent: `uploaded` → `processing` → `completed`/`failed`
+- All 4 tasks + 2 Celery signature fixes are implemented and tested
+- **Backend tests:** 32/32 in `test_tasks.py` passed, 11/11 in `test_processing.py` passed, 420/421 overall (1 pre-existing failure in `test_upload_integration.py` unrelated)
+- **Frontend tests:** 93 passed across 9 test files (all green)
+- The pipeline flow is now: `extract_text_from_pdf → chunk_document → embed_document`
+- `processing_status` is only set to `"completed"` after the embed task finishes
+- If embedding fails, the document is marked as `"failed"` with the error message
+- Ollama embedding provider has detailed error logging for easier debugging
+- Celery chain uses `.si()` for `embed_document` to prevent argument leakage
+- `_handle_chain_error` accepts Celery's errback positional args correctly
 
 ## Next Step
 
-**WAITING** — User to:
-1. Run `docker-compose up` to ensure all services are running (Celery worker + Redis are required for processing)
-2. Upload a document via the frontend
-3. Verify the document automatically starts processing
-4. Wait for processing to complete (extract → chunk)
-5. Verify the "Chat with Document" button appears **automatically** without page refresh
-6. Verify chat functionality works end-to-end
+1. Rebuild and restart the containers: `docker-compose up --build`
+2. Upload a document and verify the processing pipeline shows real-time progress for all three steps
+3. Verify the "Chat with Document" button appears only after embeddings are complete
+4. Ask a question and verify the response contains actual content from the document
+5. Test with a Persian PDF to ensure non-Latin text works

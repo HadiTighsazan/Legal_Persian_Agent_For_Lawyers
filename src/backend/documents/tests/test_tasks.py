@@ -392,38 +392,58 @@ class ChunkDocumentTests(TestCase):
         self.assertIsNotNone(chunk_task.completed_at)
 
     def test_updates_document_fields(self) -> None:
-        """Document.total_chunks and processing_status should be updated."""
+        """Document.total_chunks should be updated; processing_status stays 'processing'.
+
+        The processing_status is NOT set to 'completed' by chunk_document anymore.
+        It was moved to embed_document (the final link in the Celery chain) to
+        prevent the frontend from stopping polling and hiding the progress panel
+        before embeddings are generated (Bug A fix).
+        """
         text = "[PAGE 1]\nHello world.\n[PAGE 2]\nMore content here."
         self._run_task(text)
 
         self.document.refresh_from_db()
         self.assertGreater(self.document.total_chunks, 0)
-        self.assertEqual(self.document.processing_status, "completed")
+        # processing_status remains "processing" (set by extract_text_from_pdf)
+        # because embed_document is now responsible for setting it to "completed".
+        self.assertEqual(self.document.processing_status, "processing")
 
     # -- Empty text -------------------------------------------------------
 
-    def test_empty_text_sets_zero_chunks(self) -> None:
-        """Empty extracted text should result in 0 chunks and completed status."""
+    def test_empty_text_sets_failed_status(self) -> None:
+        """Empty extracted text should result in failed status with descriptive error."""
         self._run_task("")
 
         self.document.refresh_from_db()
         self.assertEqual(self.document.total_chunks, 0)
-        self.assertEqual(self.document.processing_status, "completed")
+        self.assertEqual(self.document.processing_status, "failed")
+        self.assertIn(
+            "Text extraction produced no content",
+            self.document.processing_error,
+        )
 
-        # Verify a chunk task was created and marked completed.
+        # Verify a chunk task was created and marked failed.
         chunk_task = ProcessingTask.objects.get(
             document=self.document,
             task_type="chunk",
         )
-        self.assertEqual(chunk_task.status, "completed")
+        self.assertEqual(chunk_task.status, "failed")
+        self.assertIn(
+            "Text extraction produced no content",
+            chunk_task.error_message,
+        )
 
-    def test_whitespace_only_text_sets_zero_chunks(self) -> None:
-        """Whitespace-only text should be treated as empty."""
+    def test_whitespace_only_text_sets_failed_status(self) -> None:
+        """Whitespace-only text should be treated as empty and mark document as failed."""
         self._run_task("   \n   \t   ")
 
         self.document.refresh_from_db()
         self.assertEqual(self.document.total_chunks, 0)
-        self.assertEqual(self.document.processing_status, "completed")
+        self.assertEqual(self.document.processing_status, "failed")
+        self.assertIn(
+            "Text extraction produced no content",
+            self.document.processing_error,
+        )
 
     # -- Error handling ---------------------------------------------------
 
@@ -609,7 +629,7 @@ class ProcessDocumentTests(TestCase):
             self.assertEqual(task_id, "chain-celery-id-002")
 
     def test_builds_celery_chain(self) -> None:
-        """Verify that chain() is called with the correct tasks."""
+        """Verify that chain() is called with the correct tasks (extract → chunk → embed)."""
         with patch("documents.services.processing_service.chain") as mock_chain:
             mock_result = MagicMock()
             mock_result.id = "chain-celery-id-003"
@@ -619,10 +639,10 @@ class ProcessDocumentTests(TestCase):
 
             process_document(str(self.document.id))
 
-            # Verify chain was built with the two task signatures.
+            # Verify chain was built with the three task signatures.
             mock_chain.assert_called_once()
             args, _ = mock_chain.call_args
-            self.assertEqual(len(args), 2)
+            self.assertEqual(len(args), 3)
 
     def test_skips_if_already_processing(self) -> None:
         """If processing_status is 'processing', the task should return None."""
@@ -688,9 +708,20 @@ class HandleChainErrorTests(TestCase):
         )
 
     def _run_callback(self, document_id: str | None = None, task_type: str = "extract") -> None:
-        """Run _handle_chain_error synchronously with a mock Celery request."""
+        """Run _handle_chain_error synchronously with a mock Celery request.
+
+        Celery's ``link_error`` passes ``(request, exc, traceback)`` as positional
+        args **before** the signature args (``document_id``, ``task_type``).
+        The test must replicate this call pattern.
+        """
         with _mock_celery_request(_handle_chain_error):
-            _handle_chain_error(document_id or str(self.document.id), task_type=task_type)
+            _handle_chain_error(
+                "mock-request-id",  # request
+                Exception("Chain failed"),  # exc
+                None,  # traceback
+                document_id or str(self.document.id),
+                task_type=task_type,
+            )
 
     def test_marks_pending_task_as_failed(self) -> None:
         """A pending ProcessingTask should be marked as failed."""
