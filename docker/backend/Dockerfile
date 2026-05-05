@@ -1,27 +1,23 @@
-# ============================================================
-# Stage 1: Builder — Install dependencies with build tools
-# ============================================================
-FROM python:3.11-slim AS builder
+# Django Backend Dockerfile
+# Using Iranian PyPI mirror for compliance
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_DEFAULT_TIMEOUT=100 \
-    PIP_NO_CACHE_DIR=1
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PIP_DEFAULT_TIMEOUT=100
+ENV PIP_NO_CACHE_DIR=1
+
+# Set working directory
+WORKDIR /app
 
 # Build arguments for pip mirrors (overridable via --build-arg)
 ARG PIP_INDEX_URL=https://package-mirror.liara.ir/repository/pypi/simple
 ARG PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 
-# Install build tools needed for compiling Python C extensions
-# (psycopg2-binary, PyMuPDF, etc.)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        gcc \
-        build-essential \
-        libpq-dev && \
-    rm -rf /var/lib/apt/lists/*
-
-# Configure pip mirrors
+# Configure Iranian PyPI mirror with official PyPI as fallback
+# (django-pgvector is not available on the Liara mirror)
 RUN pip config set global.index-url ${PIP_INDEX_URL} && \
     pip config set global.extra-index-url ${PIP_EXTRA_INDEX_URL} && \
     pip config set global.trusted-host package-mirror.liara.ir && \
@@ -30,30 +26,21 @@ RUN pip config set global.index-url ${PIP_INDEX_URL} && \
     pip config set global.timeout 60 && \
     pip config set global.retries 5
 
-# Copy and install production dependencies only
-COPY src/backend/requirements.txt /tmp/requirements.txt
-RUN pip install --user -r /tmp/requirements.txt && \
+# Copy requirements file
+COPY src/backend/requirements.txt /app/requirements.txt
+
+# Install Python dependencies (skip pip upgrade to avoid 402 errors)
+RUN pip install -r requirements.txt && \
     rm -rf /root/.cache/pip
 
-# ============================================================
-# Stage 2: Runtime — Minimal production image
-# ============================================================
-FROM python:3.11-slim AS runtime
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PATH="/root/.local/bin:$PATH"
-
-# Copy only installed packages from builder (no build tools, no apt cache)
-COPY --from=builder /root/.local /root/.local
-
-WORKDIR /app
+# Copy Django project
 COPY src/backend /app/
 
-# Create directories and collect static files
-RUN mkdir -p /app/static /app/media && \
-    python manage.py collectstatic --noinput && \
-    find /root/.local -name "*.pyc" -delete
+# Create directory for static files
+RUN mkdir -p /app/static /app/media
 
+# Expose port
 EXPOSE 8000
+
+# Run Gunicorn
 CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3"]

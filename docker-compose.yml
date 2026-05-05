@@ -228,6 +228,7 @@ services:
     build:
       context: .
       dockerfile: ./docker/frontend/Dockerfile
+      target: dev  # Use the dev stage (has node/npm for hot-reload)
     container_name: docuchat_frontend
     restart: unless-stopped
     volumes:

@@ -1,23 +1,28 @@
 # ============================================================
-# Stage 1: Build — Compile frontend assets
+# Stage 1: Dev — For development server (npm run dev)
 # ============================================================
-FROM docker.arvancloud.ir/library/node:20-alpine AS builder
+FROM docker.arvancloud.ir/library/node:20-alpine AS dev
 
 WORKDIR /app
 COPY src/frontend/package*.json ./
 
-# Configure Iranian npm mirror
-RUN npm config set registry https://package-mirror.liara.ir/repository/npm
-
-# Install all dependencies (including devDependencies needed for build)
-RUN rm -f package-lock.json && \
-    npm install --no-audit --no-fund --legacy-peer-deps
+# Install all dependencies (including devDependencies)
+RUN npm install --no-audit --no-fund --legacy-peer-deps
 
 COPY src/frontend/ .
+
+EXPOSE 5173
+CMD ["npm", "run", "dev", "--", "--host"]
+
+# ============================================================
+# Stage 2: Build — Compile frontend assets for production
+# ============================================================
+FROM dev AS builder
+
 RUN npm run build
 
 # ============================================================
-# Stage 2: Production — Serve with Nginx
+# Stage 3: Production — Serve with Nginx
 # ============================================================
 FROM nginx:alpine
 

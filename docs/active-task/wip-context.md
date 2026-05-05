@@ -36,7 +36,8 @@
 #### 5. `docker/frontend/Dockerfile` — Production Multi-Stage Build (Rewritten)
 
 **Stage 1 (builder):** `node:20-alpine`
-- Installs all npm dependencies (including devDependencies needed for build)
+- Installs all npm dependencies (including devDependencies needed for build) via `npm ci` (faster than `npm install`)
+- Uses default npm registry (Liara mirror removed — user has VPN)
 - Runs `npm run build` to generate `dist/`
 
 **Stage 2 (production):** `nginx:alpine`
