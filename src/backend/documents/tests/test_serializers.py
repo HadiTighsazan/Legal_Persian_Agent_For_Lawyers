@@ -699,8 +699,12 @@ class SearchResultSerializerTests(TestCase):
         serializer = SearchResultSerializer(data={
             "chunk_id": str(uuid.uuid4()),
             "chunk_index": 0,
+            "page_start": 1,
+            "page_end": 2,
             "content": "test content",
             "relevance_score": 0.9,
+            "token_count": 10,
+            "metadata": {},
         })
         self.assertTrue(serializer.is_valid())
 
@@ -709,8 +713,12 @@ class SearchResultSerializerTests(TestCase):
         data = {
             "chunk_id": str(uuid.uuid4()),
             "chunk_index": 0,
+            "page_start": 1,
+            "page_end": 2,
             "content": "test content",
             "relevance_score": 0.9,
+            "token_count": 10,
+            "metadata": {},
             "vector_score": 0.85,
             "keyword_score": 0.75,
             "rrf_score": 0.02,
@@ -732,8 +740,12 @@ class SearchResultSerializerTests(TestCase):
         serializer = SearchResultSerializer(data={
             "chunk_id": str(uuid.uuid4()),
             "chunk_index": 0,
+            "page_start": 1,
+            "page_end": 2,
             "content": "test content",
             "relevance_score": 0.9,
+            "token_count": 10,
+            "metadata": {},
         })
         self.assertTrue(serializer.is_valid())
         self.assertIsNone(
@@ -754,6 +766,9 @@ class SearchResponseSerializerTests(TestCase):
         """search_mode and filters are included in the serialized output."""
         data = {
             "results": [],
+            "query": "test",
+            "top_k": 10,
+            "min_score": 0.0,
             "total_results": 0,
             "search_mode": "hybrid",
             "filters": {"legal_status": "valid"},
@@ -770,6 +785,9 @@ class SearchResponseSerializerTests(TestCase):
         """Omitting search_mode defaults to "hybrid"."""
         serializer = SearchResponseSerializer(data={
             "results": [],
+            "query": "test",
+            "top_k": 10,
+            "min_score": 0.0,
             "total_results": 0,
         })
         self.assertTrue(serializer.is_valid())
@@ -779,6 +797,9 @@ class SearchResponseSerializerTests(TestCase):
         """Omitting filters defaults to None."""
         serializer = SearchResponseSerializer(data={
             "results": [],
+            "query": "test",
+            "top_k": 10,
+            "min_score": 0.0,
             "total_results": 0,
         })
         self.assertTrue(serializer.is_valid())

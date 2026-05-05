@@ -181,16 +181,16 @@ class ConversationIntegrationTests(TestCase):
 
     # -- Test: RAG service integration with mocked internals ------------------
 
-    @patch("conversations.rag_service.search_chunks")
+    @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
     def test_rag_service_integration(
-        self, mock_get_chat_provider, mock_embed_query, mock_search_chunks
+        self, mock_get_chat_provider, mock_embed_query, mock_hybrid_search
     ):
         """Test that run_rag_query correctly orchestrates embedding, search, and chat provider."""
         # Arrange
         mock_embed_query.return_value = [0.1] * 768
-        mock_search_chunks.return_value = [
+        mock_hybrid_search.return_value = [
             {
                 "chunk_id": "chunk-1",
                 "chunk_index": 0,

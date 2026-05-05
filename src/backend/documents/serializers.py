@@ -293,6 +293,7 @@ class SearchResultSerializer(serializers.Serializer):
         help_text="Additional metadata associated with the chunk.",
     )
     legal_context = serializers.CharField(
+        allow_blank=True,
         allow_null=True,
         required=False,
         help_text="Human-readable legal context string for RAG.",
@@ -344,10 +345,14 @@ class SearchResponseSerializer(serializers.Serializer):
         help_text="Minimum relevance score threshold used.",
     )
     search_mode = serializers.CharField(
+        required=False,
+        default="hybrid",
         help_text="Search mode used ('hybrid', 'vector', or 'keyword').",
     )
     filters = serializers.JSONField(
         allow_null=True,
+        required=False,
+        default=None,
         help_text="Metadata filter conditions applied.",
     )
     total_results = serializers.IntegerField(

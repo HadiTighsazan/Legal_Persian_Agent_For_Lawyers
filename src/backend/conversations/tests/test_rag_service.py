@@ -209,19 +209,19 @@ class ExtractCitationsTests:
 class RunRagQueryTests:
     """Tests for :func:`~conversations.rag_service.run_rag_query`."""
 
-    @patch("conversations.rag_service.search_chunks")
+    @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
     def test_normal_response(
         self,
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
-        mock_search_chunks: MagicMock,
+        mock_hybrid_search: MagicMock,
     ) -> None:
         """Full pipeline returns correct result dict structure."""
         # Arrange
         mock_embed_query.return_value = [0.1] * 768
-        mock_search_chunks.return_value = [
+        mock_hybrid_search.return_value = [
             {
                 "chunk_id": "chunk-1",
                 "chunk_index": 0,
@@ -266,19 +266,19 @@ class RunRagQueryTests:
             "Based on the context, [Source 1] provides relevant information."
         )
 
-    @patch("conversations.rag_service.search_chunks")
+    @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
     def test_citation_extraction_integration(
         self,
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
-        mock_search_chunks: MagicMock,
+        mock_hybrid_search: MagicMock,
     ) -> None:
         """Chat provider returns content with [Source 1], verify sources list is populated."""
         # Arrange
         mock_embed_query.return_value = [0.1] * 768
-        mock_search_chunks.return_value = [
+        mock_hybrid_search.return_value = [
             {
                 "chunk_id": "chunk-a",
                 "chunk_index": 0,
@@ -323,19 +323,19 @@ class RunRagQueryTests:
         assert result["sources"][0]["chunk_id"] == "chunk-a"
         assert result["sources"][1]["chunk_id"] == "chunk-b"
 
-    @patch("conversations.rag_service.search_chunks")
+    @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
     def test_history_truncation(
         self,
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
-        mock_search_chunks: MagicMock,
+        mock_hybrid_search: MagicMock,
     ) -> None:
         """Provide 20 history turns, verify only last RAG_MAX_HISTORY_TURNS (10) are included."""
         # Arrange
         mock_embed_query.return_value = [0.1] * 768
-        mock_search_chunks.return_value = []
+        mock_hybrid_search.return_value = []
 
         # Create 20 turns of history (40 messages)
         history: list[dict[str, str]] = []
@@ -376,19 +376,19 @@ class RunRagQueryTests:
         assert messages[-2]["role"] == "assistant"
         assert messages[-2]["content"] == "Answer 19"
 
-    @patch("conversations.rag_service.search_chunks")
+    @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
     def test_chat_provider_error_handling(
         self,
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
-        mock_search_chunks: MagicMock,
+        mock_hybrid_search: MagicMock,
     ) -> None:
         """Mock chat provider to raise an exception, verify RAGServiceException is raised."""
         # Arrange
         mock_embed_query.return_value = [0.1] * 768
-        mock_search_chunks.return_value = []
+        mock_hybrid_search.return_value = []
         mock_provider = MagicMock()
         mock_provider.chat.side_effect = Exception("Chat provider API error")
         mock_get_chat_provider.return_value = mock_provider
@@ -400,14 +400,14 @@ class RunRagQueryTests:
                 document_id="doc-err",
             )
 
-    @patch("conversations.rag_service.search_chunks")
+    @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
     def test_embedding_error_handling(
         self,
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
-        mock_search_chunks: MagicMock,
+        mock_hybrid_search: MagicMock,
     ) -> None:
         """Mock embed_query to raise, verify RAGServiceException."""
         # Arrange
@@ -423,19 +423,19 @@ class RunRagQueryTests:
         # Ensure chat provider was never called
         mock_get_chat_provider.return_value.chat.assert_not_called()
 
-    @patch("conversations.rag_service.search_chunks")
+    @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
     def test_search_error_handling(
         self,
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
-        mock_search_chunks: MagicMock,
+        mock_hybrid_search: MagicMock,
     ) -> None:
         """Mock search_chunks to raise, verify RAGServiceException."""
         # Arrange
         mock_embed_query.return_value = [0.1] * 768
-        mock_search_chunks.side_effect = Exception("Search failed")
+        mock_hybrid_search.side_effect = Exception("Search failed")
 
         # Act / Assert
         with pytest.raises(RAGServiceException, match="Failed to search chunks"):
@@ -447,19 +447,19 @@ class RunRagQueryTests:
         # Ensure chat provider was never called
         mock_get_chat_provider.return_value.chat.assert_not_called()
 
-    @patch("conversations.rag_service.search_chunks")
+    @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
     def test_empty_chunks_returns_response(
         self,
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
-        mock_search_chunks: MagicMock,
+        mock_hybrid_search: MagicMock,
     ) -> None:
         """No chunks found, still calls chat provider with empty context."""
         # Arrange
         mock_embed_query.return_value = [0.1] * 768
-        mock_search_chunks.return_value = []
+        mock_hybrid_search.return_value = []
 
         mock_provider = MagicMock()
         mock_provider.chat.return_value = {
@@ -483,19 +483,19 @@ class RunRagQueryTests:
         assert result["sources"] == []
         assert len(result["raw_chunks"]) == 0
 
-    @patch("conversations.rag_service.search_chunks")
+    @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
     def test_custom_top_k(
         self,
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
-        mock_search_chunks: MagicMock,
+        mock_hybrid_search: MagicMock,
     ) -> None:
-        """Passing top_k=3 is forwarded to search_chunks."""
+        """Passing top_k=3 is forwarded to hybrid_search."""
         # Arrange
         mock_embed_query.return_value = [0.1] * 768
-        mock_search_chunks.return_value = []
+        mock_hybrid_search.return_value = []
 
         mock_provider = MagicMock()
         mock_provider.chat.return_value = {
@@ -516,8 +516,10 @@ class RunRagQueryTests:
         )
 
         # Assert
-        mock_search_chunks.assert_called_once_with(
+        mock_hybrid_search.assert_called_once_with(
             document_id="doc-topk",
             query_vector=[0.1] * 768,
+            query_text="Test?",
             top_k=3,
+            filters={"legal_status": "valid"},
         )

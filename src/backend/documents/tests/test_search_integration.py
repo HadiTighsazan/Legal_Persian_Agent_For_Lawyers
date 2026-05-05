@@ -74,17 +74,17 @@ def _close_vector() -> list[float]:
 
 
 def _far_vector() -> list[float]:
-    """Return a vector with cosine distance ≈ 1.0 from the query.
+    """Return a vector with cosine distance ≈ 0.99 from the query.
 
-    ``[0.0, 1.0, 0.0, ...]`` — query is ``[1.0, 0.0, ...]``.
+    ``[0.01, 1.0, 0.0, ...]`` — query is ``[1.0, 0.0, ...]``.
 
-    dot = 1.0*0.0 + 0.0*1.0 = 0.0
+    dot = 1.0*0.01 + 0.0*1.0 = 0.01
     norm_query = 1.0
-    norm_vec = 1.0
-    cos_sim = 0.0
-    distance = 1.0
+    norm_vec = sqrt(0.01² + 1.0²) = sqrt(1.0001) ≈ 1.00005...
+    cos_sim = 0.01 / (1.0 * 1.00005) ≈ 0.0099995
+    distance = 1 - 0.0099995 ≈ 0.9900005
     """
-    return _make_vector(0.0, 1.0)
+    return _make_vector(0.01, 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +220,7 @@ class DocumentSearchIntegrationTest(TestCase):
         )
 
         # Assert — each result has all expected keys
+        # Hybrid search results include extra keys from RRF fusion.
         expected_keys = {
             "chunk_id",
             "chunk_index",
@@ -229,6 +230,10 @@ class DocumentSearchIntegrationTest(TestCase):
             "relevance_score",
             "token_count",
             "metadata",
+            "legal_context",
+            "vector_score",
+            "keyword_score",
+            "rrf_score",
         }
         for result in results:
             self.assertEqual(

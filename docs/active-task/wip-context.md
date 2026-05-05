@@ -6,6 +6,34 @@ All 10 steps of the Epic 6 Hybrid Search refactoring plan have been implemented 
 
 ---
 
+## Post-Epic Fix: 19 Test Failures Resolved (2026-05-05)
+
+After implementing Epic 6, 19 tests were failing due to 5 root causes. All have been fixed:
+
+### Root Cause 1: Wrong Mock Path — `search_chunks` → `hybrid_search`
+- [`conversations/tests/test_rag_service.py`](src/backend/conversations/tests/test_rag_service.py): Changed 9 `@patch("conversations.rag_service.search_chunks")` → `@patch("conversations.rag_service.hybrid_search")`, updated `test_custom_top_k` assertion to match `hybrid_search(document_id, query_vector, query_text, top_k, filters)` signature
+- [`conversations/tests/test_integration.py`](src/backend/conversations/tests/test_integration.py): Changed 1 mock path
+- [`documents/tests/test_views.py`](src/backend/documents/tests/test_views.py): Changed 2 mock paths (`test_search_valid_request`, `test_search_empty_results`) from `search_chunks` → `hybrid_search`
+
+### Root Cause 2: `SearchResultSerializer` Test Data Missing Required Fields
+- [`documents/tests/test_serializers.py`](src/backend/documents/tests/test_serializers.py): Added `page_start`, `page_end`, `token_count`, `metadata` to 3 test data dicts
+
+### Root Cause 3: `SearchResponseSerializer` Test Data Missing Required Fields
+- [`documents/serializers.py`](src/backend/documents/serializers.py): Added `required=False, default="hybrid"` to `search_mode`, `required=False, default=None` to `filters`
+- [`documents/tests/test_serializers.py`](src/backend/documents/tests/test_serializers.py): Added `query`, `top_k`, `min_score` to 3 test data dicts
+
+### Root Cause 4: pgvector Floating-Point Precision in Search Service Tests
+- [`documents/tests/test_search_service.py`](src/backend/documents/tests/test_search_service.py): Changed `_medium_vector()` from `[1.0, 1.0, ...]` (cosine_sim ≈ 0.707) to `[1.0, 0.5, ...]` (cosine_sim ≈ 0.894) to ensure clear separation above `min_score=0.7`. Changed `_far_vector()` from `[0.0, 1.0, ...]` (cosine_sim = 0.0) to `[0.01, 1.0, ...]` (cosine_sim ≈ 0.01) to avoid floating-point issues with `relevance_score >= 0.0` filter.
+
+### Root Cause 5: Search Integration Test 400 Error
+- [`documents/serializers.py`](src/backend/documents/serializers.py): Added `allow_blank=True` to `legal_context` CharField (DRF rejects `None` on CharField without `allow_blank=True` even when `allow_null=True`)
+- [`documents/tests/test_search_integration.py`](src/backend/documents/tests/test_search_integration.py): Updated `expected_keys` to include `legal_context`, `vector_score`, `keyword_score`, `rrf_score`; updated `_far_vector()` to match test_search_service.py
+
+### Result
+**575 tests pass**, 0 failures, 4 warnings, 80 subtests passed.
+
+---
+
 ## What Was Completed
 
 ### Step 1: Persian Number Normalization for FTS

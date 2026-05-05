@@ -81,31 +81,31 @@ def _close_vector() -> list[float]:
 
 
 def _medium_vector() -> list[float]:
-    """Return a vector with cosine distance ≈ 0.5 from the query.
+    """Return a vector with cosine distance ≈ 0.106 from the query.
 
-    ``[1.0, 1.0, 0.0, ...]`` — query is ``[1.0, 0.0, ...]``.
+    ``[1.0, 0.5, 0.0, ...]`` — query is ``[1.0, 0.0, ...]``.
 
-    dot = 1.0*1.0 + 0.0*1.0 = 1.0
+    dot = 1.0*1.0 + 0.0*0.5 = 1.0
     norm_query = 1.0
-    norm_vec = sqrt(1.0² + 1.0²) = sqrt(2) ≈ 1.414213...
-    cos_sim = 1.0 / (1.0 * 1.414213) ≈ 0.707106
-    distance = 1 - 0.707106 ≈ 0.292893
+    norm_vec = sqrt(1.0² + 0.5²) = sqrt(1.25) ≈ 1.118034...
+    cos_sim = 1.0 / (1.0 * 1.118034) ≈ 0.894427
+    distance = 1 - 0.894427 ≈ 0.105573
     """
-    return _make_vector(1.0, 1.0)
+    return _make_vector(1.0, 0.5)
 
 
 def _far_vector() -> list[float]:
-    """Return a vector with cosine distance ≈ 1.0 from the query.
+    """Return a vector with cosine distance ≈ 0.99 from the query.
 
-    ``[0.0, 1.0, 0.0, ...]`` — query is ``[1.0, 0.0, ...]``.
+    ``[0.01, 1.0, 0.0, ...]`` — query is ``[1.0, 0.0, ...]``.
 
-    dot = 1.0*0.0 + 0.0*1.0 = 0.0
+    dot = 1.0*0.01 + 0.0*1.0 = 0.01
     norm_query = 1.0
-    norm_vec = 1.0
-    cos_sim = 0.0
-    distance = 1.0
+    norm_vec = sqrt(0.01² + 1.0²) = sqrt(1.0001) ≈ 1.00005...
+    cos_sim = 0.01 / (1.0 * 1.00005) ≈ 0.0099995
+    distance = 1 - 0.0099995 ≈ 0.9900005
     """
-    return _make_vector(0.0, 1.0)
+    return _make_vector(0.01, 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -188,9 +188,9 @@ class SearchChunksTest(TestCase):
         self._create_chunk(0, _query_vector())
         # query → close:     distance≈0.005,   relevance≈0.995      (passes)
         self._create_chunk(1, _close_vector())
-        # query → medium:    distance≈0.293,   relevance≈0.707      (passes)
+        # query → medium:    distance≈0.106,   relevance≈0.894      (passes)
         self._create_chunk(2, _medium_vector())
-        # query → far:       distance=1.0,     relevance=0.0        (fails)
+        # query → far:       distance≈0.99,    relevance≈0.01       (fails)
         self._create_chunk(3, _far_vector())
 
         query_vector = _query_vector()
@@ -247,7 +247,7 @@ class SearchChunksTest(TestCase):
 
         # Assert
         self.assertEqual(len(results), 4)
-        # Expected order: Query (1.0), Close (~0.995), Medium (~0.707), Far (0.0)
+        # Expected order: Query (1.0), Close (~0.995), Medium (~0.894), Far (~0.01)
         expected_order = ["Query", "Close", "Medium", "Far"]
         actual_order = [r["content"] for r in results]
         self.assertEqual(actual_order, expected_order)

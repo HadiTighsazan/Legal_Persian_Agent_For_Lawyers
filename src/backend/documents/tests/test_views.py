@@ -979,15 +979,15 @@ class DocumentSearchViewTests(TestCase):
     # -- 200 Valid Search ------------------------------------------------------
 
     @patch("documents.views.embed_query")
-    @patch("documents.views.search_chunks")
+    @patch("documents.views.hybrid_search")
     def test_search_valid_request(
         self,
-        mock_search_chunks: MagicMock,
+        mock_hybrid_search: MagicMock,
         mock_embed_query: MagicMock,
     ) -> None:
         """POST with valid query should return 200 with search results."""
         mock_embed_query.return_value = [0.1] * 768
-        mock_search_chunks.return_value = [
+        mock_hybrid_search.return_value = [
             {
                 "chunk_id": str(uuid.uuid4()),
                 "chunk_index": 0,
@@ -997,6 +997,10 @@ class DocumentSearchViewTests(TestCase):
                 "relevance_score": 0.95,
                 "token_count": 50,
                 "metadata": {},
+                "legal_context": None,
+                "vector_score": 0.95,
+                "keyword_score": 0.0,
+                "rrf_score": 0.016393,
             },
             {
                 "chunk_id": str(uuid.uuid4()),
@@ -1007,6 +1011,10 @@ class DocumentSearchViewTests(TestCase):
                 "relevance_score": 0.85,
                 "token_count": 60,
                 "metadata": {},
+                "legal_context": None,
+                "vector_score": 0.85,
+                "keyword_score": 0.0,
+                "rrf_score": 0.016129,
             },
         ]
 
@@ -1016,7 +1024,7 @@ class DocumentSearchViewTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         mock_embed_query.assert_called_once_with("test query")
-        mock_search_chunks.assert_called_once()
+        mock_hybrid_search.assert_called_once()
         self.assertIn("results", response.data)
         self.assertIn("total_results", response.data)
         self.assertEqual(response.data["total_results"], 2)
@@ -1038,15 +1046,15 @@ class DocumentSearchViewTests(TestCase):
     # -- 200 Empty Results -----------------------------------------------------
 
     @patch("documents.views.embed_query")
-    @patch("documents.views.search_chunks")
+    @patch("documents.views.hybrid_search")
     def test_search_empty_results(
         self,
-        mock_search_chunks: MagicMock,
+        mock_hybrid_search: MagicMock,
         mock_embed_query: MagicMock,
     ) -> None:
         """POST with valid query but no matching chunks should return 200 with empty list."""
         mock_embed_query.return_value = [0.1] * 768
-        mock_search_chunks.return_value = []
+        mock_hybrid_search.return_value = []
 
         response = self.client.post(
             self.url, {"query": "unique query"}, format="json", **_auth_header(self.user)
