@@ -40,26 +40,37 @@ _ENGLISH_NUM = r"[0-9]"
 _ANY_NUM = f"(?:{_PERSIAN_NUM}|{_ARABIC_NUM}|{_ENGLISH_NUM})+"
 
 # Persian alphabetic clause markers (الف, ب, پ, ت, etc.)
-_PERSIAN_ALPHA = r"[آابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی]"
+_PERSIAN_ALPHA = r"[آابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی]+"
 
 # ماده (Article) — handles: ماده ۱, ماده1, ماده‌۱, ماده١
 # After Tatweel stripping, this matches ماده followed by optional space and any numeral
 _ARTICLE_PATTERN = re.compile(rf"ماده\s*{_ANY_NUM}", re.UNICODE)
 
 # تبصره (Note) — handles: تبصره, تبصره ۱, تبصره1
-# تبصره can appear without a number (attached to the preceding article)
-_NOTE_PATTERN = re.compile(rf"تبصره\s*{_ANY_NUM}?", re.UNICODE)
+# تبصره can appear without a number (attached to the preceding article).
+# The pattern requires the match to be at the start of a line or after a
+# newline to avoid matching "تبصره" appearing in the middle of text content.
+# Uses a capturing group around the actual note text so we can extract
+# the correct position (excluding the leading newline).
+_NOTE_PATTERN = re.compile(
+    rf"(?:^|\n)(\s*تبصره(?:\s*{_ANY_NUM})?)",
+    re.UNICODE | re.MULTILINE,
+)
 
 # بند (Clause) — handles: ۱-, ۱ -, 1-, الف-, ب-
-# Clauses can be numeric or alphabetic, followed by a dash or ZWNJ
+# Clauses can be numeric or alphabetic, followed by a dash or ZWNJ.
+# The pattern requires the match to be at the start of a line or after a
+# newline to avoid matching ZWNJ in Persian compound words (e.g., می‌شود).
+# NOTE: This pattern is applied to tatweel-stripped text that has NOT been
+# through whitespace normalization, so ZWNJ is preserved for matching.
 _CLAUSE_PATTERN = re.compile(
-    rf"(?:{_ANY_NUM}|{_PERSIAN_ALPHA})\s*[\-\u200c]",
-    re.UNICODE,
+    rf"(?:^|\n)\s*((?:{_ANY_NUM}|{_PERSIAN_ALPHA})\s*[\-\u200c])",
+    re.UNICODE | re.MULTILINE,
 )
 
 # فصل (Chapter) — handles: فصل ۱, فصل اول, فصل1
 # Chapters can use numerals or Persian ordinal words
-_PERSIAN_ORDINALS = r"[اولدومسومچهارمپنجمششمهفتمهشتمنهمدهم]"
+_PERSIAN_ORDINALS = r"(?:اول|دوم|سوم|چهارم|پنجم|ششم|هفتم|هشتم|نهم|دهم)"
 _CHAPTER_PATTERN = re.compile(
     rf"فصل\s*(?:{_ANY_NUM}|{_PERSIAN_ORDINALS})",
     re.UNICODE,
@@ -134,6 +145,8 @@ class LegalStructureDetector:
         1. Strip Tatweel/Kashida characters
         2. Normalize legal whitespace (ZWNJ → space, collapse spaces)
         3. Find all structural markers (فصل, ماده, تبصره, بند)
+           — Clause markers are detected on tatweel-stripped text (before
+             ZWNJ normalization) so that ZWNJ clause delimiters are preserved.
         4. Build segments by splitting text at marker boundaries
         5. Attach metadata (parent article for notes/clauses)
 
@@ -150,13 +163,16 @@ class LegalStructureDetector:
             return []
 
         # Stage 1: Strip Tatweel for clean regex matching
-        cleaned = self._strip_tatweel(text)
+        tatweel_stripped = self._strip_tatweel(text)
 
         # Stage 2: Normalize whitespace for consistent matching
-        cleaned = self._normalize_legal_whitespace(cleaned)
+        # (article, chapter, note patterns need this)
+        cleaned = self._normalize_legal_whitespace(tatweel_stripped)
 
-        # Stage 3: Find all structural markers with their positions
-        markers = self._find_all_markers(cleaned)
+        # Stage 3: Find all structural markers with their positions.
+        # Clause markers are detected on tatweel-stripped text (before ZWNJ
+        # normalization) so that ZWNJ clause delimiters are preserved.
+        markers = self._find_all_markers(cleaned, tatweel_stripped)
 
         # Stage 4: If no structure detected, return as plain text
         if not markers:
@@ -230,9 +246,14 @@ class LegalStructureDetector:
         return text.strip()
 
     def _find_all_markers(
-        self, cleaned: str
+        self, cleaned: str, tatweel_stripped: str
     ) -> list[tuple[int, str, Optional[str]]]:
         """Find all structural markers in the cleaned text.
+
+        Chapter, article, and note markers are detected on the whitespace-
+        normalized text. Clause markers are detected on the tatweel-stripped
+        text (before ZWNJ normalization) so that ZWNJ clause delimiters
+        (e.g., ``۱\u200cبند``) are preserved for matching.
 
         Returns a list of ``(position, marker_type, marker_number)`` tuples
         sorted by position. Marker types are ``'chapter'``, ``'article'``,
@@ -240,6 +261,7 @@ class LegalStructureDetector:
 
         Args:
             cleaned: Tatweel-stripped, whitespace-normalized text.
+            tatweel_stripped: Tatweel-stripped text (ZWNJ preserved).
 
         Returns:
             Sorted list of marker tuples.
@@ -258,13 +280,21 @@ class LegalStructureDetector:
 
         # Find all تبصره (Note) markers
         for match in _NOTE_PATTERN.finditer(cleaned):
-            number = self._extract_number(match.group(), "تبصره")
-            markers.append((match.start(), "note", number))
+            # Use captured group 1 to get the actual note text (without
+            # the leading newline from the line-start anchor)
+            note_text = match.group(1)
+            number = self._extract_number(note_text, "تبصره")
+            markers.append((match.start(1), "note", number))
 
-        # Find all بند (Clause) markers
-        for match in _CLAUSE_PATTERN.finditer(cleaned):
-            number = self._extract_clause_number(match.group())
-            markers.append((match.start(), "clause", number))
+        # Find all بند (Clause) markers — use tatweel-stripped text so that
+        # ZWNJ delimiters are preserved (whitespace normalization replaces
+        # ZWNJ with space, which would break clause detection).
+        for match in _CLAUSE_PATTERN.finditer(tatweel_stripped):
+            # Use captured group 1 to get the actual clause text (without
+            # the leading newline/whitespace from the line-start anchor)
+            clause_text = match.group(1)
+            number = self._extract_clause_number(clause_text)
+            markers.append((match.start(1), "clause", number))
 
         # Sort by position
         markers.sort(key=lambda m: m[0])
@@ -273,24 +303,29 @@ class LegalStructureDetector:
 
     @staticmethod
     def _extract_number(matched_text: str, prefix: str) -> Optional[str]:
-        """Extract the numeric portion after a structural keyword.
+        """Extract the numeric/ordinal portion after a structural keyword.
 
-        Handles mixed Persian/Arabic/English numerals.
+        Handles mixed Persian/Arabic/English numerals, and Persian ordinal
+        words (اول, دوم, etc.) for chapter markers.
 
         Args:
-            matched_text: The full regex match (e.g., ``ماده ۱``).
-            prefix: The keyword prefix (e.g., ``ماده``).
+            matched_text: The full regex match (e.g., ``ماده ۱``, ``فصل اول``).
+            prefix: The keyword prefix (e.g., ``ماده``, ``فصل``).
 
         Returns:
-            The extracted number string, or ``None`` if no number found.
+            The extracted number/ordinal string, or ``None`` if no number found.
         """
         # Remove the prefix and strip whitespace
         rest = matched_text[len(prefix) :].strip()
         if not rest:
             return None
-        # Return the numeric portion (any numeral system)
+        # Try to match a numeral first (any system)
         num_match = re.search(rf"{_ANY_NUM}", rest)
-        return num_match.group() if num_match else None
+        if num_match:
+            return num_match.group()
+        # Fall back to Persian ordinal words (for chapter markers like "فصل اول")
+        ordinal_match = re.search(rf"{_PERSIAN_ORDINALS}", rest)
+        return ordinal_match.group() if ordinal_match else None
 
     @staticmethod
     def _extract_clause_number(matched_text: str) -> Optional[str]:

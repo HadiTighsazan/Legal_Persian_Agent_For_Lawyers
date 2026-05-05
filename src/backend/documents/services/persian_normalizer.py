@@ -79,10 +79,9 @@ class PersianNormalizer:
         # - Fix half-spaces (ZWNJ) using Hazm's built-in rules
         # - Not affect English/non-Persian text
         self._hazm = HazmNormalizer(
-            persian_numbers=True,  # Convert Arabic numbers to Persian
+            persian_numbers=False,  # Keep English/Arabic numbers as-is
             remove_diacritics=True,  # Remove Arabic diacritics (tashkeel)
             remove_specials_chars=False,  # Keep special chars like &, @
-            token_based=False,  # Character-level normalization
         )
 
     # ------------------------------------------------------------------

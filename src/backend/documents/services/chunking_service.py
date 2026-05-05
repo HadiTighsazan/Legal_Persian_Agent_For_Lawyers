@@ -313,25 +313,38 @@ class ChunkingService:
         """
         groups: list[list] = []
         current_group: list = []
+        pending_chapter: list = []  # Chapter segments waiting for an article
 
         for segment in segments:
             if segment.segment_type == "chapter":
-                # Start a new group for the chapter
+                # Don't create a separate group for chapters.
+                # Hold the chapter segment to merge into the next article group.
                 if current_group:
+                    # If we have a current group (e.g., text before chapter),
+                    # finalize it first
                     groups.append(current_group)
-                current_group = [segment]
+                    current_group = []
+                pending_chapter = [segment]
             elif segment.segment_type == "article":
-                # Start a new article group
+                # Start a new article group, prepending any pending chapter
                 if current_group:
                     groups.append(current_group)
-                current_group = [segment]
+                current_group = list(pending_chapter) + [segment]
+                pending_chapter = []
             else:
                 # Note, clause, or text — attach to current group
                 if current_group:
                     current_group.append(segment)
+                elif pending_chapter:
+                    # Attach to pending chapter (text between chapter and article)
+                    pending_chapter.append(segment)
                 else:
                     # Orphan segment (text before first article)
                     current_group = [segment]
+
+        # Flush any remaining pending chapter as its own group
+        if pending_chapter:
+            groups.append(pending_chapter)
 
         # Don't forget the last group
         if current_group:
