@@ -23,9 +23,10 @@ class DocumentUploadSerializer(serializers.Serializer):
         help_text="The document file to upload (PDF, DOCX, or TXT).",
     )
     title = serializers.CharField(
-        required=True,
-        allow_blank=False,
+        required=False,
+        allow_blank=True,
         max_length=255,
+        default="",
         help_text="A descriptive title for the document.",
     )
 

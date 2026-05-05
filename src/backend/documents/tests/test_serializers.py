@@ -59,12 +59,12 @@ class DocumentUploadSerializerTests(TestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("file", serializer.errors)
 
-    def test_missing_title_returns_error(self) -> None:
-        """Omitting the ``title`` field should fail validation."""
+    def test_missing_title_defaults_to_empty(self) -> None:
+        """Omitting the ``title`` field should default to empty string."""
         uploaded = SimpleUploadedFile("test.pdf", b"dummy content")
         serializer = DocumentUploadSerializer(data={"file": uploaded})
-        self.assertFalse(serializer.is_valid())
-        self.assertIn("title", serializer.errors)
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["title"], "")
 
     def test_none_file_returns_error(self) -> None:
         """Passing ``None`` for the file field should fail validation."""
