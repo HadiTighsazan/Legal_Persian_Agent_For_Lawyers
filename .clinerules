@@ -1,3 +1,5 @@
+# 0.What is the project?
+Designing a RAG system for Persian legal texts.
 # 1. Project Directory Map (CRITICAL)
 DO NOT search for files using `list_dir` or `search_files` unless absolutely necessary. Use these exact paths via `read_file` or `write_to_file`:
 - Active Task PRD: `docs/active-task/current-prd.md`
