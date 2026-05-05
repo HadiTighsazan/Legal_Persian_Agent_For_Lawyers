@@ -59,7 +59,14 @@ def build_context(chunks: list[dict]) -> str:
         page_start = chunk.get("page_start", "?")
         page_end = chunk.get("page_end", "?")
         content = chunk.get("content", "")
-        header = f"[Source {i + 1} | Pages {page_start}-{page_end}]"
+        legal_context = chunk.get("legal_context", "")
+
+        # Include legal context (article/chapter info) in the header if available
+        if legal_context:
+            header = f"[Source {i + 1} | Pages {page_start}-{page_end} | {legal_context}]"
+        else:
+            header = f"[Source {i + 1} | Pages {page_start}-{page_end}]"
+
         part = f"{header}\n{content}"
 
         # If adding this part would exceed the budget, stop.

@@ -105,5 +105,29 @@ class DocumentChunk(models.Model):
             )
         ]
     
+    @property
+    def legal_context(self) -> str:
+        """Return a human-readable legal context string for RAG.
+
+        Constructs a Persian legal context string from the chunk's metadata,
+        useful for providing the LLM with article/chapter context during
+        retrieval-augmented generation.
+
+        Returns:
+            A string like ``"قانون: نام قانون | فصل: ۱ | ماده: ۱"``,
+            or an empty string if no legal metadata is present.
+        """
+        meta = self.metadata or {}
+        parts: list[str] = []
+        if meta.get("law_name"):
+            parts.append(f"قانون: {meta['law_name']}")
+        if meta.get("chapter"):
+            parts.append(f"فصل: {meta['chapter']}")
+        if meta.get("legal_number"):
+            parts.append(f"ماده: {meta['legal_number']}")
+        if meta.get("legal_type") == "note" and meta.get("parent_article"):
+            parts.append(f"تبصره ماده {meta['parent_article']}")
+        return " | ".join(parts)
+
     def __str__(self):
         return f"Chunk {self.chunk_index} of {self.document.title}"

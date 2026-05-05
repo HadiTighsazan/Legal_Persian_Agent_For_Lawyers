@@ -936,7 +936,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 **Test Coverage:** 7 view tests + 1 integration test (DocumentSearchViewTests + DocumentSearchIntegrationTest)
 **View Class:** `DocumentSearchView`
 **Status:** ✅ Implemented
-**Implementation Notes:** Uses `embed_query()` from the embedding service to vectorize the search query, then `search_chunks()` from the search service to perform cosine similarity search via pgvector's `<=>` operator. Results are ordered by relevance_score descending. The `ivfflat.probes` session parameter is set before each query for performance tuning.
+**Implementation Notes:** Uses `embed_query()` from the embedding service to vectorize the search query, then `search_chunks()` from the search service to perform cosine similarity search via pgvector's `<=>` operator. Results are ordered by relevance_score descending. The `ivfflat.probes` session parameter is set before each query for performance tuning. Each result now includes a `legal_context` field (added in Epic 4) that provides formatted legal provenance for Persian legal documents (e.g., `"قانون: قانون مجازات اسلامی | فصل: اول | ماده: 1"`). For non-legal documents, `legal_context` is an empty string.
 **Request Body:**
 ```json
 {
@@ -957,7 +957,8 @@ Both fields are optional. At least one should be provided for meaningful updates
       "content": "Machine learning algorithms are...",
       "relevance_score": 0.93,
       "token_count": 150,
-      "metadata": {}
+      "metadata": {},
+      "legal_context": ""
     }
   ],
   "query": "machine learning algorithms",

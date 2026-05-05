@@ -272,6 +272,17 @@ CHAT_MAX_TOKENS = env.int("CHAT_MAX_TOKENS", default=1000)
 RAG_MAX_HISTORY_TURNS = env.int("RAG_MAX_HISTORY_TURNS", default=10)
 RAG_CONTEXT_TOKEN_BUDGET = env.int("RAG_CONTEXT_TOKEN_BUDGET", default=4000)
 
+# Persian Legal Text Processing
+PERSIAN_NORMALIZATION_ENABLED = env.bool('PERSIAN_NORMALIZATION_ENABLED', default=True)
+LEGAL_CHUNKING_ENABLED = env.bool('LEGAL_CHUNKING_ENABLED', default=True)
+LEGAL_MAX_CHUNK_SIZE = env.int('LEGAL_MAX_CHUNK_SIZE', default=2000)
+LEGAL_CHUNK_OVERLAP_CLAUSES = env.int('LEGAL_CHUNK_OVERLAP_CLAUSES', default=1)
+
+# Extraction Strategy
+EXTRACTION_BACKEND = env('EXTRACTION_BACKEND', default='pymupdf')  # pymupdf | pdfplumber | tesseract
+EXTRACTION_AUTO_FALLBACK = env.bool('EXTRACTION_AUTO_FALLBACK', default=True)
+EXTRACTION_GARBLED_THRESHOLD = env.float('EXTRACTION_GARBLED_THRESHOLD', default=0.3)
+
 # Storage Configuration
 STORAGE_TYPE = env('STORAGE_TYPE', default='local')
 LOCAL_STORAGE_PATH = env('LOCAL_STORAGE_PATH', default=os.path.join(BASE_DIR, 'media/documents'))

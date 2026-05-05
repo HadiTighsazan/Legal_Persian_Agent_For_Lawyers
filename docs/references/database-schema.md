@@ -223,3 +223,32 @@ CREATE EXTENSION IF NOT EXISTS "vector";
   - This migration aligns the User model with Django's native `AbstractBaseUser` password handling
 - `refresh_tokens` table created in Epic E02 (Authentication & User Management)
 - `filename` and `storage_type` columns added to `documents` table in Epic E03 Phase 1 (migration `0002_add_storage_fields.py`)
+
+### Epic 4 (E04) — Persian Legal Text Optimization (2026-05-05)
+- **No schema changes required.** All legal metadata is stored in the existing `document_chunks.metadata` JSONB field.
+- **`metadata` JSONB field usage for legal context:**
+  ```json
+  {
+    "legal_type": "article",
+    "legal_number": "1",
+    "chapter": "اول",
+    "law_name": "قانون مجازات اسلامی",
+    "parent_article": null
+  }
+  ```
+  - `legal_type`: One of `"article"`, `"note"`, `"clause"`, `"chapter"`, or `null` for non-legal chunks
+  - `legal_number`: The article/note/clause number (e.g., `"1"`, `"2"`, `"الف"`)
+  - `chapter`: Chapter heading if detected (e.g., `"اول"`, `"دوم"`)
+  - `law_name`: Law name extracted from document title or first page
+  - `parent_article`: For notes/clauses, the parent article number they belong to
+- **`legal_context` property** added to `DocumentChunk` model (computed from `metadata`, not stored in DB):
+  - Returns a formatted Persian string like `"قانون: قانون مجازات اسلامی | فصل: اول | ماده: 1"`
+  - Used by search results and RAG context to provide legal provenance
+- **New services** (no DB changes):
+  - `documents/services/persian_normalizer.py` — Persian text normalization (Tatweel stripping, character normalization, half-space fixes)
+  - `documents/services/legal_structure_detector.py` — Legal document structure parsing (مواد, تبصره, بند, فصل)
+  - `documents/services/chunking_service.py` — Refactored with legal structural chunking and clause-boundary-aware overlap
+- **New dependencies** (added to `requirements.txt`):
+  - `hazm>=0.10.0` — Persian NLP library for character normalization
+  - `pdfplumber>=0.11.0` — Fallback PDF extraction for RTL text
+  - `pytesseract>=0.3.10` — OCR fallback for scanned Persian PDFs

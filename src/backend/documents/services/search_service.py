@@ -138,6 +138,7 @@ def search_chunks(
                 "relevance_score": float(chunk.relevance_score),
                 "token_count": chunk.token_count,
                 "metadata": chunk.metadata,
+                "legal_context": chunk.legal_context,  # NEW: legal context for RAG
             }
         )
 
