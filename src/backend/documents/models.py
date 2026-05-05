@@ -3,6 +3,8 @@ Document models for the DocuChat system.
 """
 import uuid
 
+from django.contrib.postgres.indexes import GinIndex
+from django.contrib.postgres.search import SearchVectorField
 from django.db import models
 from django.utils import timezone
 from pgvector.django import VectorField
@@ -80,6 +82,16 @@ class Document(models.Model):
 class DocumentChunk(models.Model):
     """
     Document chunk model for storing text chunks with embeddings.
+
+    Supports hybrid search (vector + keyword) via:
+
+    - ``embedding`` — pgvector ``VectorField`` for semantic (cosine) similarity.
+    - ``search_vector`` — PostgreSQL ``SearchVectorField`` for full-text keyword
+      search using the ``simple`` configuration (exact token matching after
+      lowercasing).
+    - Denormalized metadata fields (``law_name``, ``legal_status``,
+      ``approval_date``, ``legal_type``) for efficient SQL-level filtering
+      without JSONB extraction overhead.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='chunks')
@@ -90,13 +102,29 @@ class DocumentChunk(models.Model):
     token_count = models.IntegerField(null=True, blank=True)
     embedding = VectorField(dimensions=768, null=True, blank=True)
     metadata = models.JSONField(default=dict)
+
+    # ------------------------------------------------------------------
+    # Full-Text Search (FTS) vector — populated by DB trigger
+    # ------------------------------------------------------------------
+    search_vector = SearchVectorField(null=True, blank=True, editable=False)
+
+    # ------------------------------------------------------------------
+    # Denormalized metadata fields for efficient filtering
+    # ------------------------------------------------------------------
+    law_name = models.CharField(max_length=500, null=True, blank=True, db_index=True)
+    legal_status = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    approval_date = models.DateField(null=True, blank=True, db_index=True)
+    legal_type = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+
     created_at = models.DateTimeField(default=timezone.now)
-    
+
     class Meta:
         db_table = 'document_chunks'
         indexes = [
             models.Index(fields=['document']),
             models.Index(fields=['document', 'chunk_index']),
+            # GIN index on search_vector for FTS performance
+            GinIndex(fields=['search_vector'], name='chunk_search_vector_gin'),
         ]
         constraints = [
             models.UniqueConstraint(

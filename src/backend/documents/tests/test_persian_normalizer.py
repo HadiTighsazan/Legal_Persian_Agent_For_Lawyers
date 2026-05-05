@@ -209,6 +209,60 @@ class TestFullNormalize:
 
 
 # ---------------------------------------------------------------------------
+# FTS (Full-Text Search) normalization
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeForFts:
+    """Tests for :meth:`PersianNormalizer.normalize_for_fts`."""
+
+    def test_arabic_indic_digits_to_english(self) -> None:
+        """Arabic-Indic digits (U+0660–U+0669) → English digits."""
+        result = PersianNormalizer.normalize_for_fts("ماده ٢٢")  # Arabic ٢٢
+        assert result == "ماده 22"
+
+    def test_persian_digits_to_english(self) -> None:
+        """Persian/Extended Arabic-Indic digits (U+06F0–U+06F9) → English digits."""
+        result = PersianNormalizer.normalize_for_fts("ماده ۲۲")  # Persian ۲۲
+        assert result == "ماده 22"
+
+    def test_mixed_digits_normalized(self) -> None:
+        """Mixed Arabic and Persian digits all map to English."""
+        result = PersianNormalizer.normalize_for_fts("۱۲٣٤٥")  # Persian ۱۲ + Arabic ٣٤٥
+        assert result == "12345"
+
+    def test_english_digits_unchanged(self) -> None:
+        """English digits are left as-is."""
+        text = "Article 22 of the law"
+        result = PersianNormalizer.normalize_for_fts(text)
+        assert result == text
+
+    def test_zwnj_replaced_with_space(self) -> None:
+        """ZWNJ (U+200C) is replaced with a regular space."""
+        text = "می\u200cشود"  # می‌شود with ZWNJ
+        result = PersianNormalizer.normalize_for_fts(text)
+        assert "\u200c" not in result
+        assert "می شود" in result  # Now two tokens for FTS
+
+    def test_empty_string_returns_empty(self) -> None:
+        """Empty string returns empty string."""
+        assert PersianNormalizer.normalize_for_fts("") == ""
+
+    def test_none_input_returns_empty(self) -> None:
+        """None input returns empty string."""
+        assert PersianNormalizer.normalize_for_fts(None) == ""  # type: ignore[arg-type]
+
+    def test_persian_legal_phrase(self) -> None:
+        """Realistic Persian legal phrase with digits and ZWNJ."""
+        text = "ماده ۲۲ قانون\u200cمدنی مصوب ۱۳۱۴"
+        result = PersianNormalizer.normalize_for_fts(text)
+        assert "22" in result
+        assert "1314" in result
+        assert "\u200c" not in result
+        assert "قانون مدنی" in result or "قانون مدنی" in result
+
+
+# ---------------------------------------------------------------------------
 # Documented limitation: Hazm does NOT fix RTL reversal
 # ---------------------------------------------------------------------------
 

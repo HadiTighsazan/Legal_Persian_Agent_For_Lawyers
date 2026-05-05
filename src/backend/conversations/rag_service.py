@@ -4,6 +4,10 @@ RAG (Retrieval-Augmented Generation) service for DocuChat.
 Provides the core RAG pipeline: embedding a question, searching chunks,
 building context, calling the configured chat provider, and extracting
 citations.
+
+The RAG pipeline uses **hybrid search** (vector + keyword with RRF fusion)
+by default, with a ``legal_status: "valid"`` filter to exclude obsolete or
+repealed laws from the retrieved context.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from django.core.exceptions import ValidationError
 
 from documents.models import Document
 from documents.services.embedding_service import embed_query
-from documents.services.search_service import search_chunks
+from documents.services.search_service import hybrid_search
 from providers.registry import get_chat_provider
 
 logger = logging.getLogger(__name__)
@@ -196,17 +200,19 @@ def run_rag_query(
     except Exception as e:
         raise RAGServiceException(f"Failed to embed question: {e}") from e
 
-    # Step 2: Search for relevant chunks
+    # Step 2: Hybrid search with default legal_status filter
     logger.info(
-        "run_rag_query: Searching chunks for document %s (top_k=%d)",
+        "run_rag_query: Hybrid searching chunks for document %s (top_k=%d)",
         document_id,
         top_k,
     )
     try:
-        chunks = search_chunks(
+        chunks = hybrid_search(
             document_id=document_id,
             query_vector=query_embedding,
+            query_text=question,
             top_k=top_k,
+            filters={"legal_status": "valid"},
         )
     except Exception as e:
         raise RAGServiceException(f"Failed to search chunks: {e}") from e
@@ -291,17 +297,19 @@ def run_rag_query_stream(
     except Exception as e:
         raise RAGServiceException(f"Failed to embed question: {e}") from e
 
-    # Step 2: Search for relevant chunks
+    # Step 2: Hybrid search with default legal_status filter
     logger.info(
-        "run_rag_query_stream: Searching chunks for document %s (top_k=%d)",
+        "run_rag_query_stream: Hybrid searching chunks for document %s (top_k=%d)",
         document_id,
         top_k,
     )
     try:
-        chunks = search_chunks(
+        chunks = hybrid_search(
             document_id=document_id,
             query_vector=query_embedding,
+            query_text=question,
             top_k=top_k,
+            filters={"legal_status": "valid"},
         )
     except Exception as e:
         raise RAGServiceException(f"Failed to search chunks: {e}") from e

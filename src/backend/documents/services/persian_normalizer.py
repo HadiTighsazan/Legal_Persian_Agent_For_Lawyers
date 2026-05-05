@@ -39,6 +39,35 @@ _TATWEEL_RE: re.Pattern = re.compile(_TATWEEL_CHAR)
 # Zero-width non-joiner (U+200C)
 _ZWNJ_CHAR: str = "\u200c"
 
+# Persian/Arabic digit → English digit translation table for FTS normalization.
+# Arabic-Indic digits (U+0660–U+0669): ٠١٢٣٤٥٦٧٨٩
+# Persian/Extended Arabic-Indic digits (U+06F0–U+06F9): ۰۱۲۳۴۵۶۷۸۹
+# Both map to their English equivalents (0–9).
+_PERSIAN_DIGITS: dict[int, int] = {
+    # Arabic-Indic digits (U+0660–U+0669)
+    0x0660: ord("0"),
+    0x0661: ord("1"),
+    0x0662: ord("2"),
+    0x0663: ord("3"),
+    0x0664: ord("4"),
+    0x0665: ord("5"),
+    0x0666: ord("6"),
+    0x0667: ord("7"),
+    0x0668: ord("8"),
+    0x0669: ord("9"),
+    # Persian/Extended Arabic-Indic digits (U+06F0–U+06F9)
+    0x06F0: ord("0"),
+    0x06F1: ord("1"),
+    0x06F2: ord("2"),
+    0x06F3: ord("3"),
+    0x06F4: ord("4"),
+    0x06F5: ord("5"),
+    0x06F6: ord("6"),
+    0x06F7: ord("7"),
+    0x06F8: ord("8"),
+    0x06F9: ord("9"),
+}
+
 # Common Persian words that should contain a ZWNJ (half-space)
 # These are words where hazm might miss the half-space fix
 _PERSIAN_HALF_SPACE_WORDS: list[tuple[str, str]] = [
@@ -236,6 +265,61 @@ class PersianNormalizer:
             "",
             text,
         )
+
+        return text
+
+    # ------------------------------------------------------------------
+    # FTS (Full-Text Search) normalization
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def normalize_for_fts(text: str) -> str:
+        """Normalize Persian text specifically for PostgreSQL Full-Text Search.
+
+        PostgreSQL's ``tsvector``/``tsquery`` with the ``simple`` configuration
+        tokenizes on whitespace and punctuation, then lowercases. Persian/Arabic
+        digits and ZWNJ characters are **not** handled by the ``simple`` config,
+        which means:
+
+        - ``"ماده ۲۲"`` (with Persian digit) will NOT match ``"ماده 22"``
+          (with English digit) in FTS.
+        - ``"می‌شود"`` (with ZWNJ half-space) may tokenize as one token
+          ``"می‌شود"`` instead of two tokens ``"می"`` and ``"شود"``.
+
+        This method applies two transformations:
+
+        1. **Digit normalization**: Converts Arabic-Indic digits (U+0660–U+0669)
+           and Persian/Extended Arabic-Indic digits (U+06F0–U+06F9) to their
+           English equivalents (0–9). This ensures that a search for ``"ماده 22"``
+           matches chunks containing ``"ماده ۲۲"``.
+
+        2. **ZWNJ → space**: Replaces zero-width non-joiners (U+200C) with
+           regular ASCII spaces. This ensures that compound Persian words like
+           ``"می‌شود"`` are tokenized as two separate tokens (``"می"`` and
+           ``"شود"``) by PostgreSQL's FTS parser.
+
+        .. caution::
+
+           This method is **only** for FTS indexing/querying. Do **not** use it
+           for display or general text normalization — it destroys the original
+           Persian digit representation and half-space formatting.
+
+        Args:
+            text: The text to normalize for FTS (typically chunk content or a
+                search query).
+
+        Returns:
+            Text with Persian/Arabic digits converted to English digits and
+            ZWNJ characters replaced with spaces.
+        """
+        if not text:
+            return ""
+
+        # Step 1: Convert Persian/Arabic digits to English digits
+        text = text.translate(_PERSIAN_DIGITS)
+
+        # Step 2: Replace ZWNJ with space for proper FTS tokenization
+        text = text.replace(_ZWNJ_CHAR, " ")
 
         return text
 

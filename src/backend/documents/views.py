@@ -45,6 +45,8 @@ from documents.services.embedding_service import (
     reembed_chunk,
 )
 from documents.services.search_service import (
+    hybrid_search,
+    keyword_search,
     search_chunks,
 )
 from documents.services.processing_service import (
@@ -795,7 +797,19 @@ class DocumentSearchView(APIView):
     **Authentication:** Required.
 
     **Request body:**
-        ``{"query": "...", "top_k": 10, "min_score": 0.0}``
+        ``{"query": "...", "top_k": 10, "min_score": 0.0,
+        "search_mode": "hybrid", "filters": null}``
+
+    **Search modes:**
+        - ``"vector"`` — Cosine similarity only (original behavior).
+        - ``"keyword"`` — PostgreSQL Full-Text Search only.
+        - ``"hybrid"`` (default) — Vector + keyword with RRF fusion.
+
+    **Metadata filters (optional):**
+        Supported fields: ``law_name``, ``legal_status``, ``approval_date``,
+        ``legal_type``.
+
+        Example: ``{"legal_status": "valid", "law_name": "قانون مدنی"}``
 
     **Responses:**
         - ``200 OK`` — Search results returned successfully.
@@ -846,35 +860,64 @@ class DocumentSearchView(APIView):
         query: str = serializer.validated_data["query"]
         top_k: int = serializer.validated_data["top_k"]
         min_score: float = serializer.validated_data["min_score"]
+        search_mode: str = serializer.validated_data.get("search_mode", "hybrid")
+        filters: dict | None = serializer.validated_data.get("filters")
 
-        # 5. Call embed_query() to get query vector
-        try:
-            query_vector = embed_query(query)
-        except EmbeddingError:
-            logger.exception("Embedding failed for query on document %s", document_id)
-            return Response(
-                {"error": "embedding_failed", "message": "Failed to generate query embedding."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        # 5. Route to the appropriate search function based on search_mode.
+        if search_mode == "keyword":
+            # Keyword-only mode: no embedding needed.
+            results = keyword_search(
+                document_id=str(document.id),
+                query_text=query,
+                top_k=top_k,
+                filters=filters,
             )
+        else:
+            # Vector or hybrid mode: need a query embedding.
+            try:
+                query_vector = embed_query(query)
+            except EmbeddingError:
+                logger.exception(
+                    "Embedding failed for query on document %s", document_id
+                )
+                return Response(
+                    {
+                        "error": "embedding_failed",
+                        "message": "Failed to generate query embedding.",
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
 
-        # 6. Call search_chunks() to get results
-        results = search_chunks(
-            document_id=str(document.id),
-            query_vector=query_vector,
-            top_k=top_k,
-            min_score=min_score,
-        )
+            if search_mode == "vector":
+                results = search_chunks(
+                    document_id=str(document.id),
+                    query_vector=query_vector,
+                    top_k=top_k,
+                    min_score=min_score,
+                )
+            else:
+                # Hybrid mode (default).
+                results = hybrid_search(
+                    document_id=str(document.id),
+                    query_vector=query_vector,
+                    query_text=query,
+                    top_k=top_k,
+                    min_score=min_score,
+                    filters=filters,
+                )
 
-        # 7. Serialize response with SearchResponseSerializer
+        # 6. Serialize response with SearchResponseSerializer
         response_data = {
             "results": results,
             "query": query,
             "top_k": top_k,
             "min_score": min_score,
+            "search_mode": search_mode,
+            "filters": filters,
             "total_results": len(results),
         }
         response_serializer = SearchResponseSerializer(data=response_data)
         response_serializer.is_valid(raise_exception=True)
 
-        # 8. Return 200 OK
+        # 7. Return 200 OK
         return Response(response_serializer.validated_data, status=status.HTTP_200_OK)

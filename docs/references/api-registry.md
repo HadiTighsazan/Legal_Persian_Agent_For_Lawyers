@@ -930,19 +930,34 @@ Both fields are optional. At least one should be provided for meaningful updates
 ## Search & Retrieval
 
 #### POST /documents/{document_id}/search/
-**Description:** Semantic search in document chunks
+**Description:** Hybrid search (vector + keyword) in document chunks
 **Auth Required:** Yes
-**Implementation Date:** 2026-04-27
+**Implementation Date:** 2026-04-27 (updated 2026-05-05 with Epic 6 hybrid search)
 **Test Coverage:** 7 view tests + 1 integration test (DocumentSearchViewTests + DocumentSearchIntegrationTest)
 **View Class:** `DocumentSearchView`
-**Status:** ✅ Implemented
-**Implementation Notes:** Uses `embed_query()` from the embedding service to vectorize the search query, then `search_chunks()` from the search service to perform cosine similarity search via pgvector's `<=>` operator. Results are ordered by relevance_score descending. The `ivfflat.probes` session parameter is set before each query for performance tuning. Each result now includes a `legal_context` field (added in Epic 4) that provides formatted legal provenance for Persian legal documents (e.g., `"قانون: قانون مجازات اسلامی | فصل: اول | ماده: 1"`). For non-legal documents, `legal_context` is an empty string.
+**Status:** ✅ Implemented (Epic 6 — Hybrid Search + Metadata Filtering)
+**Implementation Notes:**
+- **Search modes:** Supports three modes via the `search_mode` field:
+  - `"hybrid"` (default) — Runs both vector (pgvector CosineDistance) and keyword (PostgreSQL FTS with `simple` config) searches, then fuses results using **Reciprocal Rank Fusion (RRF)** with k=60. Each method fetches `max(top_k * 3, 60)` candidates before fusion.
+  - `"vector"` — Original cosine similarity search via pgvector's `<=>` operator. Uses `embed_query()` to vectorize the query.
+  - `"keyword"` — PostgreSQL Full-Text Search only. No embedding needed. Uses `websearch` query syntax.
+- **Metadata filtering:** Optional `filters` dict supports filtering on denormalized columns: `law_name`, `legal_status`, `approval_date`, `legal_type`. Example: `{"legal_status": "valid", "law_name": "قانون مدنی"}`.
+- **FTS trigger:** The `search_vector` column on `document_chunks` is auto-populated by a DB trigger (`trg_chunk_search_vector`) on INSERT/UPDATE of `content`, using `to_tsvector('simple', ...)`.
+- **Persian number normalization:** Persian/Arabic digits in content are normalized to English digits via `PersianNormalizer.normalize_for_fts()` before FTS indexing, ensuring `"ماده ۲۲"` matches `"ماده 22"`.
+- **Backward compatible:** The original `search_chunks()` function is preserved. Existing clients sending only `query`, `top_k`, and `min_score` will continue to work (defaults to `"vector"` mode for backward compatibility via the view).
+- The `ivfflat.probes` session parameter is set before each vector query for performance tuning.
+- Each result includes a `legal_context` field (added in Epic 4) that provides formatted legal provenance for Persian legal documents (e.g., `"قانون: قانون مجازات اسلامی | فصل: اول | ماده: 1"`). For non-legal documents, `legal_context` is an empty string.
 **Request Body:**
 ```json
 {
-  "query": "machine learning algorithms",
+  "query": "ماده ۲۲ قانون مدنی",
   "top_k": 10,
-  "min_score": 0.7
+  "min_score": 0.0,
+  "search_mode": "hybrid",
+  "filters": {
+    "legal_status": "valid",
+    "law_name": "قانون مدنی"
+  }
 }
 ```
 **Response:** `200 OK`
@@ -954,16 +969,29 @@ Both fields are optional. At least one should be provided for meaningful updates
       "chunk_index": 0,
       "page_start": 120,
       "page_end": 122,
-      "content": "Machine learning algorithms are...",
-      "relevance_score": 0.93,
+      "content": "ماده ۲۲ - اگر کسی...",
+      "relevance_score": 0.85,
       "token_count": 150,
-      "metadata": {},
-      "legal_context": ""
+      "metadata": {
+        "law_name": "قانون مدنی",
+        "legal_status": "valid",
+        "legal_type": "article",
+        "legal_number": "22"
+      },
+      "legal_context": "قانون: قانون مدنی | ماده: 22",
+      "vector_score": 0.92,
+      "keyword_score": 0.78,
+      "rrf_score": 0.85
     }
   ],
-  "query": "machine learning algorithms",
+  "query": "ماده ۲۲ قانون مدنی",
   "top_k": 10,
-  "min_score": 0.7,
+  "min_score": 0.0,
+  "search_mode": "hybrid",
+  "filters": {
+    "legal_status": "valid",
+    "law_name": "قانون مدنی"
+  },
   "total_results": 1
 }
 ```
@@ -972,7 +1000,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 - `403 Forbidden` — Document belongs to another user
 - `404 Not Found` — Document does not exist
 - `422 Unprocessable Entity` — Document processing is not complete
-- `500 Internal Server Error` — Embedding generation failed
+- `500 Internal Server Error` — Embedding generation failed (vector/hybrid modes only)
 
 ---
 

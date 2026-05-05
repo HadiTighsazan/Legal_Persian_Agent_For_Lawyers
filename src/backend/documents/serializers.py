@@ -208,6 +208,9 @@ class SearchRequestSerializer(serializers.Serializer):
         top_k (int): Optional max results (default 10, range 1–50).
         min_score (float): Optional minimum relevance threshold
             (default 0.0, range 0.0–1.0).
+        search_mode (str): Optional search mode — ``"hybrid"`` (default),
+            ``"vector"``, or ``"keyword"``.
+        filters (dict): Optional metadata filter conditions.
     """
 
     query = serializers.CharField(
@@ -229,13 +232,35 @@ class SearchRequestSerializer(serializers.Serializer):
         max_value=1.0,
         help_text="Minimum relevance score threshold (0.0–1.0).",
     )
+    search_mode = serializers.ChoiceField(
+        required=False,
+        default="hybrid",
+        choices=["hybrid", "vector", "keyword"],
+        help_text=(
+            "Search mode: 'hybrid' (vector + keyword with RRF fusion, default), "
+            "'vector' (cosine similarity only), "
+            "'keyword' (PostgreSQL full-text search only)."
+        ),
+    )
+    filters = serializers.JSONField(
+        required=False,
+        default=None,
+        allow_null=True,
+        help_text=(
+            "Optional metadata filter conditions. "
+            "Supported fields: law_name, legal_status, approval_date, legal_type. "
+            "Example: {\"legal_status\": \"valid\", \"law_name\": \"قانون مدنی\"}"
+        ),
+    )
 
 
 class SearchResultSerializer(serializers.Serializer):
     """Serialize a single search result chunk.
 
     Mirrors the dict returned by
-    :func:`~documents.services.search_service.search_chunks`.
+    :func:`~documents.services.search_service.search_chunks`,
+    :func:`~documents.services.search_service.hybrid_search`, or
+    :func:`~documents.services.search_service.keyword_search`.
     """
 
     chunk_id = serializers.UUIDField(
@@ -254,7 +279,11 @@ class SearchResultSerializer(serializers.Serializer):
         help_text="Text content of the chunk.",
     )
     relevance_score = serializers.FloatField(
-        help_text="Cosine similarity score (0.0–1.0, higher is more relevant).",
+        help_text=(
+            "Relevance score. For 'vector' mode: cosine similarity (0.0–1.0). "
+            "For 'keyword' mode: FTS rank. "
+            "For 'hybrid' mode: RRF fused score."
+        ),
     )
     token_count = serializers.IntegerField(
         allow_null=True,
@@ -262,6 +291,35 @@ class SearchResultSerializer(serializers.Serializer):
     )
     metadata = serializers.JSONField(
         help_text="Additional metadata associated with the chunk.",
+    )
+    legal_context = serializers.CharField(
+        allow_null=True,
+        required=False,
+        help_text="Human-readable legal context string for RAG.",
+    )
+    vector_score = serializers.FloatField(
+        allow_null=True,
+        required=False,
+        help_text=(
+            "Original vector similarity score. "
+            "Only present in 'hybrid' mode results."
+        ),
+    )
+    keyword_score = serializers.FloatField(
+        allow_null=True,
+        required=False,
+        help_text=(
+            "Original keyword FTS rank score. "
+            "Only present in 'hybrid' mode results."
+        ),
+    )
+    rrf_score = serializers.FloatField(
+        allow_null=True,
+        required=False,
+        help_text=(
+            "Reciprocal Rank Fusion score. "
+            "Only present in 'hybrid' mode results."
+        ),
     )
 
 
@@ -284,6 +342,13 @@ class SearchResponseSerializer(serializers.Serializer):
     )
     min_score = serializers.FloatField(
         help_text="Minimum relevance score threshold used.",
+    )
+    search_mode = serializers.CharField(
+        help_text="Search mode used ('hybrid', 'vector', or 'keyword').",
+    )
+    filters = serializers.JSONField(
+        allow_null=True,
+        help_text="Metadata filter conditions applied.",
     )
     total_results = serializers.IntegerField(
         help_text="Total number of results returned.",

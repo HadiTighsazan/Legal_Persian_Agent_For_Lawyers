@@ -642,3 +642,144 @@ class SearchRequestSerializerTests(TestCase):
         serializer = SearchRequestSerializer(data={"query": ""})
         self.assertFalse(serializer.is_valid())
         self.assertIn("query", serializer.errors)
+
+    def test_search_mode_defaults_to_hybrid(self) -> None:
+        """Omitting ``search_mode`` defaults to ``"hybrid"``."""
+        serializer = SearchRequestSerializer(data={"query": "test"})
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["search_mode"], "hybrid")
+
+    def test_search_mode_accepts_vector(self) -> None:
+        """``search_mode="vector"`` is valid."""
+        serializer = SearchRequestSerializer(
+            data={"query": "test", "search_mode": "vector"}
+        )
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["search_mode"], "vector")
+
+    def test_search_mode_accepts_keyword(self) -> None:
+        """``search_mode="keyword"`` is valid."""
+        serializer = SearchRequestSerializer(
+            data={"query": "test", "search_mode": "keyword"}
+        )
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["search_mode"], "keyword")
+
+    def test_search_mode_invalid_choice_fails(self) -> None:
+        """``search_mode="invalid"`` fails validation."""
+        serializer = SearchRequestSerializer(
+            data={"query": "test", "search_mode": "invalid"}
+        )
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("search_mode", serializer.errors)
+
+    def test_filters_accepts_valid_dict(self) -> None:
+        """``filters={"legal_status": "valid"}`` is accepted."""
+        serializer = SearchRequestSerializer(
+            data={"query": "test", "filters": {"legal_status": "valid"}}
+        )
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(
+            serializer.validated_data["filters"],
+            {"legal_status": "valid"},
+        )
+
+    def test_filters_defaults_to_none(self) -> None:
+        """Omitting ``filters`` defaults to ``None``."""
+        serializer = SearchRequestSerializer(data={"query": "test"})
+        self.assertTrue(serializer.is_valid())
+        self.assertIsNone(serializer.validated_data.get("filters"))
+
+
+class SearchResultSerializerTests(TestCase):
+    """Validate the search result serializer for hybrid/keyword search responses."""
+
+    def test_minimal_result_passes(self) -> None:
+        """Only required fields should pass validation."""
+        serializer = SearchResultSerializer(data={
+            "chunk_id": str(uuid.uuid4()),
+            "chunk_index": 0,
+            "content": "test content",
+            "relevance_score": 0.9,
+        })
+        self.assertTrue(serializer.is_valid())
+
+    def test_hybrid_result_fields(self) -> None:
+        """Hybrid search result with vector_score, keyword_score, rrf_score."""
+        data = {
+            "chunk_id": str(uuid.uuid4()),
+            "chunk_index": 0,
+            "content": "test content",
+            "relevance_score": 0.9,
+            "vector_score": 0.85,
+            "keyword_score": 0.75,
+            "rrf_score": 0.02,
+        }
+        serializer = SearchResultSerializer(data=data)
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(
+            serializer.validated_data["vector_score"], 0.85,
+        )
+        self.assertEqual(
+            serializer.validated_data["keyword_score"], 0.75,
+        )
+        self.assertEqual(
+            serializer.validated_data["rrf_score"], 0.02,
+        )
+
+    def test_hybrid_result_fields_optional(self) -> None:
+        """vector_score, keyword_score, rrf_score are optional."""
+        serializer = SearchResultSerializer(data={
+            "chunk_id": str(uuid.uuid4()),
+            "chunk_index": 0,
+            "content": "test content",
+            "relevance_score": 0.9,
+        })
+        self.assertTrue(serializer.is_valid())
+        self.assertIsNone(
+            serializer.validated_data.get("vector_score"),
+        )
+        self.assertIsNone(
+            serializer.validated_data.get("keyword_score"),
+        )
+        self.assertIsNone(
+            serializer.validated_data.get("rrf_score"),
+        )
+
+
+class SearchResponseSerializerTests(TestCase):
+    """Validate the search response serializer includes search_mode and filters."""
+
+    def test_response_contains_search_mode_and_filters(self) -> None:
+        """search_mode and filters are included in the serialized output."""
+        data = {
+            "results": [],
+            "total_results": 0,
+            "search_mode": "hybrid",
+            "filters": {"legal_status": "valid"},
+        }
+        serializer = SearchResponseSerializer(data=data)
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["search_mode"], "hybrid")
+        self.assertEqual(
+            serializer.validated_data["filters"],
+            {"legal_status": "valid"},
+        )
+
+    def test_response_search_mode_defaults_to_hybrid(self) -> None:
+        """Omitting search_mode defaults to "hybrid"."""
+        serializer = SearchResponseSerializer(data={
+            "results": [],
+            "total_results": 0,
+        })
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["search_mode"], "hybrid")
+
+    def test_response_filters_defaults_to_none(self) -> None:
+        """Omitting filters defaults to None."""
+        serializer = SearchResponseSerializer(data={
+            "results": [],
+            "total_results": 0,
+        })
+        self.assertTrue(serializer.is_valid())
+        self.assertIsNone(serializer.validated_data.get("filters"))

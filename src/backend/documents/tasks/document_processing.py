@@ -496,6 +496,8 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         )
 
         # Build DocumentChunk instances with legal metadata.
+        # Denormalized fields (law_name, legal_status, approval_date, legal_type)
+        # are populated from chunk.metadata for efficient SQL-level filtering.
         chunks_to_create = [
             DocumentChunk(
                 document=document,
@@ -505,6 +507,10 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
                 content=chunk.content,
                 token_count=chunk.token_count,
                 metadata=chunk.metadata,
+                law_name=chunk.metadata.get("law_name"),
+                legal_status=chunk.metadata.get("legal_status"),
+                approval_date=chunk.metadata.get("approval_date"),
+                legal_type=chunk.metadata.get("legal_type"),
             )
             for i, chunk in enumerate(chunk_results)
         ]

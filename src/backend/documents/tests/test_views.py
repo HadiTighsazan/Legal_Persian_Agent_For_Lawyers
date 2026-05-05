@@ -1082,3 +1082,151 @@ class DocumentSearchViewTests(TestCase):
             "Failed to generate query embedding",
             response.data["message"],
         )
+
+    # -- 200 Hybrid Search (default) --------------------------------------------
+
+    @patch("documents.views.embed_query")
+    @patch("documents.views.hybrid_search")
+    def test_search_hybrid_mode_calls_hybrid_search(
+        self,
+        mock_hybrid_search: MagicMock,
+        mock_embed_query: MagicMock,
+    ) -> None:
+        """Default ``search_mode="hybrid"`` should call ``hybrid_search``."""
+        mock_embed_query.return_value = [0.1] * 768
+        mock_hybrid_search.return_value = [
+            {
+                "chunk_id": str(uuid.uuid4()),
+                "chunk_index": 0,
+                "page_start": 1,
+                "page_end": 1,
+                "content": "Hybrid result",
+                "relevance_score": 0.92,
+                "vector_score": 0.85,
+                "keyword_score": 0.78,
+                "rrf_score": 0.02,
+                "token_count": 50,
+                "metadata": {},
+            },
+        ]
+
+        response = self.client.post(
+            self.url,
+            {"query": "test query"},
+            format="json",
+            **_auth_header(self.user),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_embed_query.assert_called_once_with("test query")
+        mock_hybrid_search.assert_called_once()
+        self.assertEqual(response.data["search_mode"], "hybrid")
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertIn("vector_score", response.data["results"][0])
+        self.assertIn("keyword_score", response.data["results"][0])
+        self.assertIn("rrf_score", response.data["results"][0])
+
+    # -- 200 Keyword Search -----------------------------------------------------
+
+    @patch("documents.views.keyword_search")
+    def test_search_keyword_mode_calls_keyword_search(
+        self,
+        mock_keyword_search: MagicMock,
+    ) -> None:
+        """``search_mode="keyword"`` should call ``keyword_search`` without embedding."""
+        mock_keyword_search.return_value = [
+            {
+                "chunk_id": str(uuid.uuid4()),
+                "chunk_index": 0,
+                "page_start": 1,
+                "page_end": 1,
+                "content": "Keyword match",
+                "relevance_score": 0.88,
+                "keyword_score": 0.88,
+                "token_count": 50,
+                "metadata": {},
+            },
+        ]
+
+        response = self.client.post(
+            self.url,
+            {"query": "test query", "search_mode": "keyword"},
+            format="json",
+            **_auth_header(self.user),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_keyword_search.assert_called_once()
+        self.assertEqual(response.data["search_mode"], "keyword")
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertIn("keyword_score", response.data["results"][0])
+
+    # -- 200 Vector Search (legacy) ---------------------------------------------
+
+    @patch("documents.views.embed_query")
+    @patch("documents.views.search_chunks")
+    def test_search_vector_mode_calls_search_chunks(
+        self,
+        mock_search_chunks: MagicMock,
+        mock_embed_query: MagicMock,
+    ) -> None:
+        """``search_mode="vector"`` should call ``search_chunks`` (legacy path)."""
+        mock_embed_query.return_value = [0.1] * 768
+        mock_search_chunks.return_value = [
+            {
+                "chunk_id": str(uuid.uuid4()),
+                "chunk_index": 0,
+                "page_start": 1,
+                "page_end": 1,
+                "content": "Vector result",
+                "relevance_score": 0.95,
+                "token_count": 50,
+                "metadata": {},
+            },
+        ]
+
+        response = self.client.post(
+            self.url,
+            {"query": "test query", "search_mode": "vector"},
+            format="json",
+            **_auth_header(self.user),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_embed_query.assert_called_once_with("test query")
+        mock_search_chunks.assert_called_once()
+        self.assertEqual(response.data["search_mode"], "vector")
+        self.assertEqual(len(response.data["results"]), 1)
+
+    # -- 200 Hybrid Search with filters -----------------------------------------
+
+    @patch("documents.views.embed_query")
+    @patch("documents.views.hybrid_search")
+    def test_search_hybrid_with_filters(
+        self,
+        mock_hybrid_search: MagicMock,
+        mock_embed_query: MagicMock,
+    ) -> None:
+        """``filters`` should be passed through to ``hybrid_search``."""
+        mock_embed_query.return_value = [0.1] * 768
+        mock_hybrid_search.return_value = []
+
+        response = self.client.post(
+            self.url,
+            {
+                "query": "test query",
+                "filters": {"legal_status": "valid"},
+            },
+            format="json",
+            **_auth_header(self.user),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_hybrid_search.assert_called_once()
+        # Verify filters were passed to hybrid_search
+        _call_kwargs = mock_hybrid_search.call_args[1]
+        self.assertEqual(
+            _call_kwargs.get("filters"),
+            {"legal_status": "valid"},
+        )
+        self.assertEqual(response.data["filters"], {"legal_status": "valid"})

@@ -61,15 +61,28 @@
 | token_count | INTEGER | NULL | Token count for LLM |
 | embedding | VECTOR(768) | NULL | Ollama nomic-embed-text embedding vector |
 | metadata | JSONB | DEFAULT '{}' | Additional metadata |
+| **search_vector** | **TSVECTOR** | **NULL** | **Full-text search vector, auto-populated by DB trigger on INSERT/UPDATE of content using `to_tsvector('simple', ...)`. Added in Epic 6 (migration 0006).** |
+| **law_name** | **VARCHAR(500)** | **NULL, INDEXED** | **Denormalized law name for efficient filtering. Populated from `metadata['law_name']` during chunking. Added in Epic 6 (migration 0006).** |
+| **legal_status** | **VARCHAR(50)** | **NULL, INDEXED** | **Denormalized legal status for filtering (e.g., "valid", "obsolete"). Populated from `metadata['legal_status']` during chunking. Added in Epic 6 (migration 0006).** |
+| **approval_date** | **DATE** | **NULL, INDEXED** | **Denormalized approval date for date-range filtering. Populated from `metadata['approval_date']` during chunking. Added in Epic 6 (migration 0006).** |
+| **legal_type** | **VARCHAR(50)** | **NULL, INDEXED** | **Denormalized legal segment type (e.g., "article", "note", "chapter"). Populated from `metadata['legal_type']` during chunking. Added in Epic 6 (migration 0006).** |
 | created_at | TIMESTAMP | DEFAULT NOW() | Creation timestamp |
 
 **Indexes:**
 - `idx_chunks_document_id` on `document_id`
 - `idx_chunks_embedding` on `embedding` USING ivfflat (for pgvector similarity search)
 - `idx_chunks_document_chunk` on `(document_id, chunk_index)`
+- **`chunk_search_vector_gin`** on **`search_vector`** USING **GIN** (for PostgreSQL Full-Text Search, added in Epic 6)
+- `idx_chunks_law_name` on `law_name` (added in Epic 6)
+- `idx_chunks_legal_status` on `legal_status` (added in Epic 6)
+- `idx_chunks_approval_date` on `approval_date` (added in Epic 6)
+- `idx_chunks_legal_type` on `legal_type` (added in Epic 6)
 
 **Constraints:**
 - UNIQUE(`document_id`, `chunk_index`)
+
+**Triggers:**
+- **`trg_chunk_search_vector`** — BEFORE INSERT OR UPDATE OF `content`, calls `update_chunk_search_vector()` function to auto-populate `search_vector` using `to_tsvector('simple', COALESCE(NEW.content, ''))`. Added in Epic 6 (migration 0006).
 
 ---
 
@@ -190,14 +203,23 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "vector";
 ```
 
+.. note::
+
+   Full-Text Search (``tsvector``/``tsquery``) is built into PostgreSQL core
+   and does **not** require a separate extension. The ``simple`` text search
+   configuration is also available by default.
+
+---
+
 ---
 
 ## Migration Notes
 
 - Use pgvector extension for similarity search on embeddings
-- Default embedding dimension: 1536 (OpenAI text-embedding-3-small)
+- Default embedding dimension: 768 (Ollama nomic-embed-text)
 - All timestamps in UTC
 - Use CASCADE delete for related records
+- **Epic 6 (migration 0006):** Added `search_vector` (TSVECTOR with GIN index), denormalized metadata columns (`law_name`, `legal_status`, `approval_date`, `legal_type`), and a DB trigger `trg_chunk_search_vector` that auto-populates `search_vector` from `content` using `to_tsvector('simple', ...)` on INSERT/UPDATE.
 - JSONB for flexible metadata storage
 
 ### Migration 0004 (E05-T1 — pgvector Embedding Support)

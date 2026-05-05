@@ -1,81 +1,68 @@
-# WIP Context — Epic 4: Persian Legal Text Optimization
+# WIP Context — Epic 6: Hybrid Search + Metadata Filtering
 
 ## Status: ✅ COMPLETED (2026-05-05)
 
-All 10 steps of the Epic 4 refactoring plan have been implemented and are ready for testing.
+All 10 steps of the Epic 6 Hybrid Search refactoring plan have been implemented and are ready for testing.
 
 ---
 
 ## What Was Completed
 
-### Step 1: Dependencies
-- Added `hazm>=0.10.0`, `pdfplumber>=0.11.0`, `pytesseract>=0.3.10` to `src/backend/requirements.txt`
+### Step 1: Persian Number Normalization for FTS
+- Added `_PERSIAN_DIGITS` translation table to [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:46) mapping Arabic-Indic (U+0660–U+0669) and Persian (U+06F0–U+06F9) digits to English equivalents
+- Added [`normalize_for_fts()`](src/backend/documents/services/persian_normalizer.py:276) static method that converts Persian/Arabic digits to English and replaces ZWNJ with spaces
+- Added [`TestNormalizeForFts`](src/backend/documents/tests/test_persian_normalizer.py:217) test class with 8 test cases
 
-### Step 2: Persian Text Normalization Service
-- Created `src/backend/documents/services/persian_normalizer.py`
-  - `PersianNormalizer` class with multi-stage normalization pipeline
-  - Processing order (CRITICAL): strip_tatweel → clean_control_chars → normalize_arabic_chars → fix_half_spaces → final cleanup
-  - Uses `hazm.Normalizer` for character normalization
-  - Custom regex patterns for Persian compound words (می‌, نمی‌, خواه, verb suffixes)
-  - Documented limitation: Hazm does NOT fix RTL character reversal from PyMuPDF
-- Created `src/backend/documents/tests/test_persian_normalizer.py` with 6 test classes
+### Step 2 & 3: Database Migration — FTS Search Vector + Metadata Fields
+- Added to [`DocumentChunk`](src/backend/documents/models.py:82):
+  - `search_vector = SearchVectorField(null=True, blank=True, editable=False)`
+  - `law_name` (CharField, nullable, db_indexed)
+  - `legal_status` (CharField, nullable, db_indexed)
+  - `approval_date` (DateField, nullable, db_indexed)
+  - `legal_type` (CharField, nullable, db_indexed)
+- Added `GinIndex(fields=['search_vector'], name='chunk_search_vector_gin')` to `Meta.indexes`
+- Created migration [`0006_add_fts_and_metadata_fields.py`](src/backend/documents/migrations/0006_add_fts_and_metadata_fields.py) that:
+  - Adds all 5 new columns to `document_chunks`
+  - Creates GIN index `chunk_search_vector_gin`
+  - Creates PL/pgSQL function `update_chunk_search_vector()` using `to_tsvector('simple', ...)`
+  - Creates trigger `trg_chunk_search_vector` (BEFORE INSERT OR UPDATE OF content)
+  - Backfills `search_vector` for existing rows
 
-### Step 3: Legal Structure Detector
-- Created `src/backend/documents/services/legal_structure_detector.py`
-  - `LegalSegment` dataclass with segment_type, segment_number, content, metadata, start_pos, end_pos
-  - `LegalStructureDetector` class with `detect_structure()` and `has_legal_structure()` methods
-  - Flexible regex patterns handling Persian (۰۱۲۳۴۵۶۷۸۹), Arabic (٠١٢٣٤٥٦٧٨٩), and English (0123456789) numerals
-  - Tatweel stripping and whitespace normalization before regex matching
-  - Metadata attachment (parent article for notes/clauses)
-- Created `src/backend/documents/tests/test_legal_structure_detector.py` with 6 test classes
+### Step 4: Hybrid Search Service
+- Rewrote [`search_service.py`](src/backend/documents/services/search_service.py) with:
+  - [`_apply_metadata_filters()`](src/backend/documents/services/search_service.py:95) — applies WHERE clauses on denormalized columns (validates field names against `{"law_name", "legal_status", "approval_date", "legal_type"}`)
+  - [`_build_result_dict()`](src/backend/documents/services/search_service.py:146) — standardized result dict builder
+  - [`_rrf_fusion()`](src/backend/documents/services/search_service.py:174) — Reciprocal Rank Fusion with k=60, adds `vector_score`, `keyword_score`, `rrf_score` to results
+  - [`_vector_search()`](src/backend/documents/services/search_service.py:246) — internal vector search with metadata filtering support
+  - [`keyword_search()`](src/backend/documents/services/search_service.py:329) — PostgreSQL FTS using `SearchQuery(config="simple", search_type="websearch")` and `SearchRank`
+  - [`hybrid_search()`](src/backend/documents/services/search_service.py:422) — runs both searches at RRF depth (max(top_k * 3, 60)), fuses via `_rrf_fusion`
+  - [`search_chunks()`](src/backend/documents/services/search_service.py:497) — preserved for backward compatibility, delegates to `_vector_search`
 
-### Step 4: Refactored Chunking Service
-- Rewrote `src/backend/documents/services/chunking_service.py`
-  - Extended `ChunkResult` with `legal_type`, `legal_number`, `parent_article` fields
-  - New `ClauseBoundary` dataclass for clause-aware overlap
-  - `ChunkingService.chunk_text()` auto-detects legal structure and delegates to `_chunk_legal()` or `_chunk_sentence()`
-  - `_chunk_legal()`: Groups segments by article, creates chunks at article boundaries, splits long articles at clause boundaries
-  - `_split_long_article()`: Clause-boundary-aware overlap where overlap is measured in clauses, not characters
-  - `_chunk_sentence()`: Preserved original sentence-boundary chunking as fallback
-- Created `src/backend/documents/tests/test_chunking_service.py` with 5 test classes
+### Step 5: Serializer Updates
+- Updated [`SearchRequestSerializer`](src/backend/documents/serializers.py:203): Added `search_mode` (ChoiceField: hybrid/vector/keyword, default="hybrid"), `filters` (JSONField, allow_null=True)
+- Updated [`SearchResultSerializer`](src/backend/documents/serializers.py:257): Added `legal_context`, `vector_score`, `keyword_score`, `rrf_score` (all optional/allow_null)
+- Updated [`SearchResponseSerializer`](src/backend/documents/serializers.py:326): Added `search_mode`, `filters` fields
 
-### Step 5: Pipeline Integration
-- Rewrote `src/backend/documents/tasks/document_processing.py`
-  - `_is_persian_text_garbled()` — Quality heuristic checking if >30% of Persian chars are isolated
-  - `_extract_with_pymupdf_rtl()` — RTL-aware extraction with TEXT_PRESERVE_LIGATURES | TEXT_PRESERVE_WHITESPACE flags
-  - `_extract_with_pdfplumber()` — Fallback extraction using pdfplumber
-  - `_extract_with_tesseract()` — OCR fallback for scanned Persian PDFs
-  - Three-layer extraction strategy with auto-fallback in `extract_text_from_pdf()`
-  - Persian normalization applied after extraction using `PersianNormalizer`
-  - Updated `chunk_document()` to use settings for legal chunking configuration
+### Step 6: View Updates
+- Updated [`DocumentSearchView.post()`](src/backend/documents/views.py:825): Routes to `keyword_search()` when `search_mode="keyword"`, `search_chunks()` when `"vector"`, `hybrid_search()` when `"hybrid"` (default). Only calls `embed_query()` for vector/hybrid modes.
 
-### Step 6: Model Update
-- Added `legal_context` property to `DocumentChunk` model in `src/backend/documents/models.py`
-  - Returns formatted Persian string like `"قانون: قانون مجازات اسلامی | فصل: اول | ماده: 1"`
-  - Computed from `metadata` JSONB field (no DB migration needed)
+### Step 7: RAG Service Update
+- Updated [`run_rag_query()`](src/backend/conversations/rag_service.py:161) and [`run_rag_query_stream()`](src/backend/conversations/rag_service.py:274) to use `hybrid_search()` with `filters={"legal_status": "valid"}`
 
-### Step 7: Search Service Update
-- Added `"legal_context": chunk.legal_context` to search result dicts in `src/backend/documents/services/search_service.py`
+### Step 8: API Registry Documentation
+- Updated [`docs/references/api-registry.md`](docs/references/api-registry.md) with hybrid search endpoint details, new request/response fields
 
-### Step 8: RAG Service Update
-- Updated `build_context()` in `src/backend/conversations/rag_service.py` to include legal context in source headers
-  - Format: `[Source 1 | Pages 1-3 | قانون: ... | فصل: ... | ماده: ...]`
+### Step 9: Database Schema Documentation
+- Updated [`docs/references/database-schema.md`](docs/references/database-schema.md) with new columns, indexes, and trigger info for `document_chunks`
 
-### Step 9: Configuration Settings
-- Added 7 new settings to `src/backend/config/settings.py`:
-  - `PERSIAN_NORMALIZATION_ENABLED` (default: True)
-  - `LEGAL_CHUNKING_ENABLED` (default: True)
-  - `LEGAL_MAX_CHUNK_SIZE` (default: 2000)
-  - `LEGAL_CHUNK_OVERLAP_CLAUSES` (default: 1)
-  - `EXTRACTION_BACKEND` (default: 'pymupdf')
-  - `EXTRACTION_AUTO_FALLBACK` (default: True)
-  - `EXTRACTION_GARBLED_THRESHOLD` (default: 0.3)
-- Added corresponding env vars to `.env.example`
-
-### Step 10: Reference Documentation
-- Updated `docs/references/database-schema.md` — Documented `metadata` JSONB field usage for legal context
-- Updated `docs/references/api-registry.md` — Added `legal_context` field to search response example and implementation notes
-- Updated this file (`docs/active-task/wip-context.md`)
+### Step 10: Tests
+- Added [`TestNormalizeForFts`](src/backend/documents/tests/test_persian_normalizer.py:217) — 8 tests for `normalize_for_fts()`
+- Added [`ApplyMetadataFiltersTest`](src/backend/documents/tests/test_search_service.py:293) — 5 tests for `_apply_metadata_filters()`
+- Added [`RrfFusionTest`](src/backend/documents/tests/test_search_service.py:373) — 6 tests for `_rrf_fusion()`
+- Added [`KeywordSearchTest`](src/backend/documents/tests/test_search_service.py:466) — 4 tests for `keyword_search()`
+- Added [`HybridSearchTest`](src/backend/documents/tests/test_search_service.py:554) — 3 tests for `hybrid_search()`
+- Added serializer tests: `search_mode` defaults/validation, `filters` acceptance, `SearchResultSerializer` hybrid fields, `SearchResponseSerializer` fields
+- Added view tests: hybrid mode, keyword mode, vector mode, hybrid with filters
 
 ---
 
@@ -83,35 +70,31 @@ All 10 steps of the Epic 4 refactoring plan have been implemented and are ready 
 
 | File | Action |
 |------|--------|
-| `src/backend/requirements.txt` | Modified (added 3 deps) |
-| `src/backend/documents/services/persian_normalizer.py` | **NEW** |
-| `src/backend/documents/tests/test_persian_normalizer.py` | **NEW** |
-| `src/backend/documents/services/legal_structure_detector.py` | **NEW** |
-| `src/backend/documents/tests/test_legal_structure_detector.py` | **NEW** |
-| `src/backend/documents/services/chunking_service.py` | Rewritten |
-| `src/backend/documents/tests/test_chunking_service.py` | **NEW** |
-| `src/backend/documents/tasks/document_processing.py` | Rewritten |
-| `src/backend/documents/models.py` | Modified (added `legal_context` property) |
-| `src/backend/documents/services/search_service.py` | Modified (added `legal_context` to results) |
-| `src/backend/conversations/rag_service.py` | Modified (legal context in source headers) |
-| `src/backend/config/settings.py` | Modified (added 7 settings) |
-| `.env.example` | Modified (added env vars) |
-| `docs/references/database-schema.md` | Modified (Epic 4 section) |
-| `docs/references/api-registry.md` | Modified (legal_context in search response) |
+| `src/backend/documents/services/persian_normalizer.py` | Modified (added `normalize_for_fts()`) |
+| `src/backend/documents/models.py` | Modified (added `search_vector`, metadata fields, GIN index) |
+| `src/backend/documents/migrations/0006_add_fts_and_metadata_fields.py` | **NEW** |
+| `src/backend/documents/services/search_service.py` | Rewritten (hybrid search, RRF, keyword search) |
+| `src/backend/documents/serializers.py` | Modified (added search_mode, filters, hybrid score fields) |
+| `src/backend/documents/views.py` | Modified (hybrid/keyword routing in DocumentSearchView) |
+| `src/backend/documents/tasks/document_processing.py` | Modified (populate denormalized metadata fields) |
+| `src/backend/conversations/rag_service.py` | Modified (use hybrid_search with legal_status filter) |
+| `src/backend/documents/tests/test_persian_normalizer.py` | Modified (added TestNormalizeForFts) |
+| `src/backend/documents/tests/test_search_service.py` | Modified (added 4 test classes) |
+| `src/backend/documents/tests/test_serializers.py` | Modified (added search_mode, filters, hybrid result tests) |
+| `src/backend/documents/tests/test_views.py` | Modified (added hybrid/keyword/vector mode tests) |
+| `docs/references/api-registry.md` | Modified (hybrid search docs) |
+| `docs/references/database-schema.md` | Modified (new columns, indexes, trigger) |
 | `docs/active-task/wip-context.md` | Modified (this file) |
 
 ---
 
 ## Next Steps / Verification
 
-1. **Build & restart containers:** `docker-compose up --build`
+1. **Run migrations:** `docker-compose exec backend python manage.py migrate`
 2. **Run backend tests:** `docker-compose exec backend pytest`
-3. **Upload a Persian legal PDF** and verify:
-   - Text extraction works (check for garbled characters)
-   - Chunks respect article boundaries
-   - Search results include `legal_context` field
-   - RAG responses include legal provenance in source citations
-4. **Toggle settings** via `.env` to verify:
-   - `PERSIAN_NORMALIZATION_ENABLED=False` — disables normalization
-   - `LEGAL_CHUNKING_ENABLED=False` — falls back to sentence-boundary chunking
-   - `EXTRACTION_BACKEND=pdfplumber` — uses pdfplumber as primary extractor
+3. **Verify search modes via API:**
+   - Default hybrid search: `POST /documents/{id}/search/` with `{"query": "..."}`
+   - Keyword-only: `POST /documents/{id}/search/` with `{"query": "...", "search_mode": "keyword"}`
+   - Vector-only (legacy): `POST /documents/{id}/search/` with `{"query": "...", "search_mode": "vector"}`
+   - With filters: `POST /documents/{id}/search/` with `{"query": "...", "filters": {"legal_status": "valid"}}`
+4. **Verify RAG responses** include filtered results (only valid laws)
