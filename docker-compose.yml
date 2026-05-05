@@ -67,6 +67,7 @@ services:
     build:
       context: .
       dockerfile: ./docker/backend/Dockerfile
+    image: docuchat_backend
     container_name: docuchat_backend
     restart: unless-stopped
     depends_on:
@@ -119,6 +120,7 @@ services:
 
   # Celery Worker for Background Tasks
   celery_worker:
+    image: docuchat_backend
     build:
       context: .
       dockerfile: ./docker/backend/Dockerfile
@@ -162,6 +164,7 @@ services:
 
   # Celery Beat for Scheduled Tasks
   celery_beat:
+    image: docuchat_backend
     build:
       context: .
       dockerfile: ./docker/backend/Dockerfile
