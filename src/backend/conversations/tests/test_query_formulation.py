@@ -1,5 +1,5 @@
 """
-Unit tests for the LLM Query Formulation module.
+Unit tests for the LLM Query Formulation module (Lightweight HyDE).
 
 Tests cover:
 - :func:`~conversations.query_formulation.formulate_query`
@@ -45,13 +45,17 @@ class BuildFormulationMessagesTests:
         assert messages[1]["content"] == "test query"
 
     def test_system_prompt_contains_key_instructions(self) -> None:
-        """System prompt includes Persian legal search instructions."""
+        """System prompt includes Persian legal search and HyDE instructions."""
         messages = _build_formulation_messages("test")
         system_content = messages[0]["content"]
         assert "Persian legal search query optimizer" in system_content
         assert "fts_query" in system_content
         assert "vector_query" in system_content
         assert "websearch" in system_content
+        # HyDE-specific instructions
+        assert "HYPOTHETICAL ANSWER" in system_content
+        assert "hypothetical answer" in system_content
+        assert "embedding similarity" in system_content
 
 
 # ---------------------------------------------------------------------------
@@ -172,12 +176,16 @@ class FormulateQueryTests:
         mock_get_chat_provider: MagicMock,
     ) -> None:
         """Mock chat provider returns valid JSON; verify QueryFormulationResult fields."""
-        # Arrange
+        # Arrange — vector_query is now a HyDE-style hypothetical answer
         mock_provider = MagicMock()
         mock_provider.chat.return_value = {
             "content": json.dumps({
                 "fts_query": "ماده 22 قانون مدنی",
-                "vector_query": "ماده 22 قانون مدنی",
+                "vector_query": (
+                    "ماده 22 قانون مدنی: هر کس مال غیر را تصرف کند باید آن را "
+                    "به صاحبش مسترد نماید و در صورت تلف یا نقصان مسئول جبران "
+                    "خسارت خواهد بود."
+                ),
             }),
         }
         mock_get_chat_provider.return_value = mock_provider
@@ -187,20 +195,28 @@ class FormulateQueryTests:
 
         # Assert
         assert result.fts_query == "ماده 22 قانون مدنی"
-        assert result.vector_query == "ماده 22 قانون مدنی"
+        assert "ماده 22 قانون مدنی" in result.vector_query
+        assert "تصرف" in result.vector_query
+        assert "مسترد" in result.vector_query
+        assert len(result.vector_query) > 50  # HyDE answer is longer than a short query
 
     @patch("conversations.query_formulation.get_chat_provider")
     def test_formulate_query_mixed_language(
         self,
         mock_get_chat_provider: MagicMock,
     ) -> None:
-        """Mixed-language query preserves English terms."""
+        """Mixed-language query preserves English terms in HyDE-style answer."""
         # Arrange
         mock_provider = MagicMock()
         mock_provider.chat.return_value = {
             "content": json.dumps({
                 "fts_query": "penalty کلاهبرداری Islamic Penal Code مجازات",
-                "vector_query": "What is the penalty for کلاهبرداری under the Islamic Penal Code",
+                "vector_query": (
+                    "Under the Islamic Penal Code, the penalty for کلاهبرداری "
+                    "(fraud) is imprisonment ranging from one to seven years "
+                    "and a fine equivalent to the value of the property "
+                    "obtained through fraud."
+                ),
             }),
         }
         mock_get_chat_provider.return_value = mock_provider
@@ -214,6 +230,8 @@ class FormulateQueryTests:
         assert "penalty" in result.fts_query
         assert "کلاهبرداری" in result.fts_query
         assert "Islamic Penal Code" in result.vector_query
+        assert "imprisonment" in result.vector_query
+        assert len(result.vector_query) > 50  # HyDE answer is longer than a short query
 
     # ------------------------------------------------------------------
     # Fallback paths
@@ -373,3 +391,71 @@ class FormulateQueryTests:
         mock_provider.chat.assert_called_once()
         call_args = mock_provider.chat.call_args
         assert call_args.kwargs["max_tokens"] == 300
+
+    # ------------------------------------------------------------------
+    # HyDE-specific tests
+    # ------------------------------------------------------------------
+
+    @patch("conversations.query_formulation.get_chat_provider")
+    def test_vector_query_is_hypothetical_answer_style(
+        self,
+        mock_get_chat_provider: MagicMock,
+    ) -> None:
+        """vector_query contains a HyDE-style hypothetical answer (longer text, legal terminology)."""
+        # Arrange
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = {
+            "content": json.dumps({
+                "fts_query": "غصب قانون مدنی",
+                "vector_query": (
+                    "غصب عبارت است از تصرف در مال غیر بدون اذن صاحب آن. "
+                    "غصب از اعمال خلاف قانون محسوب می‌شود و موجب ضمان می‌باشد."
+                ),
+            }),
+        }
+        mock_get_chat_provider.return_value = mock_provider
+
+        # Act
+        result = formulate_query("قانون مدنی غصب را چگونه تعریف کرده است؟")
+
+        # Assert — HyDE-style answer is longer, uses legal terminology, definition-style
+        assert result.fts_query == "غصب قانون مدنی"
+        # vector_query should be a full sentence/paragraph, not a short query
+        assert len(result.vector_query) > 40
+        # Should contain legal terminology
+        assert "تصرف" in result.vector_query
+        assert "مال" in result.vector_query
+        assert "اذن" in result.vector_query
+        # Should be definition-style (عبارت است از)
+        assert "عبارت است از" in result.vector_query
+
+    @patch("conversations.query_formulation.get_chat_provider")
+    def test_fts_query_unchanged(
+        self,
+        mock_get_chat_provider: MagicMock,
+    ) -> None:
+        """fts_query still returns keyword-style output (not affected by HyDE change)."""
+        # Arrange
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = {
+            "content": json.dumps({
+                "fts_query": "عقد لازم عقد جایز",
+                "vector_query": (
+                    "عقد لازم عقدی است که هیچ یک از طرفین حق فسخ آن را ندارند "
+                    "مگر در موارد معین. عقد جایز عقدی است که هر یک از طرفین "
+                    "می‌توانند هر وقت بخواهند آن را فسخ کنند."
+                ),
+            }),
+        }
+        mock_get_chat_provider.return_value = mock_provider
+
+        # Act
+        result = formulate_query("فرق بین عقد لازم و عقد جایز چیست؟")
+
+        # Assert — fts_query is still keyword-style (space-separated, no filler)
+        assert result.fts_query == "عقد لازم عقد جایز"
+        # fts_query should be shorter than vector_query (keywords vs paragraph)
+        assert len(result.fts_query) < len(result.vector_query)
+        # fts_query should not contain conversational filler
+        assert "چیست" not in result.fts_query
+        assert "فرق" not in result.fts_query

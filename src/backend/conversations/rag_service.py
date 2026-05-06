@@ -237,8 +237,22 @@ def run_rag_query(
         formulation.vector_query,
     )
 
-    # Step 2: Embed the optimized vector query
-    logger.info("run_rag_query: Embedding question for document %s", document_id)
+    # ---- HyDE diagnostic: log the hypothetical answer being embedded ----
+    logger.info(
+        "HYDE_DIAG: document=%s raw_question=%.200s "
+        "hypothetical_answer=%.500s",
+        document_id,
+        question,
+        formulation.vector_query,
+    )
+
+    # Step 2: Embed the optimized vector query (HyDE-style hypothetical answer)
+    logger.info(
+        "run_rag_query: Embedding HyDE hypothetical answer for document %s — "
+        "vector_query=%.500s",
+        document_id,
+        formulation.vector_query,
+    )
     try:
         query_embedding = embed_query(formulation.vector_query)
     except Exception as e:
@@ -355,8 +369,22 @@ def run_rag_query_stream(
     logger.info("run_rag_query_stream: Formulating query for document %s", document_id)
     formulation = formulate_query(question)
 
-    # Step 2: Embed the optimized vector query
-    logger.info("run_rag_query_stream: Embedding question for document %s", document_id)
+    # ---- HyDE diagnostic: log the hypothetical answer being embedded ----
+    logger.info(
+        "HYDE_DIAG: document=%s raw_question=%.200s "
+        "hypothetical_answer=%.500s",
+        document_id,
+        question,
+        formulation.vector_query,
+    )
+
+    # Step 2: Embed the optimized vector query (HyDE-style hypothetical answer)
+    logger.info(
+        "run_rag_query_stream: Embedding HyDE hypothetical answer for document %s — "
+        "vector_query=%.500s",
+        document_id,
+        formulation.vector_query,
+    )
     try:
         query_embedding = embed_query(formulation.vector_query)
     except Exception as e:

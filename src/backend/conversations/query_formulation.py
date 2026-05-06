@@ -1,26 +1,31 @@
 """
-LLM Query Formulation Layer for the RAG pipeline.
+LLM Query Formulation Layer for the RAG pipeline (Lightweight HyDE).
 
 Transforms a user's raw conversational query into optimized search strings
-for both Full-Text Search (FTS) and Vector Search.
+for both Full-Text Search (FTS) and Vector Search.  The ``vector_query``
+is generated as a **hypothetical answer** written in the style of Persian
+legal text (HyDE — Hypothetical Document Embeddings), designed to have
+high cosine similarity with real legal document chunks when embedded.
 
 Architecture::
 
     User Query
         │
         ▼
-    ┌─────────────────────────────────────┐
-    │  LLM Query Formulation              │
-    │  (single chat completion call)      │
-    │                                     │
-    │  Input:  raw user query             │
-    │  Output: QueryFormulationResult     │
-    │    ├── fts_query: str               │
-    │    └── vector_query: str            │
-    └─────────────────────────────────────┘
-        │                    │
-        ▼                    ▼
-    embed_query(vector_query)    fts_query ──► keyword_search()
+    ┌──────────────────────────────────────────┐
+    │  LLM Query Formulation + HyDE            │
+    │  (single chat completion call)           │
+    │                                          │
+    │  Input:  raw user query                  │
+    │  Output: QueryFormulationResult          │
+    │    ├── fts_query: str (keywords)         │
+    │    └── vector_query: str (hypothetical   │
+    │                       answer in legal    │
+    │                       text style)        │
+    └──────────────────────────────────────────┘
+        │                           │
+        ▼                           ▼
+    embed_query(vector_query)   fts_query ──► keyword_search()
         │
         ▼
     vector_search(query_vector)
@@ -60,8 +65,8 @@ SYSTEM_PROMPT: str = (
     "1. **Full-Text Search (FTS)**: PostgreSQL `websearch` over Persian legal texts. "
     "Needs exact keyword matches. Persian digits must be converted to English "
     'digits (e.g., "۲۲" \u2192 "22").\n'
-    "2. **Vector Search**: Semantic similarity search. Benefits from a clean, "
-    "entity-rich query free of conversational filler.\n\n"
+    "2. **Vector Search**: Semantic similarity search. Benefits from a "
+    "hypothetical answer that mimics the style of real legal text.\n\n"
     "### Instructions:\n"
     "1. Extract the core legal entities and concepts from the user's question.\n"
     "2. Translate informal Persian terms to formal legal terminology.\n"
@@ -85,25 +90,33 @@ SYSTEM_PROMPT: str = (
     "     - Remove stop words, filler, and conversational particles.\n"
     "     - Include both the conversational term AND its formal legal equivalent\n"
     "       when there's a terminology gap (e.g., \"حبس مجازات_حبس\").\n"
-    '   - "vector_query": A clean, natural-language query string optimized for\n'
-    "     embedding.\n"
-    "     - Remove filler words but keep the semantic structure.\n"
-    "     - Use formal legal terminology where applicable.\n"
-    "     - Keep the query as a natural sentence fragment, not just keywords.\n\n"
+    '   - "vector_query": A HYPOTHETICAL ANSWER written in the style of Persian\n'
+    "     legal text, optimized for embedding similarity with real legal document\n"
+    "     chunks.\n"
+    "     - Write a short paragraph (1-3 sentences) that answers the user's\n"
+    "       question as if it were an excerpt from a legal document (law, article,\n"
+    "       clause).\n"
+    "     - Use formal Persian legal terminology and sentence structures.\n"
+    "     - Include specific legal terms, article references, and definitions that\n"
+    "       would appear in actual legal texts.\n"
+    "     - Do NOT include conversational filler, explanations, or meta-commentary.\n"
+    "     - The goal is to produce text that looks like it came from a real law,\n"
+    "       so that when embedded, it has high cosine similarity with actual legal\n"
+    "       chunks.\n\n"
     "### Examples:\n\n"
     'Input: "ماده ۲۲ قانون مدنی رو برام توضیح بده"\n'
     "Output:\n"
-    '{"fts_query": "ماده 22 قانون مدنی", "vector_query": "ماده 22 قانون مدنی"}\n\n'
+    '{"fts_query": "ماده 22 قانون مدنی", "vector_query": "ماده 22 قانون مدنی: هر کس مال غیر را تصرف کند باید آن را به صاحبش مسترد نماید و در صورت تلف یا نقصان مسئول جبران خسارت خواهد بود."}\n\n'
     'Input: "حکم حبس برای کلاهبرداری چقدره؟"\n'
     "Output:\n"
-    '{"fts_query": "مجازات حبس کلاهبرداری", "vector_query": "مجازات حبس برای جرم کلاهبرداری"}\n\n'
+    '{"fts_query": "مجازات حبس کلاهبرداری", "vector_query": "مجازات کلاهبرداری حسب مورد حبس از یک تا هفت سال و پرداخت جزای نقدی معادل مال اخذ شده می‌باشد. کلاهبرداری از جرایم علیه اموال محسوب می‌گردد."}\n\n'
     'Input: "فرق بین عقد لازم و عقد جایز چیست؟"\n'
     "Output:\n"
-    '{"fts_query": "عقد لازم عقد جایز", "vector_query": "تفاوت بین عقد لازم و عقد جایز"}\n\n'
+    '{"fts_query": "عقد لازم عقد جایز", "vector_query": "عقد لازم عقدی است که هیچ یک از طرفین حق فسخ آن را ندارند مگر در موارد معین. عقد جایز عقدی است که هر یک از طرفین می‌توانند هر وقت بخواهند آن را فسخ کنند."}\n\n'
     'Input: "What is the penalty for کلاهبرداری under Islamic Penal Code?"\n'
     "Output:\n"
     '{"fts_query": "penalty کلاهبرداری Islamic Penal Code مجازات", '
-    '"vector_query": "What is the penalty for کلاهبرداری under the Islamic Penal Code"}'
+    '"vector_query": "Under the Islamic Penal Code, the penalty for کلاهبرداری (fraud) is imprisonment ranging from one to seven years and a fine equivalent to the value of the property obtained through fraud."}'
 )
 
 
@@ -118,8 +131,10 @@ class QueryFormulationResult:
 
     Attributes:
         fts_query: Optimized keyword string for PostgreSQL ``websearch`` FTS.
-        vector_query: Clean, natural-language query string for embedding /
-            vector search.
+        vector_query: HyDE-style hypothetical answer written in the style of
+            Persian legal text, used for embedding / vector search.  The
+            hypothetical answer is designed to have high cosine similarity
+            with real legal document chunks.
     """
 
     fts_query: str = ""
@@ -132,11 +147,16 @@ class QueryFormulationResult:
 
 
 def formulate_query(user_query: str) -> QueryFormulationResult:
-    """Transform a raw user query into optimized search strings.
+    """Transform a raw user query into optimized search strings (Lightweight HyDE).
 
     Makes a single lightweight chat completion call to the configured chat
-    provider. Falls back to using the raw ``user_query`` for both fields on
-    any failure (network error, invalid JSON, empty response, etc.).
+    provider. The ``vector_query`` field is generated as a **hypothetical
+    answer** written in the style of Persian legal text (HyDE technique),
+    designed to have high cosine similarity with real legal document chunks
+    when embedded.
+
+    Falls back to using the raw ``user_query`` for both fields on any failure
+    (network error, invalid JSON, empty response, etc.).
 
     If ``settings.QUERY_FORMULATION_ENABLED`` is ``False``, the formulation
     step is skipped entirely and the raw query is returned as-is.

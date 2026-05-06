@@ -225,7 +225,10 @@ class RunRagQueryTests:
         # Arrange
         mock_formulate_query.return_value = QueryFormulationResult(
             fts_query="optimized fts",
-            vector_query="optimized vector",
+            vector_query=(
+                "This is a hypothetical answer written in the style of a legal "
+                "document to maximize embedding similarity with real legal text."
+            ),
         )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.return_value = [
@@ -290,7 +293,10 @@ class RunRagQueryTests:
         # Arrange
         mock_formulate_query.return_value = QueryFormulationResult(
             fts_query="optimized fts",
-            vector_query="optimized vector",
+            vector_query=(
+                "This is a hypothetical answer written in the style of a legal "
+                "document to maximize embedding similarity with real legal text."
+            ),
         )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.return_value = [
@@ -353,7 +359,10 @@ class RunRagQueryTests:
         # Arrange
         mock_formulate_query.return_value = QueryFormulationResult(
             fts_query="optimized fts",
-            vector_query="optimized vector",
+            vector_query=(
+                "This is a hypothetical answer written in the style of a legal "
+                "document to maximize embedding similarity with real legal text."
+            ),
         )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.return_value = []
@@ -412,7 +421,10 @@ class RunRagQueryTests:
         # Arrange
         mock_formulate_query.return_value = QueryFormulationResult(
             fts_query="optimized fts",
-            vector_query="optimized vector",
+            vector_query=(
+                "This is a hypothetical answer written in the style of a legal "
+                "document to maximize embedding similarity with real legal text."
+            ),
         )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.return_value = []
@@ -442,7 +454,10 @@ class RunRagQueryTests:
         # Arrange
         mock_formulate_query.return_value = QueryFormulationResult(
             fts_query="optimized fts",
-            vector_query="optimized vector",
+            vector_query=(
+                "This is a hypothetical answer written in the style of a legal "
+                "document to maximize embedding similarity with real legal text."
+            ),
         )
         mock_embed_query.side_effect = Exception("Embedding failed")
 
@@ -471,7 +486,10 @@ class RunRagQueryTests:
         # Arrange
         mock_formulate_query.return_value = QueryFormulationResult(
             fts_query="optimized fts",
-            vector_query="optimized vector",
+            vector_query=(
+                "This is a hypothetical answer written in the style of a legal "
+                "document to maximize embedding similarity with real legal text."
+            ),
         )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.side_effect = Exception("Search failed")
@@ -501,7 +519,10 @@ class RunRagQueryTests:
         # Arrange
         mock_formulate_query.return_value = QueryFormulationResult(
             fts_query="optimized fts",
-            vector_query="optimized vector",
+            vector_query=(
+                "This is a hypothetical answer written in the style of a legal "
+                "document to maximize embedding similarity with real legal text."
+            ),
         )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.return_value = []
@@ -543,7 +564,10 @@ class RunRagQueryTests:
         # Arrange
         mock_formulate_query.return_value = QueryFormulationResult(
             fts_query="optimized fts query",
-            vector_query="optimized vector query",
+            vector_query=(
+                "This is a hypothetical answer written in the style of a legal "
+                "document to maximize embedding similarity with real legal text."
+            ),
         )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.return_value = []
@@ -574,8 +598,11 @@ class RunRagQueryTests:
             top_k=3,
             filters=None,
         )
-        # Verify embed_query receives formulation.vector_query
-        mock_embed_query.assert_called_once_with("optimized vector query")
+        # Verify embed_query receives formulation.vector_query (HyDE-style hypothetical answer)
+        mock_embed_query.assert_called_once_with(
+            "This is a hypothetical answer written in the style of a legal "
+            "document to maximize embedding similarity with real legal text."
+        )
 
     @patch("conversations.rag_service.formulate_query")
     @patch("conversations.rag_service.hybrid_search")

@@ -499,7 +499,11 @@ def keyword_search(
         )
         return []
 
-    # Build the search query using websearch syntax.
+    # ---- FTS query building with progressive fallback ----
+    # Use websearch syntax for the initial attempt. websearch ANDs all terms,
+    # which is precise but can return zero results when the LLM-generated
+    # FTS query contains terms not present in the chunk's search_vector
+    # (e.g., "حقوق", "ایران", "قانون" in a HyDE query for a legal text).
     search_query = SearchQuery(query_text, config="simple", search_type="websearch")
 
     # Build the base queryset: only chunks with a search_vector.
@@ -543,7 +547,46 @@ def keyword_search(
         len(results),
     )
 
-    # ---- Trigram fallback: if FTS returned zero results, try trigram ----
+    # ---- Progressive fallback chain ----
+    # If websearch returned zero results, try plainto_tsquery which also ANDs
+    # but handles stop words natively (though we already remove them).
+    if not results:
+        logger.info(
+            "keyword_search: websearch returned zero results for '%s' on "
+            "document %s — trying plainto_tsquery fallback",
+            query_text,
+            document_id,
+        )
+        fallback_query = SearchQuery(
+            query_text, config="simple", search_type="plain",
+        )
+        fallback_qs = DocumentChunk.objects.filter(
+            document_id=document_id,
+            search_vector__isnull=False,
+        )
+        fallback_qs = _apply_metadata_filters(fallback_qs, filters)
+        fallback_qs = fallback_qs.annotate(
+            relevance_score=SearchRank(
+                F("search_vector"),
+                fallback_query,
+            ),
+        )
+        fallback_qs = fallback_qs.filter(
+            search_vector=fallback_query,
+        ).order_by("-relevance_score")[:top_k]
+
+        for chunk in fallback_qs:
+            results.append(
+                _build_result_dict(chunk, float(chunk.relevance_score))
+            )
+
+        logger.info(
+            "keyword_search: plainto_tsquery fallback for document %s → %d results",
+            document_id,
+            len(results),
+        )
+
+    # ---- Trigram fallback: if FTS still returned zero results, try trigram ----
     if not results and enable_trigram_fallback:
         logger.info(
             "keyword_search: FTS returned zero results for '%s' on document %s "
@@ -675,11 +718,13 @@ def _rrf_fusion_multi(
     result_lists: list[list[dict[str, Any]]],
     top_k: int,
     score_keys: list[str] | None = None,
+    weights: list[float] | None = None,
 ) -> list[dict[str, Any]]:
     """Fuse N ranked result lists using Reciprocal Rank Fusion (RRF).
 
     Generalises :func:`_rrf_fusion` to handle any number of result lists.
-    Each list contributes ``1 / (k + rank)`` to each chunk's RRF score.
+    Each list contributes ``weight * 1 / (k + rank)`` to each chunk's RRF
+    score, where *weight* defaults to 1.0 for all lists.
 
     Args:
         result_lists: A list of ranked result lists (each ordered by
@@ -689,6 +734,10 @@ def _rrf_fusion_multi(
             from each list.  If provided, must have the same length as
             *result_lists*.  Each chunk dict will have ``score_keys[i]`` set
             to the original score from list *i* (or 0.0 if not present).
+        weights: Optional list of alpha weights, one per result list.  Each
+            weight multiplies the RRF contribution of that list.  If provided,
+            must have the same length as *result_lists*.  Defaults to 1.0
+            for all lists (standard RRF).
 
     Returns:
         A list of up to *top_k* result dicts, fused and re-ranked by RRF
@@ -709,9 +758,12 @@ def _rrf_fusion_multi(
             if score_keys and list_idx < len(score_keys)
             else f"source_{list_idx}_score"
         )
+        # Determine weight for this list (default 1.0 = standard RRF).
+        weight = weights[list_idx] if weights and list_idx < len(weights) else 1.0
+
         for rank, result in enumerate(results, start=1):
             cid = result["chunk_id"]
-            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (_RRF_K + rank)
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + weight * 1.0 / (_RRF_K + rank)
             if cid not in result_map:
                 result_map[cid] = result
                 # Initialise all score keys to 0.0
@@ -751,6 +803,7 @@ def hybrid_search(
     min_score: float = 0.0,
     filters: dict[str, Any] | None = None,
     enable_trigram: bool = True,
+    rrf_weights: list[float] | None = None,
 ) -> list[dict[str, Any]]:
     """Hybrid search combining vector, keyword, and optionally trigram search
     via multi-list RRF fusion.
@@ -762,6 +815,14 @@ def hybrid_search(
     Each retrieval method fetches ``max(top_k * 3, 60)`` candidates (RRF depth)
     to ensure sufficient overlap for meaningful fusion.
 
+    **Alpha-weighted RRF:** When *rrf_weights* is provided, each retrieval
+    method's contribution to the fused score is multiplied by its weight.
+    This allows prioritising more reliable methods (e.g., vector search with
+    HyDE) over less reliable ones (e.g., FTS keyword search for Persian text).
+    Default weights (when ``None``) are ``[3.0, 1.0, 1.0]`` for
+    vector/keyword/trigram respectively, giving vector search 3× the influence
+    of keyword or trigram search.
+
     Args:
         document_id: UUID of the document to search within.
         query_vector: 768-dim embedding vector for the query.
@@ -771,6 +832,9 @@ def hybrid_search(
         filters: Optional metadata filter conditions.
         enable_trigram: Whether to include trigram search as a third retrieval
             method (default ``True``).
+        rrf_weights: Optional alpha weights for RRF fusion, one per retrieval
+            method.  Order: ``[vector_weight, keyword_weight, trigram_weight]``.
+            Defaults to ``[3.0, 1.0, 1.0]`` when ``None``.
 
     Returns:
         A list of up to *top_k* result dicts, fused and re-ranked by RRF score
@@ -890,8 +954,26 @@ def hybrid_search(
         result_lists.append(trigram_results)
         score_keys.append("trigram_score")
 
-    # Fuse using multi-list RRF.
-    fused = _rrf_fusion_multi(result_lists, top_k, score_keys=score_keys)
+    # Determine RRF weights.
+    # Default: vector search gets 3x weight because it's the most reliable
+    # method (especially with HyDE). Keyword and trigram get 1x each.
+    if rrf_weights is None:
+        if enable_trigram:
+            rrf_weights = [3.0, 1.0, 1.0]
+        else:
+            rrf_weights = [3.0, 1.0]
+
+    # ---- DIAGNOSTIC: log RRF weights ----
+    logger.info(
+        "HYBRID_SEARCH_DIAG: RRF weights=%s for document %s",
+        rrf_weights,
+        document_id,
+    )
+
+    # Fuse using multi-list RRF with alpha weights.
+    fused = _rrf_fusion_multi(
+        result_lists, top_k, score_keys=score_keys, weights=rrf_weights,
+    )
 
     # Ensure trigram_score key exists even if trigram search was disabled.
     if not enable_trigram:
@@ -921,12 +1003,13 @@ def hybrid_search(
 
     logger.info(
         "hybrid_search: document=%s top_k=%d min_score=%.2f filters=%s "
-        "enable_trigram=%s → vector=%d keyword=%d trigram=%d fused=%d",
+        "enable_trigram=%s rrf_weights=%s → vector=%d keyword=%d trigram=%d fused=%d",
         document_id,
         top_k,
         min_score,
         filters,
         enable_trigram,
+        rrf_weights,
         len(vector_results),
         len(keyword_results),
         len(trigram_results),
