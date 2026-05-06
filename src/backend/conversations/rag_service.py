@@ -231,6 +231,11 @@ def run_rag_query(
     # Step 1: Formulate query via LLM (optimizes for FTS and vector search)
     logger.info("run_rag_query: Formulating query for document %s", document_id)
     formulation = formulate_query(question)
+    logger.info(
+        "run_rag_query: Formulation result — fts_query=%.300s vector_query=%.300s",
+        formulation.fts_query,
+        formulation.vector_query,
+    )
 
     # Step 2: Embed the optimized vector query
     logger.info("run_rag_query: Embedding question for document %s", document_id)
@@ -256,6 +261,22 @@ def run_rag_query(
         )
     except Exception as e:
         raise RAGServiceException(f"Failed to search chunks: {e}") from e
+
+    # Log chunk previews for debugging
+    logger.info(
+        "run_rag_query: Retrieved %d chunks for document %s",
+        len(chunks),
+        document_id,
+    )
+    for i, chunk in enumerate(chunks[:5]):  # Log first 5 chunks
+        content_preview = chunk.get("content", "")[:200]
+        score = chunk.get("rrf_score", chunk.get("relevance_score", "N/A"))
+        logger.info(
+            "run_rag_query: Chunk[%d] score=%s content=%.200s",
+            i,
+            score,
+            content_preview,
+        )
 
     # Step 3: Build context from chunks
     context = build_context(chunks)

@@ -21,10 +21,26 @@ class OpenAIChatProvider(BaseChatProvider):
 
     def __init__(self) -> None:
         import openai
+        from httpx import Client, Timeout
+
+        # Configure HTTP client with timeouts to prevent hanging on
+        # DNS resolution failures or unresponsive APIs. The default
+        # OpenAI client has no connect timeout, which can cause
+        # worker processes to hang indefinitely (e.g., when Docker
+        # DNS cannot resolve the API hostname).
+        http_client = Client(
+            timeout=Timeout(
+                connect=10.0,   # Max seconds to wait for connection
+                read=30.0,      # Max seconds to wait for response
+                write=30.0,     # Max seconds to send request
+                pool=10.0,      # Max seconds to wait for connection pool
+            ),
+        )
 
         self.client = openai.OpenAI(
             api_key=settings.CHAT_API_KEY,
             base_url=settings.CHAT_BASE_URL,
+            http_client=http_client,
         )
         self.model: str = settings.OPENAI_CHAT_MODEL
         self.max_tokens: int = settings.CHAT_MAX_TOKENS

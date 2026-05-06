@@ -345,7 +345,7 @@ class ConversationMessageView(APIView):
                 question=question,
                 document_id=str(conversation.document_id),
                 conversation_history=conversation_history,
-                top_k=5,
+                top_k=15,
             )
         except RAGServiceException as e:
             error_msg = str(e).lower()
@@ -455,7 +455,7 @@ class ConversationMessageStreamView(APIView):
                     question=question,
                     document_id=str(conversation.document_id),
                     conversation_history=conversation_history,
-                    top_k=5,
+                    top_k=15,
                 ):
                     if event_type == "token":
                         yield f"data: {json.dumps({'type': 'token', 'content': data['content']})}\n\n"

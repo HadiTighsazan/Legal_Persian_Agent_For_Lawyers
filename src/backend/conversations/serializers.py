@@ -199,6 +199,20 @@ class AskQuestionSerializer(serializers.Serializer):
         help_text="The question text to ask (1–10,000 characters).",
     )
 
+    def validate_content(self, value: str) -> str:
+        """Normalize Arabic character variants to Persian equivalents.
+
+        Converts Arabic Yeh (U+064A) → Persian Yeh (U+06CC) and
+        Arabic Kaf (U+0643) → Persian Kaf (U+06A9) at the input
+        validation layer, providing defense-in-depth against LLM
+        failures caused by mixed Unicode codepoints.
+        """
+        _ARABIC_TO_PERSIAN = str.maketrans({
+            '\u064A': '\u06CC',  # Arabic Yeh → Persian Yeh
+            '\u0643': '\u06A9',  # Arabic Kaf → Persian Kaf
+        })
+        return value.translate(_ARABIC_TO_PERSIAN)
+
 
 class DirectQuerySerializer(serializers.Serializer):
     """Validate input for querying a document directly (POST /documents/{document_id}/query)."""
@@ -210,8 +224,8 @@ class DirectQuerySerializer(serializers.Serializer):
     )
     top_k = serializers.IntegerField(
         required=False,
-        default=5,
+        default=15,
         min_value=1,
         max_value=20,
-        help_text="Number of top chunks to retrieve (1–20, default 5).",
+        help_text="Number of top chunks to retrieve (1–20, default 15).",
     )

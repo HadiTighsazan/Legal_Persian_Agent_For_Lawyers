@@ -35,6 +35,7 @@ from typing import Any
 
 from django.conf import settings
 
+from documents.services.persian_normalizer import PersianNormalizer
 from providers.registry import get_chat_provider
 
 logger = logging.getLogger(__name__)
@@ -149,6 +150,15 @@ def formulate_query(user_query: str) -> QueryFormulationResult:
     Returns:
         A :class:`QueryFormulationResult` with optimized search strings.
     """
+    # Normalize Arabic character variants to Persian equivalents
+    # This prevents LLM failures caused by mixed Unicode codepoints
+    # (e.g., Arabic Yeh U+064A → Persian Yeh U+06CC)
+    _ARABIC_TO_PERSIAN = str.maketrans({
+        '\u064A': '\u06CC',  # Arabic Yeh → Persian Yeh
+        '\u0643': '\u06A9',  # Arabic Kaf → Persian Kaf
+    })
+    user_query = user_query.translate(_ARABIC_TO_PERSIAN)
+
     # Short-circuit: skip formulation if disabled or query is too short
     if not settings.QUERY_FORMULATION_ENABLED:
         logger.debug("formulate_query: disabled, returning raw query")
@@ -189,6 +199,12 @@ def formulate_query(user_query: str) -> QueryFormulationResult:
                 "formulate_query: vector_query empty after parsing, falling back to raw query"
             )
             formulation.vector_query = user_query
+
+        logger.info(
+            "formulate_query: SUCCESS — fts_query=%.300s vector_query=%.300s",
+            formulation.fts_query,
+            formulation.vector_query,
+        )
 
         return formulation
 
