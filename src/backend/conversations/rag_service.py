@@ -10,6 +10,10 @@ by default.  For ``reference_law`` documents, a ``legal_status: "valid"``
 filter is applied to exclude obsolete or repealed laws.  For regular
 ``user_upload`` documents, no filter is applied, ensuring all chunks are
 retrievable.
+
+The pipeline now includes an **LLM Query Formulation** step (Epic E11) that
+transforms the raw user query into optimized search strings for both FTS
+and vector search before embedding and searching.
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ from documents.models import Document
 from documents.services.embedding_service import embed_query
 from documents.services.search_service import hybrid_search
 from providers.registry import get_chat_provider
+
+from conversations.query_formulation import formulate_query
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +197,7 @@ def run_rag_query(
     question: str,
     document_id: str,
     conversation_history: list[dict[str, str]] | None = None,
-    top_k: int = 5,
+    top_k: int = 15,
 ) -> dict[str, Any]:
     """Execute the full RAG pipeline.
 
@@ -222,14 +228,18 @@ def run_rag_query(
     Raises:
         RAGServiceException: If the OpenAI API call fails.
     """
-    # Step 1: Embed the question
+    # Step 1: Formulate query via LLM (optimizes for FTS and vector search)
+    logger.info("run_rag_query: Formulating query for document %s", document_id)
+    formulation = formulate_query(question)
+
+    # Step 2: Embed the optimized vector query
     logger.info("run_rag_query: Embedding question for document %s", document_id)
     try:
-        query_embedding = embed_query(question)
+        query_embedding = embed_query(formulation.vector_query)
     except Exception as e:
         raise RAGServiceException(f"Failed to embed question: {e}") from e
 
-    # Step 2: Hybrid search with document-type-aware filters
+    # Step 3: Hybrid search with document-type-aware filters
     logger.info(
         "run_rag_query: Hybrid searching chunks for document %s (top_k=%d)",
         document_id,
@@ -240,7 +250,7 @@ def run_rag_query(
         chunks = hybrid_search(
             document_id=document_id,
             query_vector=query_embedding,
-            query_text=question,
+            query_text=formulation.fts_query,
             top_k=top_k,
             filters=filters,
         )
@@ -305,7 +315,7 @@ def run_rag_query_stream(
     question: str,
     document_id: str,
     conversation_history: list[dict[str, str]] | None = None,
-    top_k: int = 5,
+    top_k: int = 15,
 ) -> Any:
     """Execute the RAG pipeline with streaming response.
 
@@ -320,14 +330,18 @@ def run_rag_query_stream(
     Raises:
         RAGServiceException: If any step of the pipeline fails.
     """
-    # Step 1: Embed the question
+    # Step 1: Formulate query via LLM (optimizes for FTS and vector search)
+    logger.info("run_rag_query_stream: Formulating query for document %s", document_id)
+    formulation = formulate_query(question)
+
+    # Step 2: Embed the optimized vector query
     logger.info("run_rag_query_stream: Embedding question for document %s", document_id)
     try:
-        query_embedding = embed_query(question)
+        query_embedding = embed_query(formulation.vector_query)
     except Exception as e:
         raise RAGServiceException(f"Failed to embed question: {e}") from e
 
-    # Step 2: Hybrid search with document-type-aware filters
+    # Step 3: Hybrid search with document-type-aware filters
     logger.info(
         "run_rag_query_stream: Hybrid searching chunks for document %s (top_k=%d)",
         document_id,
@@ -338,7 +352,7 @@ def run_rag_query_stream(
         chunks = hybrid_search(
             document_id=document_id,
             query_vector=query_embedding,
-            query_text=question,
+            query_text=formulation.fts_query,
             top_k=top_k,
             filters=filters,
         )

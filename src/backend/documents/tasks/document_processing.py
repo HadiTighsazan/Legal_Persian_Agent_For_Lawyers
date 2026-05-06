@@ -498,13 +498,20 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         # Build DocumentChunk instances with legal metadata.
         # Denormalized fields (law_name, legal_status, approval_date, legal_type)
         # are populated from chunk.metadata for efficient SQL-level filtering.
+        #
+        # IMPORTANT: Normalize chunk content for FTS before saving. The DB trigger
+        # ``trg_chunk_search_vector`` builds the ``search_vector`` using
+        # ``to_tsvector('simple', ...)``, which does NOT convert Persian digits
+        # (۰۱۲۳۴۵۶۷۸۹) to English digits (0123456789). By normalizing here, we
+        # ensure the stored content (and thus the ``search_vector``) uses English
+        # digits, so FTS queries with English digits match correctly.
         chunks_to_create = [
             DocumentChunk(
                 document=document,
                 chunk_index=i,
                 page_start=chunk.page_start,
                 page_end=chunk.page_end,
-                content=chunk.content,
+                content=PersianNormalizer.normalize_for_fts(chunk.content),
                 token_count=chunk.token_count,
                 metadata=chunk.metadata,
                 law_name=chunk.metadata.get("law_name"),

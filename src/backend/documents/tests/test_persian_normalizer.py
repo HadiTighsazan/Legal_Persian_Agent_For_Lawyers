@@ -261,6 +261,49 @@ class TestNormalizeForFts:
         assert "\u200c" not in result
         assert "قانون مدنی" in result or "قانون مدنی" in result
 
+    # ------------------------------------------------------------------
+    # Arabic → Persian character normalization
+    # ------------------------------------------------------------------
+
+    def test_arabic_yeh_to_persian_yeh(self) -> None:
+        """Arabic Yeh (U+064A) → Persian Yeh (U+06CC)."""
+        # "ايران" with Arabic Yeh (U+064A) → "ایران" with Persian Yeh (U+06CC)
+        result = PersianNormalizer.normalize_for_fts("ايران")
+        assert "ی" in result  # Persian Yeh
+        assert "\u064A" not in result  # Arabic Yeh removed
+
+    def test_arabic_kaf_to_persian_kaf(self) -> None:
+        """Arabic Kaf (U+0643) → Persian Kaf (U+06A9)."""
+        # "كتاب" with Arabic Kaf → "کتاب" with Persian Kaf
+        result = PersianNormalizer.normalize_for_fts("كتاب")
+        assert "ک" in result  # Persian Kaf
+        assert "\u0643" not in result  # Arabic Kaf removed
+
+    def test_arabic_yeh_and_kaf_both_normalized(self) -> None:
+        """Both Arabic Yeh and Kaf are normalized in the same string."""
+        # "يقول الكتاب" → "یقول الکتاب"
+        result = PersianNormalizer.normalize_for_fts("يقول الكتاب")
+        assert "ی" in result  # Persian Yeh
+        assert "ک" in result  # Persian Kaf
+        assert "\u064A" not in result  # No Arabic Yeh
+        assert "\u0643" not in result  # No Arabic Kaf
+
+    def test_persian_chars_unchanged(self) -> None:
+        """Already-correct Persian chars are left as-is."""
+        text = "جایز کتاب"
+        result = PersianNormalizer.normalize_for_fts(text)
+        assert result == "جایز کتاب"
+
+    def test_arabic_chars_in_mixed_text(self) -> None:
+        """Arabic chars normalized in text with digits and English."""
+        text = "يقول الكتاب في مادة ٢٢"  # Arabic Yeh/Kaf + Arabic digits
+        result = PersianNormalizer.normalize_for_fts(text)
+        assert "ی" in result  # Persian Yeh
+        assert "ک" in result  # Persian Kaf
+        assert "22" in result  # English digits
+        assert "\u064A" not in result  # No Arabic Yeh
+        assert "\u0643" not in result  # No Arabic Kaf
+
 
 # ---------------------------------------------------------------------------
 # Documented limitation: Hazm does NOT fix RTL reversal

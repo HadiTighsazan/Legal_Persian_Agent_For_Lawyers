@@ -85,6 +85,7 @@
 
 **Triggers:**
 - **`trg_chunk_search_vector`** — BEFORE INSERT OR UPDATE OF `content`, calls `update_chunk_search_vector()` function to auto-populate `search_vector` using `to_tsvector('simple', COALESCE(NEW.content, ''))`. Added in Epic 6 (migration 0006).
+  - **IMPORTANT:** The `simple` configuration does NOT convert Persian digits (۰۱۲۳۴۵۶۷۸۹) to English digits (0123456789). Content must be normalized at the application layer via `PersianNormalizer.normalize_for_fts()` before saving. This normalization was added in migration 0009 (see below).
 
 ---
 
@@ -222,6 +223,7 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 - All timestamps in UTC
 - Use CASCADE delete for related records
 - **Epic 6 (migration 0006):** Added `search_vector` (TSVECTOR with GIN index), denormalized metadata columns (`law_name`, `legal_status`, `approval_date`, `legal_type`), and a DB trigger `trg_chunk_search_vector` that auto-populates `search_vector` from `content` using `to_tsvector('simple', ...)` on INSERT/UPDATE.
+- **Migration 0009 (RAG Retrieval Fix Sprint):** Normalizes Persian digits in existing `DocumentChunk.content` to English digits via `PersianNormalizer.normalize_for_fts()`. This ensures the `search_vector` built by the trigger contains English-digit tokens (e.g., `'195'` instead of `'۱۹۵'`), so FTS queries with English digits match correctly. After this migration, new chunks are also normalized at creation time in `chunk_document()`.
 - JSONB for flexible metadata storage
 
 ### Migration 0007 — Add `document_type` to `documents` Table

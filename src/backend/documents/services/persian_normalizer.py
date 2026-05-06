@@ -68,6 +68,17 @@ _PERSIAN_DIGITS: dict[int, int] = {
     0x06F9: ord("9"),
 }
 
+# Arabic → Persian character translation table for FTS normalization.
+# PDFs often encode Persian text using Arabic glyph variants, which causes
+# search failures (e.g., Ctrl+F can't find "جایز" if the PDF uses Arabic Yeh).
+# These mappings ensure consistent Persian character representation.
+# Arabic Yeh (U+064A) → Persian Yeh (U+06CC)
+# Arabic Kaf (U+0643) → Persian Kaf (U+06A9)
+_ARABIC_TO_PERSIAN: dict[int, int] = {
+    0x064A: 0x06CC,  # Arabic Yeh (ي) → Persian Yeh (ی)
+    0x0643: 0x06A9,  # Arabic Kaf (ك) → Persian Kaf (ک)
+}
+
 # Common Persian words that should contain a ZWNJ (half-space)
 # These are words where hazm might miss the half-space fix
 _PERSIAN_HALF_SPACE_WORDS: list[tuple[str, str]] = [
@@ -286,21 +297,29 @@ class PersianNormalizer:
         - ``"می‌شود"`` (with ZWNJ half-space) may tokenize as one token
           ``"می‌شود"`` instead of two tokens ``"می"`` and ``"شود"``.
 
-        This method applies two transformations:
+        This method applies four transformations:
 
-        1. **Digit normalization**: Converts Arabic-Indic digits (U+0660–U+0669)
+        1. **Arabic → Persian character normalization**: Converts Arabic glyph
+           variants commonly found in PDFs to their Persian equivalents:
+           - Arabic Yeh (``ي`` U+064A) → Persian Yeh (``ی`` U+06CC)
+           - Arabic Kaf (``ك`` U+0643) → Persian Kaf (``ک`` U+06A9)
+           This ensures that text like ``"جائز"`` (with Arabic Yeh) is stored
+           as ``"جایز"`` (with Persian Yeh), making it searchable via Ctrl+F
+           and FTS.
+
+        2. **Digit normalization**: Converts Arabic-Indic digits (U+0660–U+0669)
            and Persian/Extended Arabic-Indic digits (U+06F0–U+06F9) to their
            English equivalents (0–9). This ensures that a search for ``"ماده 22"``
            matches chunks containing ``"ماده ۲۲"``.
 
-        2. **ZWNJ → space**: Replaces zero-width non-joiners (U+200C) with
+        3. **ZWNJ → space**: Replaces zero-width non-joiners (U+200C) with
            regular ASCII spaces. This ensures that compound Persian words like
            ``"می‌شود"`` are tokenized as two separate tokens (``"می"`` and
            ``"شود"``) by PostgreSQL's FTS parser.
 
         .. caution::
 
-           This method is **only** for FTS indexing/querying. Do **not** use it
+           This method is **only** for indexing/querying. Do **not** use it
            for display or general text normalization — it destroys the original
            Persian digit representation and half-space formatting.
 
@@ -309,16 +328,20 @@ class PersianNormalizer:
                 search query).
 
         Returns:
-            Text with Persian/Arabic digits converted to English digits and
-            ZWNJ characters replaced with spaces.
+            Text with Arabic chars converted to Persian, Persian/Arabic digits
+            converted to English digits, and ZWNJ characters replaced with spaces.
         """
         if not text:
             return ""
 
-        # Step 1: Convert Persian/Arabic digits to English digits
+        # Step 1: Convert Arabic glyph variants to Persian equivalents
+        # (Yeh U+064A → ی U+06CC, Kaf U+0643 → ک U+06A9)
+        text = text.translate(_ARABIC_TO_PERSIAN)
+
+        # Step 2: Convert Persian/Arabic digits to English digits
         text = text.translate(_PERSIAN_DIGITS)
 
-        # Step 2: Replace ZWNJ with space for proper FTS tokenization
+        # Step 3: Replace ZWNJ with space for proper FTS tokenization
         text = text.replace(_ZWNJ_CHAR, " ")
 
         return text

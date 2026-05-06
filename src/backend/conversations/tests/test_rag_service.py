@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.test import override_settings
 
+from conversations.query_formulation import QueryFormulationResult
 from conversations.rag_service import (
     RAGServiceException,
     build_context,
@@ -209,6 +210,7 @@ class ExtractCitationsTests:
 class RunRagQueryTests:
     """Tests for :func:`~conversations.rag_service.run_rag_query`."""
 
+    @patch("conversations.rag_service.formulate_query")
     @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
@@ -217,9 +219,14 @@ class RunRagQueryTests:
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_hybrid_search: MagicMock,
+        mock_formulate_query: MagicMock,
     ) -> None:
         """Full pipeline returns correct result dict structure."""
         # Arrange
+        mock_formulate_query.return_value = QueryFormulationResult(
+            fts_query="optimized fts",
+            vector_query="optimized vector",
+        )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.return_value = [
             {
@@ -265,7 +272,10 @@ class RunRagQueryTests:
         assert result["content"] == (
             "Based on the context, [Source 1] provides relevant information."
         )
+        # Verify formulation was called with the raw question
+        mock_formulate_query.assert_called_once_with("What is the document about?")
 
+    @patch("conversations.rag_service.formulate_query")
     @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
@@ -274,9 +284,14 @@ class RunRagQueryTests:
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_hybrid_search: MagicMock,
+        mock_formulate_query: MagicMock,
     ) -> None:
         """Chat provider returns content with [Source 1], verify sources list is populated."""
         # Arrange
+        mock_formulate_query.return_value = QueryFormulationResult(
+            fts_query="optimized fts",
+            vector_query="optimized vector",
+        )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.return_value = [
             {
@@ -323,6 +338,7 @@ class RunRagQueryTests:
         assert result["sources"][0]["chunk_id"] == "chunk-a"
         assert result["sources"][1]["chunk_id"] == "chunk-b"
 
+    @patch("conversations.rag_service.formulate_query")
     @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
@@ -331,9 +347,14 @@ class RunRagQueryTests:
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_hybrid_search: MagicMock,
+        mock_formulate_query: MagicMock,
     ) -> None:
         """Provide 20 history turns, verify only last RAG_MAX_HISTORY_TURNS (10) are included."""
         # Arrange
+        mock_formulate_query.return_value = QueryFormulationResult(
+            fts_query="optimized fts",
+            vector_query="optimized vector",
+        )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.return_value = []
 
@@ -376,6 +397,7 @@ class RunRagQueryTests:
         assert messages[-2]["role"] == "assistant"
         assert messages[-2]["content"] == "Answer 19"
 
+    @patch("conversations.rag_service.formulate_query")
     @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
@@ -384,9 +406,14 @@ class RunRagQueryTests:
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_hybrid_search: MagicMock,
+        mock_formulate_query: MagicMock,
     ) -> None:
         """Mock chat provider to raise an exception, verify RAGServiceException is raised."""
         # Arrange
+        mock_formulate_query.return_value = QueryFormulationResult(
+            fts_query="optimized fts",
+            vector_query="optimized vector",
+        )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.return_value = []
         mock_provider = MagicMock()
@@ -400,6 +427,7 @@ class RunRagQueryTests:
                 document_id="doc-err",
             )
 
+    @patch("conversations.rag_service.formulate_query")
     @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
@@ -408,9 +436,14 @@ class RunRagQueryTests:
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_hybrid_search: MagicMock,
+        mock_formulate_query: MagicMock,
     ) -> None:
         """Mock embed_query to raise, verify RAGServiceException."""
         # Arrange
+        mock_formulate_query.return_value = QueryFormulationResult(
+            fts_query="optimized fts",
+            vector_query="optimized vector",
+        )
         mock_embed_query.side_effect = Exception("Embedding failed")
 
         # Act / Assert
@@ -423,6 +456,7 @@ class RunRagQueryTests:
         # Ensure chat provider was never called
         mock_get_chat_provider.return_value.chat.assert_not_called()
 
+    @patch("conversations.rag_service.formulate_query")
     @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
@@ -431,9 +465,14 @@ class RunRagQueryTests:
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_hybrid_search: MagicMock,
+        mock_formulate_query: MagicMock,
     ) -> None:
         """Mock search_chunks to raise, verify RAGServiceException."""
         # Arrange
+        mock_formulate_query.return_value = QueryFormulationResult(
+            fts_query="optimized fts",
+            vector_query="optimized vector",
+        )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.side_effect = Exception("Search failed")
 
@@ -447,6 +486,7 @@ class RunRagQueryTests:
         # Ensure chat provider was never called
         mock_get_chat_provider.return_value.chat.assert_not_called()
 
+    @patch("conversations.rag_service.formulate_query")
     @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
@@ -455,9 +495,14 @@ class RunRagQueryTests:
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_hybrid_search: MagicMock,
+        mock_formulate_query: MagicMock,
     ) -> None:
         """No chunks found, still calls chat provider with empty context."""
         # Arrange
+        mock_formulate_query.return_value = QueryFormulationResult(
+            fts_query="optimized fts",
+            vector_query="optimized vector",
+        )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.return_value = []
 
@@ -483,6 +528,7 @@ class RunRagQueryTests:
         assert result["sources"] == []
         assert len(result["raw_chunks"]) == 0
 
+    @patch("conversations.rag_service.formulate_query")
     @patch("conversations.rag_service.hybrid_search")
     @patch("conversations.rag_service.embed_query")
     @patch("conversations.rag_service.get_chat_provider")
@@ -491,9 +537,14 @@ class RunRagQueryTests:
         mock_get_chat_provider: MagicMock,
         mock_embed_query: MagicMock,
         mock_hybrid_search: MagicMock,
+        mock_formulate_query: MagicMock,
     ) -> None:
-        """Passing top_k=3 is forwarded to hybrid_search."""
+        """Passing top_k=3 is forwarded to hybrid_search with optimized FTS query."""
         # Arrange
+        mock_formulate_query.return_value = QueryFormulationResult(
+            fts_query="optimized fts query",
+            vector_query="optimized vector query",
+        )
         mock_embed_query.return_value = [0.1] * 768
         mock_hybrid_search.return_value = []
 
@@ -515,11 +566,60 @@ class RunRagQueryTests:
             top_k=3,
         )
 
-        # Assert
+        # Assert — verify formulation.fts_query is passed as query_text
         mock_hybrid_search.assert_called_once_with(
             document_id="doc-topk",
             query_vector=[0.1] * 768,
-            query_text="Test?",
+            query_text="optimized fts query",
             top_k=3,
             filters=None,
         )
+        # Verify embed_query receives formulation.vector_query
+        mock_embed_query.assert_called_once_with("optimized vector query")
+
+    @patch("conversations.rag_service.formulate_query")
+    @patch("conversations.rag_service.hybrid_search")
+    @patch("conversations.rag_service.embed_query")
+    @patch("conversations.rag_service.get_chat_provider")
+    def test_formulation_fallback_in_pipeline(
+        self,
+        mock_get_chat_provider: MagicMock,
+        mock_embed_query: MagicMock,
+        mock_hybrid_search: MagicMock,
+        mock_formulate_query: MagicMock,
+    ) -> None:
+        """formulate_query returns fallback result (raw query); verify pipeline uses it."""
+        # Arrange
+        # Simulate the actual fallback behavior: formulate_query catches errors
+        # internally and returns QueryFormulationResult with raw query text.
+        mock_formulate_query.return_value = QueryFormulationResult(
+            fts_query="Raw fallback question?",
+            vector_query="Raw fallback question?",
+        )
+        mock_hybrid_search.return_value = []
+
+        mock_provider = MagicMock()
+        mock_provider.chat.return_value = {
+            "content": "Fallback response.",
+            "token_usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+            },
+        }
+        mock_get_chat_provider.return_value = mock_provider
+
+        # Act
+        result = run_rag_query(
+            question="Raw fallback question?",
+            document_id="doc-fallback",
+        )
+
+        # Assert — pipeline still works with raw question as fallback
+        assert result["content"] == "Fallback response."
+        # embed_query should have been called with the raw question (fallback)
+        mock_embed_query.assert_called_once_with("Raw fallback question?")
+        # hybrid_search should have been called with the raw question (fallback)
+        mock_hybrid_search.assert_called_once()
+        call_kwargs = mock_hybrid_search.call_args.kwargs
+        assert call_kwargs["query_text"] == "Raw fallback question?"
