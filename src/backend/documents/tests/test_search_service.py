@@ -10,8 +10,14 @@ Tests
 - :func:`test_search_chunks_empty_result` — no chunks returns []
 - :func:`test_apply_metadata_filters` — metadata filter conditions
 - :func:`test_rrf_fusion` — Reciprocal Rank Fusion algorithm
+- :func:`test_rrf_fusion_multi` — Multi-list RRF fusion
 - :func:`test_keyword_search` — PostgreSQL FTS keyword search
-- :func:`test_hybrid_search` — Combined vector + keyword search
+- :func:`test_keyword_search_normalizes_query` — FTS query normalisation
+- :func:`test_keyword_search_stop_words` — Persian stop word removal
+- :func:`test_remove_stop_words` — Stop word helper function
+- :func:`test_trigram_search` — pg_trgm trigram similarity search
+- :func:`test_hybrid_search` — Combined vector + keyword + trigram search
+- :func:`test_hybrid_search_trigram_disabled` — Hybrid without trigram
 """
 
 from __future__ import annotations
@@ -24,10 +30,13 @@ from django.test import TestCase
 from documents.models import Document, DocumentChunk
 from documents.services.search_service import (
     _apply_metadata_filters,
+    _remove_stop_words,
     _rrf_fusion,
+    _rrf_fusion_multi,
     hybrid_search,
     keyword_search,
     search_chunks,
+    trigram_search,
 )
 from users.models import User
 
@@ -459,6 +468,50 @@ class RrfFusionTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Stop word removal tests
+# ---------------------------------------------------------------------------
+
+
+class RemoveStopWordsTest(TestCase):
+    """Test suite for :func:`_remove_stop_words`."""
+
+    def test_removes_persian_stop_words(self) -> None:
+        """Common Persian stop words are removed from the query."""
+        result = _remove_stop_words("مجازات در قانون")
+        self.assertEqual(result, "مجازات قانون")
+
+    def test_removes_multiple_stop_words(self) -> None:
+        """Multiple stop words in sequence are all removed."""
+        result = _remove_stop_words("این و آن در به برای")
+        self.assertEqual(result, "")
+
+    def test_keeps_non_stop_words(self) -> None:
+        """Non-stop words are preserved."""
+        result = _remove_stop_words("مجازات ماده قانون مدنی")
+        self.assertEqual(result, "مجازات ماده قانون مدنی")
+
+    def test_empty_query_returns_empty(self) -> None:
+        """Empty query returns unchanged."""
+        result = _remove_stop_words("")
+        self.assertEqual(result, "")
+
+    def test_whitespace_query_returns_whitespace(self) -> None:
+        """Whitespace-only query returns unchanged."""
+        result = _remove_stop_words("   ")
+        self.assertEqual(result, "   ")
+
+    def test_mixed_persian_english(self) -> None:
+        """Mixed Persian/English queries only remove Persian stop words."""
+        result = _remove_stop_words("the و in ماده")
+        self.assertEqual(result, "the in ماده")
+
+    def test_query_with_only_stop_words_returns_empty(self) -> None:
+        """Query consisting entirely of stop words returns empty string."""
+        result = _remove_stop_words("و در به از")
+        self.assertEqual(result, "")
+
+
+# ---------------------------------------------------------------------------
 # Keyword search tests
 # ---------------------------------------------------------------------------
 
@@ -488,7 +541,7 @@ class KeywordSearchTest(TestCase):
             chunk_index=0,
             page_start=1,
             page_end=1,
-            content="ماده ۲۲ قانون مدنی",
+            content="ماده 22 قانون مدنی",
             token_count=5,
             metadata={"law_name": "قانون مدنی"},
             law_name="قانون مدنی",
@@ -545,6 +598,356 @@ class KeywordSearchTest(TestCase):
         for r in results:
             self.assertEqual(r["metadata"]["law_name"], "قانون مدنی")
 
+    def test_keyword_search_normalizes_persian_digits(self) -> None:
+        """Persian digits in query are normalised to English digits."""
+        # chunk1 content is "ماده 22 قانون مدنی" (English digits).
+        # Query with Persian digits "ماده ۲۲" should still match.
+        results = keyword_search(
+            document_id=str(self.document.id),
+            query_text="ماده ۲۲",
+            top_k=10,
+        )
+        self.assertGreaterEqual(len(results), 1)
+        chunk_ids = [r["chunk_id"] for r in results]
+        self.assertIn(str(self.chunk1.id), chunk_ids)
+
+    def test_keyword_search_stop_words_dont_block_matches(self) -> None:
+        """Stop words in query don't prevent FTS from matching."""
+        # Query with stop words "در" and "و" — these should be stripped
+        # so that FTS only searches for "مجازات" and "اسلامی".
+        results = keyword_search(
+            document_id=str(self.document.id),
+            query_text="مجازات در و اسلامی",
+            top_k=10,
+        )
+        # Should match chunk2 which contains "مجازات" and "اسلامی"
+        self.assertGreaterEqual(len(results), 1)
+        chunk_ids = [r["chunk_id"] for r in results]
+        self.assertIn(str(self.chunk2.id), chunk_ids)
+
+    def test_keyword_search_all_stop_words_returns_empty(self) -> None:
+        """Query with only stop words returns empty results."""
+        results = keyword_search(
+            document_id=str(self.document.id),
+            query_text="و در به",
+            top_k=10,
+        )
+        self.assertEqual(results, [])
+
+    def test_keyword_search_trigram_fallback_on_no_results(self) -> None:
+        """When FTS returns zero results, trigram fallback kicks in."""
+        # Create a chunk with content that has a typo/OCR error
+        DocumentChunk.objects.create(
+            document=self.document,
+            chunk_index=2,
+            page_start=3,
+            page_end=3,
+            content="قانن مجازات اسلامی",  # "قانن" instead of "قانون"
+            token_count=5,
+            metadata={"law_name": "قانون مجازات اسلامی"},
+            law_name="قانون مجازات اسلامی",
+        )
+        # Search for "قانون" — FTS won't match "قانن" but trigram should
+        results = keyword_search(
+            document_id=str(self.document.id),
+            query_text="قانون",
+            top_k=10,
+            enable_trigram_fallback=True,
+        )
+        # Trigram fallback should find the chunk with "قانن"
+        self.assertGreaterEqual(len(results), 1)
+
+    def test_keyword_search_trigram_fallback_disabled(self) -> None:
+        """When trigram fallback is disabled, FTS zero results returns empty."""
+        # Create a chunk with content that won't match FTS
+        DocumentChunk.objects.create(
+            document=self.document,
+            chunk_index=3,
+            page_start=4,
+            page_end=4,
+            content="zzzzzzzzzzzzzzzzzzzz",
+            token_count=5,
+            metadata={},
+        )
+        results = keyword_search(
+            document_id=str(self.document.id),
+            query_text="قانون",
+            top_k=10,
+            enable_trigram_fallback=False,
+        )
+        # Without fallback, FTS won't match "zzzz..." for query "قانون"
+        # But chunk1 and chunk2 have "قانون" in content, so they should match
+        # Actually, let's test the case where FTS returns zero for a query
+        # that has no matches at all
+        results = keyword_search(
+            document_id=str(self.document.id),
+            query_text="nonexistenttermxyz",
+            top_k=10,
+            enable_trigram_fallback=False,
+        )
+        self.assertEqual(results, [])
+
+    def test_keyword_search_trigram_fallback_with_persian_digits(self) -> None:
+        """Trigram fallback works with Persian digits in the query.
+
+        This simulates a scenario where the query contains Persian digits
+        (e.g., "ماده ۲۲") that get normalized to English digits by
+        normalize_for_fts(), but FTS still fails to match (e.g., due to
+        stop words or tokenization issues), so trigram fallback kicks in.
+        """
+        # Create a chunk with content containing English digits
+        DocumentChunk.objects.create(
+            document=self.document,
+            chunk_index=4,
+            page_start=5,
+            page_end=5,
+            content="ماده 22 قانون",  # English digits in stored content
+            token_count=5,
+            metadata={},
+        )
+        # Search with Persian digits — normalize_for_fts converts to English
+        results = keyword_search(
+            document_id=str(self.document.id),
+            query_text="ماده ۲۲",  # Persian digits
+            top_k=10,
+            enable_trigram_fallback=True,
+        )
+        # Should find the chunk (either via FTS or trigram fallback)
+        self.assertGreaterEqual(len(results), 1)
+
+
+# ---------------------------------------------------------------------------
+# Trigram search tests
+# ---------------------------------------------------------------------------
+
+
+class TrigramSearchTest(TestCase):
+    """Test suite for :func:`trigram_search`."""
+
+    def setUp(self) -> None:
+        """Create a user and a document with chunks."""
+        self.user = User.objects.create_user(
+            email="trigram_test@example.com",
+            password="testpass123",
+        )
+        self.document = Document.objects.create(
+            user=self.user,
+            title="Trigram Test Doc",
+            filename="trigram_test.pdf",
+            original_filename="trigram_test.pdf",
+            file_path="/tmp/trigram_test.pdf",
+            file_size=1024,
+            mime_type="application/pdf",
+            status="completed",
+        )
+        # Create chunks with content that has trigram overlap
+        self.chunk1 = DocumentChunk.objects.create(
+            document=self.document,
+            chunk_index=0,
+            page_start=1,
+            page_end=1,
+            content="ماده ۲۲ قانون مدنی",
+            token_count=5,
+            metadata={"law_name": "قانون مدنی"},
+            law_name="قانون مدنی",
+        )
+        self.chunk2 = DocumentChunk.objects.create(
+            document=self.document,
+            chunk_index=1,
+            page_start=2,
+            page_end=2,
+            content="قانون مجازات اسلامی",
+            token_count=5,
+            metadata={"law_name": "قانون مجازات اسلامی"},
+            law_name="قانون مجازات اسلامی",
+        )
+        self.chunk3 = DocumentChunk.objects.create(
+            document=self.document,
+            chunk_index=2,
+            page_start=3,
+            page_end=3,
+            content="یک متن کاملاً متفاوت",
+            token_count=5,
+            metadata={"law_name": "متن دیگر"},
+            law_name="متن دیگر",
+        )
+
+    def test_empty_query_returns_empty(self) -> None:
+        """Empty query string returns empty results."""
+        results = trigram_search(
+            document_id=str(self.document.id),
+            query_text="",
+        )
+        self.assertEqual(results, [])
+
+    def test_trigram_search_returns_matches(self) -> None:
+        """Search for a term returns chunks with trigram overlap."""
+        results = trigram_search(
+            document_id=str(self.document.id),
+            query_text="قانون",
+            top_k=10,
+        )
+        # Both chunk1 and chunk2 contain "قانون"
+        self.assertGreaterEqual(len(results), 2)
+        chunk_ids = {r["chunk_id"] for r in results}
+        self.assertIn(str(self.chunk1.id), chunk_ids)
+        self.assertIn(str(self.chunk2.id), chunk_ids)
+
+    def test_trigram_search_handles_ocr_errors(self) -> None:
+        """Trigram search catches OCR-like errors (partial matches)."""
+        # "قانن" is a common OCR error for "قانون" — trigrams should still match
+        results = trigram_search(
+            document_id=str(self.document.id),
+            query_text="قانن",
+            top_k=10,
+            min_similarity=0.1,
+        )
+        # Should still find chunks containing "قانون" despite the typo
+        self.assertGreaterEqual(len(results), 1)
+
+    def test_trigram_search_with_filters(self) -> None:
+        """Trigram search combined with metadata filters."""
+        results = trigram_search(
+            document_id=str(self.document.id),
+            query_text="قانون",
+            top_k=10,
+            filters={"law_name": "قانون مدنی"},
+        )
+        self.assertGreaterEqual(len(results), 1)
+        for r in results:
+            self.assertEqual(r["metadata"]["law_name"], "قانون مدنی")
+
+    def test_trigram_search_min_similarity(self) -> None:
+        """Higher min_similarity filters out less relevant results."""
+        # Very high threshold should return fewer results
+        results_high = trigram_search(
+            document_id=str(self.document.id),
+            query_text="قانون",
+            top_k=10,
+            min_similarity=0.9,
+        )
+        results_low = trigram_search(
+            document_id=str(self.document.id),
+            query_text="قانون",
+            top_k=10,
+            min_similarity=0.1,
+        )
+        self.assertLessEqual(len(results_high), len(results_low))
+
+    def test_trigram_search_no_match(self) -> None:
+        """Search for completely unrelated text returns empty."""
+        results = trigram_search(
+            document_id=str(self.document.id),
+            query_text="zzzzzzzzzz",
+            top_k=10,
+        )
+        self.assertEqual(results, [])
+
+    def test_trigram_search_orders_by_similarity(self) -> None:
+        """Results are ordered by trigram similarity descending."""
+        results = trigram_search(
+            document_id=str(self.document.id),
+            query_text="قانون",
+            top_k=10,
+        )
+        if len(results) >= 2:
+            scores = [r["relevance_score"] for r in results]
+            for i in range(len(scores) - 1):
+                self.assertGreaterEqual(scores[i], scores[i + 1])
+
+
+# ---------------------------------------------------------------------------
+# Multi-list RRF Fusion tests
+# ---------------------------------------------------------------------------
+
+
+class RrfFusionMultiTest(TestCase):
+    """Test suite for :func:`_rrf_fusion_multi`."""
+
+    def _make_result(self, chunk_id: str, score: float) -> dict:
+        return {
+            "chunk_id": chunk_id,
+            "relevance_score": score,
+            "content": f"Content for {chunk_id}",
+        }
+
+    def test_fuses_three_lists(self) -> None:
+        """Three lists with overlapping items are fused correctly."""
+        list1 = [
+            self._make_result("A", 0.9),
+            self._make_result("B", 0.8),
+        ]
+        list2 = [
+            self._make_result("B", 0.85),
+            self._make_result("C", 0.7),
+        ]
+        list3 = [
+            self._make_result("C", 0.75),
+            self._make_result("D", 0.6),
+        ]
+
+        fused = _rrf_fusion_multi(
+            [list1, list2, list3],
+            top_k=4,
+            score_keys=["score_1", "score_2", "score_3"],
+        )
+
+        # All 4 unique items should be present
+        self.assertEqual(len(fused), 4)
+        chunk_ids = {r["chunk_id"] for r in fused}
+        self.assertEqual(chunk_ids, {"A", "B", "C", "D"})
+
+        # B appears in lists 1 and 2 → should have highest RRF score
+        self.assertEqual(fused[0]["chunk_id"], "B")
+
+    def test_score_keys_are_present(self) -> None:
+        """Fused results include all score keys."""
+        list1 = [self._make_result("A", 0.9)]
+        list2 = [self._make_result("A", 0.8)]
+        list3 = [self._make_result("A", 0.7)]
+
+        fused = _rrf_fusion_multi(
+            [list1, list2, list3],
+            top_k=5,
+            score_keys=["vector_score", "keyword_score", "trigram_score"],
+        )
+
+        self.assertIn("vector_score", fused[0])
+        self.assertIn("keyword_score", fused[0])
+        self.assertIn("trigram_score", fused[0])
+        self.assertEqual(fused[0]["vector_score"], 0.9)
+        self.assertEqual(fused[0]["keyword_score"], 0.8)
+        self.assertEqual(fused[0]["trigram_score"], 0.7)
+
+    def test_empty_lists_returns_empty(self) -> None:
+        """Empty list of lists returns empty."""
+        fused = _rrf_fusion_multi([], top_k=5)
+        self.assertEqual(fused, [])
+
+    def test_some_empty_lists(self) -> None:
+        """Some empty lists among non-empty ones."""
+        list1 = [self._make_result("A", 0.9)]
+        list2: list[dict] = []
+
+        fused = _rrf_fusion_multi(
+            [list1, list2],
+            top_k=5,
+            score_keys=["score_1", "score_2"],
+        )
+
+        self.assertEqual(len(fused), 1)
+        self.assertEqual(fused[0]["chunk_id"], "A")
+        self.assertEqual(fused[0]["score_1"], 0.9)
+        self.assertEqual(fused[0]["score_2"], 0.0)
+
+    def test_top_k_limits_results(self) -> None:
+        """top_k limits the number of fused results."""
+        list1 = [self._make_result("A", 0.9), self._make_result("B", 0.8)]
+        list2 = [self._make_result("C", 0.7), self._make_result("D", 0.6)]
+
+        fused = _rrf_fusion_multi([list1, list2], top_k=2)
+        self.assertEqual(len(fused), 2)
+
 
 # ---------------------------------------------------------------------------
 # Hybrid search tests
@@ -576,7 +979,7 @@ class HybridSearchTest(TestCase):
             chunk_index=0,
             page_start=1,
             page_end=1,
-            content="ماده ۲۲ قانون مدنی",
+            content="ماده 22 قانون مدنی",
             token_count=5,
             embedding=_query_vector(),
             metadata={"law_name": "قانون مدنی", "legal_status": "valid"},
@@ -597,7 +1000,7 @@ class HybridSearchTest(TestCase):
         )
 
     def test_hybrid_search_returns_results(self) -> None:
-        """Hybrid search returns fused results."""
+        """Hybrid search returns fused results with trigram enabled by default."""
         results = hybrid_search(
             document_id=str(self.document.id),
             query_vector=_query_vector(),
@@ -605,6 +1008,8 @@ class HybridSearchTest(TestCase):
             top_k=5,
         )
         self.assertGreaterEqual(len(results), 1)
+        # Should have trigram_score key
+        self.assertIn("trigram_score", results[0])
 
     def test_hybrid_search_with_filters(self) -> None:
         """Hybrid search with metadata filters."""
@@ -629,3 +1034,31 @@ class HybridSearchTest(TestCase):
         )
         # Should still get vector results even with empty keyword query
         self.assertGreaterEqual(len(results), 1)
+
+    def test_hybrid_search_trigram_disabled(self) -> None:
+        """Hybrid search with trigram disabled uses only vector + keyword."""
+        results = hybrid_search(
+            document_id=str(self.document.id),
+            query_vector=_query_vector(),
+            query_text="مدنی",
+            top_k=5,
+            enable_trigram=False,
+        )
+        self.assertGreaterEqual(len(results), 1)
+        # trigram_score should be 0.0 when disabled
+        self.assertEqual(results[0]["trigram_score"], 0.0)
+
+    def test_hybrid_search_includes_trigram_score(self) -> None:
+        """Hybrid search results include trigram_score key."""
+        results = hybrid_search(
+            document_id=str(self.document.id),
+            query_vector=_query_vector(),
+            query_text="قانون",
+            top_k=5,
+        )
+        self.assertGreaterEqual(len(results), 1)
+        for r in results:
+            self.assertIn("vector_score", r)
+            self.assertIn("keyword_score", r)
+            self.assertIn("trigram_score", r)
+            self.assertIn("rrf_score", r)

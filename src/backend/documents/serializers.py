@@ -209,7 +209,9 @@ class SearchRequestSerializer(serializers.Serializer):
         min_score (float): Optional minimum relevance threshold
             (default 0.0, range 0.0–1.0).
         search_mode (str): Optional search mode — ``"hybrid"`` (default),
-            ``"vector"``, or ``"keyword"``.
+            ``"vector"``, ``"keyword"``, or ``"trigram"``.
+        enable_trigram (bool): Optional flag to include trigram search in
+            hybrid mode (default ``True``).
         filters (dict): Optional metadata filter conditions.
     """
 
@@ -235,11 +237,22 @@ class SearchRequestSerializer(serializers.Serializer):
     search_mode = serializers.ChoiceField(
         required=False,
         default="hybrid",
-        choices=["hybrid", "vector", "keyword"],
+        choices=["hybrid", "vector", "keyword", "trigram"],
         help_text=(
-            "Search mode: 'hybrid' (vector + keyword with RRF fusion, default), "
+            "Search mode: 'hybrid' (vector + keyword + trigram with RRF fusion, "
+            "default), "
             "'vector' (cosine similarity only), "
-            "'keyword' (PostgreSQL full-text search only)."
+            "'keyword' (PostgreSQL full-text search only), "
+            "'trigram' (PostgreSQL pg_trgm trigram similarity search)."
+        ),
+    )
+    enable_trigram = serializers.BooleanField(
+        required=False,
+        default=True,
+        help_text=(
+            "When True (default) and search_mode='hybrid', includes trigram "
+            "similarity search as a third retrieval method alongside vector "
+            "and keyword search.  Set to False to use only vector + keyword."
         ),
     )
     filters = serializers.JSONField(
@@ -259,8 +272,9 @@ class SearchResultSerializer(serializers.Serializer):
 
     Mirrors the dict returned by
     :func:`~documents.services.search_service.search_chunks`,
-    :func:`~documents.services.search_service.hybrid_search`, or
-    :func:`~documents.services.search_service.keyword_search`.
+    :func:`~documents.services.search_service.hybrid_search`,
+    :func:`~documents.services.search_service.keyword_search`, or
+    :func:`~documents.services.search_service.trigram_search`.
     """
 
     chunk_id = serializers.UUIDField(
@@ -282,6 +296,7 @@ class SearchResultSerializer(serializers.Serializer):
         help_text=(
             "Relevance score. For 'vector' mode: cosine similarity (0.0–1.0). "
             "For 'keyword' mode: FTS rank. "
+            "For 'trigram' mode: trigram similarity (0.0–1.0). "
             "For 'hybrid' mode: RRF fused score."
         ),
     )
@@ -311,6 +326,14 @@ class SearchResultSerializer(serializers.Serializer):
         required=False,
         help_text=(
             "Original keyword FTS rank score. "
+            "Only present in 'hybrid' mode results."
+        ),
+    )
+    trigram_score = serializers.FloatField(
+        allow_null=True,
+        required=False,
+        help_text=(
+            "Original trigram similarity score. "
             "Only present in 'hybrid' mode results."
         ),
     )
@@ -347,7 +370,16 @@ class SearchResponseSerializer(serializers.Serializer):
     search_mode = serializers.CharField(
         required=False,
         default="hybrid",
-        help_text="Search mode used ('hybrid', 'vector', or 'keyword').",
+        help_text=(
+            "Search mode used ('hybrid', 'vector', 'keyword', or 'trigram')."
+        ),
+    )
+    enable_trigram = serializers.BooleanField(
+        required=False,
+        default=True,
+        help_text=(
+            "Whether trigram search was included in hybrid mode."
+        ),
     )
     filters = serializers.JSONField(
         allow_null=True,

@@ -48,6 +48,7 @@ from documents.services.search_service import (
     hybrid_search,
     keyword_search,
     search_chunks,
+    trigram_search,
 )
 from documents.services.processing_service import (
     build_task_data,
@@ -798,12 +799,18 @@ class DocumentSearchView(APIView):
 
     **Request body:**
         ``{"query": "...", "top_k": 10, "min_score": 0.0,
-        "search_mode": "hybrid", "filters": null}``
+        "search_mode": "hybrid", "enable_trigram": true, "filters": null}``
 
     **Search modes:**
         - ``"vector"`` — Cosine similarity only (original behavior).
         - ``"keyword"`` — PostgreSQL Full-Text Search only.
-        - ``"hybrid"`` (default) — Vector + keyword with RRF fusion.
+        - ``"trigram"`` — PostgreSQL pg_trgm trigram similarity search.
+        - ``"hybrid"`` (default) — Vector + keyword + trigram with RRF fusion.
+
+    **Hybrid mode options:**
+        - ``enable_trigram`` (bool, default ``True``) — When ``True``, trigram
+          search is included as a third retrieval method alongside vector and
+          keyword search.  Set to ``False`` to use only vector + keyword.
 
     **Metadata filters (optional):**
         Supported fields: ``law_name``, ``legal_status``, ``approval_date``,
@@ -861,12 +868,21 @@ class DocumentSearchView(APIView):
         top_k: int = serializer.validated_data["top_k"]
         min_score: float = serializer.validated_data["min_score"]
         search_mode: str = serializer.validated_data.get("search_mode", "hybrid")
+        enable_trigram: bool = serializer.validated_data.get("enable_trigram", True)
         filters: dict | None = serializer.validated_data.get("filters")
 
         # 5. Route to the appropriate search function based on search_mode.
         if search_mode == "keyword":
             # Keyword-only mode: no embedding needed.
             results = keyword_search(
+                document_id=str(document.id),
+                query_text=query,
+                top_k=top_k,
+                filters=filters,
+            )
+        elif search_mode == "trigram":
+            # Trigram-only mode: no embedding needed.
+            results = trigram_search(
                 document_id=str(document.id),
                 query_text=query,
                 top_k=top_k,
@@ -904,6 +920,7 @@ class DocumentSearchView(APIView):
                     top_k=top_k,
                     min_score=min_score,
                     filters=filters,
+                    enable_trigram=enable_trigram,
                 )
 
         # 6. Serialize response with SearchResponseSerializer
@@ -913,6 +930,7 @@ class DocumentSearchView(APIView):
             "top_k": top_k,
             "min_score": min_score,
             "search_mode": search_mode,
+            "enable_trigram": enable_trigram,
             "filters": filters,
             "total_results": len(results),
         }

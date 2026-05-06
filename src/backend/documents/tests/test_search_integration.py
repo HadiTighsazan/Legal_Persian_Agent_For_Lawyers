@@ -233,6 +233,7 @@ class DocumentSearchIntegrationTest(TestCase):
             "legal_context",
             "vector_score",
             "keyword_score",
+            "trigram_score",
             "rrf_score",
         }
         for result in results:

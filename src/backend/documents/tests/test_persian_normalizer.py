@@ -304,6 +304,103 @@ class TestNormalizeForFts:
         assert "\u064A" not in result  # No Arabic Yeh
         assert "\u0643" not in result  # No Arabic Kaf
 
+    # ------------------------------------------------------------------
+    # NFKC normalization of Arabic Presentation Forms-B
+    # ------------------------------------------------------------------
+
+    def test_nfkc_lam_initial_form(self) -> None:
+        """Lam initial form (U+FEDF) → standard Lam (U+0644)."""
+        # U+FEDF = Lam with initial form (Arabic Presentation Forms-B)
+        text = "\uFEDF\u0627\u0632\u0645"  # FEDF + ا + ز + م
+        result = PersianNormalizer.normalize_for_fts(text)
+        # Should be standard Lam (U+0644)
+        assert "\u0644" in result  # Standard Lam
+        assert "\uFEDF" not in result  # Presentation form removed
+
+    def test_nfkc_alef_isolated_form(self) -> None:
+        """Alef isolated form (U+FE8D) → standard Alef (U+0627)."""
+        # U+FE8D = Alef with isolated form
+        text = "\u0644\uFE8D\u0632\u0645"  # ل + FE8D + ز + م
+        result = PersianNormalizer.normalize_for_fts(text)
+        assert "\u0627" in result  # Standard Alef
+        assert "\uFE8D" not in result  # Presentation form removed
+
+    def test_nfkc_zain_isolated_form(self) -> None:
+        """Zain isolated form (U+FEAF) → standard Zain (U+0632)."""
+        # U+FEAF = Zain with isolated form
+        text = "\u0644\u0627\uFEAF\u0645"  # ل + ا + FEAF + م
+        result = PersianNormalizer.normalize_for_fts(text)
+        assert "\u0632" in result  # Standard Zain
+        assert "\uFEAF" not in result  # Presentation form removed
+
+    def test_nfkc_meem_initial_form(self) -> None:
+        """Meem initial form (U+FEE1) → standard Meem (U+0645)."""
+        # U+FEE1 = Meem with initial form
+        text = "\u0644\u0627\u0632\uFEE1"  # ل + ا + ز + FEE1
+        result = PersianNormalizer.normalize_for_fts(text)
+        assert "\u0645" in result  # Standard Meem
+        assert "\uFEE1" not in result  # Presentation form removed
+
+    def test_nfkc_lam_alef_ligature(self) -> None:
+        """Lam-Alef ligature (U+FEFB) → standard Lam + Alef (U+0644 U+0627)."""
+        # U+FEFB = Lam-Alef ligature (isolated form)
+        text = "\u0639\u0642\u062F \uFEFB\u0632\u0645"  # عقد + FEFB + زم
+        result = PersianNormalizer.normalize_for_fts(text)
+        # The ligature should be decomposed into two standard chars
+        assert "\u0644" in result  # Standard Lam
+        assert "\u0627" in result  # Standard Alef
+        assert "\uFEFB" not in result  # Ligature removed
+
+    def test_nfkc_whole_word_presentation_forms(self) -> None:
+        """Whole word 'لازم' with all presentation forms → standard Unicode."""
+        # "لازم" using Arabic Presentation Forms-B:
+        # ل (U+FEDF Lam initial) + ا (U+FE8D Alef isolated) +
+        # ز (U+FEAF Zain isolated) + م (U+FEE1 Meem isolated)
+        text = "\uFEDF\uFE8D\uFEAF\uFEE1"
+        result = PersianNormalizer.normalize_for_fts(text)
+        # Should now be standard "لازم" (U+0644 U+0627 U+0632 U+0645)
+        assert result == "\u0644\u0627\u0632\u0645"
+        assert "لازم" in result
+
+    def test_nfkc_mixed_presentation_and_standard(self) -> None:
+        """Mixed presentation forms and standard chars are all normalized."""
+        # "عقد لازم" with presentation forms for "لازم" but standard for "عقد"
+        text = "\u0639\u0642\u062F \uFEDF\uFE8D\uFEAF\uFEE1"
+        result = PersianNormalizer.normalize_for_fts(text)
+        assert "عقد" in result
+        assert "لازم" in result
+        assert "\uFEDF" not in result
+        assert "\uFE8D" not in result
+        assert "\uFEAF" not in result
+        assert "\uFEE1" not in result
+
+    def test_nfkc_idempotent(self) -> None:
+        """NFKC normalization is idempotent — applying twice is safe."""
+        text = "\uFEDF\uFE8D\uFEB1\uFEE1"  # Presentation forms
+        result1 = PersianNormalizer.normalize_for_fts(text)
+        result2 = PersianNormalizer.normalize_for_fts(result1)
+        assert result1 == result2
+
+    def test_nfkc_standard_text_unchanged(self) -> None:
+        """Standard Persian text is not affected by NFKC normalization."""
+        text = "عقد لازم جایز"
+        result = PersianNormalizer.normalize_for_fts(text)
+        assert result == "عقد لازم جایز"
+
+    def test_nfkc_english_text_unchanged(self) -> None:
+        """English/Latin text is not affected by NFKC normalization."""
+        text = "Hello World! Test 123."
+        result = PersianNormalizer.normalize_for_fts(text)
+        assert result == text
+
+    def test_nfkc_persian_digits_still_normalized(self) -> None:
+        """Persian digits are still normalized after NFKC step."""
+        # Persian digits (U+06F0–U+06F9) should still become English digits
+        text = "\uFEDF\uFE8D\uFEAF\uFEE1 \u06F2\u06F2"  # Presentation "لازم" + Persian ۲۲
+        result = PersianNormalizer.normalize_for_fts(text)
+        assert "22" in result
+        assert "لازم" in result
+
 
 # ---------------------------------------------------------------------------
 # Documented limitation: Hazm does NOT fix RTL reversal

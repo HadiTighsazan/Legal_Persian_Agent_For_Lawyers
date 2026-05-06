@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from typing import Optional
 
 from hazm import Normalizer as HazmNormalizer
@@ -133,6 +134,8 @@ class PersianNormalizer:
 
         Applies all normalization stages in the correct order:
 
+        0. :meth:`_nfkc_normalize` — NFKC normalization (converts Arabic
+           Presentation Forms to standard Unicode codepoints)
         1. :meth:`strip_tatweel` — remove Kashida characters
         2. :meth:`clean_control_chars` — remove PDF artifacts
         3. :meth:`normalize_arabic_chars` — character normalization via Hazm
@@ -152,7 +155,13 @@ class PersianNormalizer:
 
         original_length = len(text)
 
-        # Stage 1: Strip Tatweel/Kashida (MUST be first)
+        # Stage 0: NFKC normalization — converts Arabic Presentation Forms-B
+        # (positional glyph variants from PDFs, U+FE70–U+FEFF) to standard
+        # Unicode codepoints.  MUST be before Tatweel stripping because NFKC
+        # may affect how certain characters are represented.
+        text = self._nfkc_normalize(text)
+
+        # Stage 1: Strip Tatweel/Kashida (MUST be before regex matching)
         text = self.strip_tatweel(text)
 
         # Stage 2: Remove PDF-induced control characters
@@ -297,7 +306,15 @@ class PersianNormalizer:
         - ``"می‌شود"`` (with ZWNJ half-space) may tokenize as one token
           ``"می‌شود"`` instead of two tokens ``"می"`` and ``"شود"``.
 
-        This method applies four transformations:
+        This method applies five transformations:
+
+        0. **NFKC normalization** (first): Converts Arabic Presentation Forms-B
+           (U+FE70–U+FEFF) — positional glyph variants commonly produced by PDF
+           extractors — to their standard Unicode codepoints. Also decomposes
+           ligatures like ``لا`` (U+FEFB) into ``لا`` (U+0644 U+0627). This is
+           critical because PDFs often store Persian text using presentation
+           forms that look identical on screen but have different byte sequences,
+           causing both Ctrl+F and FTS to fail.
 
         1. **Arabic → Persian character normalization**: Converts Arabic glyph
            variants commonly found in PDFs to their Persian equivalents:
@@ -328,11 +345,25 @@ class PersianNormalizer:
                 search query).
 
         Returns:
-            Text with Arabic chars converted to Persian, Persian/Arabic digits
-            converted to English digits, and ZWNJ characters replaced with spaces.
+            Text with Arabic Presentation Forms normalized to standard Unicode,
+            Arabic chars converted to Persian, Persian/Arabic digits converted
+            to English digits, and ZWNJ characters replaced with spaces.
         """
         if not text:
             return ""
+
+        # Step 0: NFKC normalization — converts Arabic Presentation Forms-B
+        # (positional glyph variants used by PDFs, U+FE70–U+FEFF) to standard
+        # Unicode codepoints. Also decomposes ligatures like "لا" (U+FEFB)
+        # into "لا" (U+0644 U+0627).
+        #
+        # Why NFKC and not NFC or NFKD?
+        # - NFC (Canonical Composition) does NOT handle presentation forms.
+        # - NFKD (Compatibility Decomposition) decomposes them but leaves
+        #   multi-codepoint sequences, which can cause issues.
+        # - NFKC (Compatibility Composition) decomposes then recomposes,
+        #   giving standard single-codepoint forms.
+        text = unicodedata.normalize("NFKC", text)
 
         # Step 1: Convert Arabic glyph variants to Persian equivalents
         # (Yeh U+064A → ی U+06CC, Kaf U+0643 → ک U+06A9)
@@ -349,6 +380,35 @@ class PersianNormalizer:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _nfkc_normalize(text: str) -> str:
+        """Apply NFKC normalization to convert Arabic Presentation Forms.
+
+        PDF extractors (PyMuPDF, pdfplumber) often preserve **positional
+        glyph variants** of Arabic/Persian letters (Arabic Presentation
+        Forms-B, U+FE70–U+FEFF) instead of converting them to standard
+        Unicode codepoints.  These presentation forms look identical on
+        screen but have different byte sequences, causing both Ctrl+F and
+        PostgreSQL FTS to fail.
+
+        NFKC normalization (Compatibility Composition) handles this by:
+
+        1. **Decomposing** compatibility characters into standard equivalents
+        2. **Recomposing** them into the standard NFC form
+
+        For example:
+        - ``ل`` (U+FEDF — Lam initial form) → ``ل`` (U+0644 — standard Lam)
+        - ``لا`` (U+FEFB — Lam-Alef ligature) → ``لا`` (U+0644 U+0627)
+        - ``ا`` (U+FE8D — Alef isolated form) → ``ا`` (U+0627 — standard Alef)
+
+        Args:
+            text: Input text potentially containing Arabic Presentation Forms.
+
+        Returns:
+            Text with all characters normalized to standard Unicode codepoints.
+        """
+        return unicodedata.normalize("NFKC", text)
 
     @staticmethod
     def _final_cleanup(text: str) -> str:

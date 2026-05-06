@@ -79,6 +79,7 @@
 - `idx_chunks_legal_status` on `legal_status` (added in Epic 6)
 - `idx_chunks_approval_date` on `approval_date` (added in Epic 6)
 - `idx_chunks_legal_type` on `legal_type` (added in Epic 6)
+- **`idx_chunks_content_trgm`** on **`content`** USING **GIN** with **`gin_trgm_ops`** (for PostgreSQL `pg_trgm` trigram similarity search, added in migration 0010)
 
 **Constraints:**
 - UNIQUE(`document_id`, `chunk_index`)
@@ -86,6 +87,7 @@
 **Triggers:**
 - **`trg_chunk_search_vector`** — BEFORE INSERT OR UPDATE OF `content`, calls `update_chunk_search_vector()` function to auto-populate `search_vector` using `to_tsvector('simple', COALESCE(NEW.content, ''))`. Added in Epic 6 (migration 0006).
   - **IMPORTANT:** The `simple` configuration does NOT convert Persian digits (۰۱۲۳۴۵۶۷۸۹) to English digits (0123456789). Content must be normalized at the application layer via `PersianNormalizer.normalize_for_fts()` before saving. This normalization was added in migration 0009 (see below).
+  - **Migration 0010** (see below) adds the `pg_trgm` extension and a GIN index on `content` for trigram similarity search, which provides fuzzy matching for OCR errors and spelling variations.
 
 ---
 
@@ -287,3 +289,30 @@ CREATE EXTENSION IF NOT EXISTS "vector";
   - `hazm>=0.10.0` — Persian NLP library for character normalization
   - `pdfplumber>=0.11.0` — Fallback PDF extraction for RTL text
   - `pytesseract>=0.3.10` — OCR fallback for scanned Persian PDFs
+
+---
+
+## Migrations
+
+### Migration 0010 — Add pg_trgm Extension and Trigram Index
+- **File:** `src/backend/documents/migrations/0010_add_pg_trgm.py`
+- **Operations:**
+  1. Installs the `pg_trgm` PostgreSQL extension via `TrigramExtension()`.
+  2. Creates a GIN index on `document_chunks.content` using `gin_trgm_ops` operator class:
+     ```sql
+     CREATE INDEX IF NOT EXISTS idx_chunks_content_trgm
+     ON document_chunks USING gin (content gin_trgm_ops);
+     ```
+- **Purpose:** Enables trigram similarity search (`similarity()`, `show_trgm()`) for fuzzy matching of Persian legal text, catching OCR errors, spelling variations, and partial matches.
+- **Dependencies:** Depends on migration `0009_normalize_chunk_digits`.
+- **Applied:** Yes (via `docker-compose exec backend python manage.py migrate`).
+
+### Migration 0011 — Normalize Arabic Presentation Forms in Chunk Content
+- **File:** `src/backend/documents/migrations/0011_normalize_presentation_forms.py`
+- **Operations:**
+  1. Iterates over all existing `DocumentChunk` rows in batches of 500.
+  2. Calls the updated `PersianNormalizer.normalize_for_fts()` on each chunk's `content`.
+  3. Saves the normalized content, which triggers the `trg_chunk_search_vector` trigger to regenerate the `search_vector`.
+- **Purpose:** Re-normalizes all existing chunk content with the updated `normalize_for_fts()` method, which now applies `unicodedata.normalize('NFKC', text)` as its first step. This converts Arabic Presentation Forms-B (U+FE70–U+FEFF) — positional glyph variants commonly produced by PDF extractors — to standard Unicode codepoints, fixing both Ctrl+F and FTS search failures for Persian text.
+- **Dependencies:** Depends on migration `0010_add_pg_trgm`.
+- **Applied:** Pending (run `docker-compose exec backend python manage.py migrate` to apply).

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -158,6 +159,13 @@ def formulate_query(user_query: str) -> QueryFormulationResult:
         '\u0643': '\u06A9',  # Arabic Kaf → Persian Kaf
     })
     user_query = user_query.translate(_ARABIC_TO_PERSIAN)
+
+    # NFKC normalization — converts Arabic Presentation Forms (positional
+    # glyph variants from PDFs) to standard Unicode codepoints.  This is
+    # defense-in-depth: even if the user copies text directly from a PDF
+    # that uses presentation forms, the query will be normalized before
+    # being sent to the LLM or used in FTS.
+    user_query = unicodedata.normalize("NFKC", user_query)
 
     # Short-circuit: skip formulation if disabled or query is too short
     if not settings.QUERY_FORMULATION_ENABLED:
