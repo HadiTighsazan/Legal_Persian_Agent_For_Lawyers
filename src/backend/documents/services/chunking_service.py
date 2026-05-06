@@ -41,7 +41,11 @@ import tiktoken
 _PAGE_MARKER_RE: Pattern[str] = re.compile(r"\[PAGE\s+(\d+)\]")
 
 # Sentence-ending characters that signal a natural break point.
-_SENTENCE_ENDINGS: set[str] = {".", "!", "?"}
+# Includes Persian/Arabic punctuation:
+# - ؟ (U+061F) — Persian/Arabic question mark
+# - ، (U+060C) — Persian/Arabic comma
+# - ؛ (U+061B) — Persian/Arabic semicolon
+_SENTENCE_ENDINGS: set[str] = {".", "!", "?", "؟", "،", "؛"}
 
 # The tokeniser used by OpenAI's ``cl100k_base`` encoding (GPT-4, text-embedding-ada-002, etc.).
 _ENCODING_NAME: str = "cl100k_base"
@@ -783,22 +787,37 @@ class ChunkingService:
         window ``[start, window_end)``.
 
         Priority order:
-        1. The last sentence-ending character (``.``, ``!``, ``?``) followed
-           by a space or newline.
-        2. The last space character.
-        3. A hard split at ``window_end`` (no suitable boundary found).
+        1. Persian sentence endings (``؟``, ``،``, ``؛``) followed by
+           space or newline.
+        2. Standard sentence endings (``.``, ``!``, ``?``) followed by
+           space or newline.
+        3. Double newline (paragraph break).
+        4. The last space character.
+        5. A hard split at ``window_end`` (no suitable boundary found).
         """
-        # --- Priority 1: sentence boundary ---
+        # --- Priority 1: Persian sentence boundary ---
+        for pos in range(window_end - 1, start - 1, -1):
+            ch: str = text[pos]
+            if ch in ("؟", "،", "؛"):
+                if pos + 1 >= window_end or text[pos + 1] in (" ", "\n", "\r", "\t"):
+                    return pos + 1
+
+        # --- Priority 2: standard sentence boundary ---
         for pos in range(window_end - 1, start - 1, -1):
             ch: str = text[pos]
             if ch in _SENTENCE_ENDINGS:
                 if pos + 1 >= window_end or text[pos + 1] in (" ", "\n", "\r", "\t"):
                     return pos + 1
 
-        # --- Priority 2: last space ---
+        # --- Priority 3: double newline (paragraph break) ---
+        for pos in range(window_end - 1, start - 1, -1):
+            if text[pos] == "\n" and pos > 0 and text[pos - 1] == "\n":
+                return pos + 1
+
+        # --- Priority 4: last space ---
         for pos in range(window_end - 1, start - 1, -1):
             if text[pos] == " ":
                 return pos + 1
 
-        # --- Priority 3: hard split ---
+        # --- Priority 5: hard split ---
         return window_end

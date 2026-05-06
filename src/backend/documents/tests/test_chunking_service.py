@@ -296,3 +296,77 @@ class TestMetadata:
         assert "legal_number" in chunk.metadata
         assert chunk.metadata["legal_type"] == "article"
         assert chunk.metadata["legal_number"] == "۱"
+
+
+# ---------------------------------------------------------------------------
+# Persian sentence-ending punctuation tests
+# ---------------------------------------------------------------------------
+
+
+class TestPersianSentenceEndings:
+    """Tests for Persian/Arabic sentence-ending punctuation in chunking."""
+
+    def test_split_at_persian_question_mark(self, chunker: ChunkingService) -> None:
+        """Text with ؟ → split at ؟ boundary."""
+        text = (
+            "[PAGE 1]\n"
+            "این یک جمله است؟ این جمله بعد از علامت سوال است. "
+            "و این هم جمله سوم."
+        )
+        chunks = chunker.chunk_text(
+            text, chunk_size=50, overlap=0, legal_chunking_enabled=False
+        )
+        assert len(chunks) >= 2
+        # The first chunk should end with the Persian question mark
+        assert "؟" in chunks[0].content
+
+    def test_split_at_persian_comma(self, chunker: ChunkingService) -> None:
+        """Text with ، → split at ، boundary."""
+        text = (
+            "[PAGE 1]\n"
+            "این یک جمله طولانی است، که با کاما از هم جدا شده است. "
+            "و این هم جمله بعدی."
+        )
+        chunks = chunker.chunk_text(
+            text, chunk_size=50, overlap=0, legal_chunking_enabled=False
+        )
+        assert len(chunks) >= 2
+        # The Persian comma should be a split point
+        assert "،" in chunks[0].content or "،" in chunks[1].content
+
+    def test_split_at_persian_semicolon(self, chunker: ChunkingService) -> None:
+        """Text with ؛ → split at ؛ boundary."""
+        text = (
+            "[PAGE 1]\n"
+            "این یک جمله است؛ این جمله بعد از نقطه ویرگول است. "
+            "و این هم جمله سوم."
+        )
+        chunks = chunker.chunk_text(
+            text, chunk_size=50, overlap=0, legal_chunking_enabled=False
+        )
+        assert len(chunks) >= 2
+        assert "؛" in chunks[0].content
+
+    def test_mixed_persian_and_english_endings(self, chunker: ChunkingService) -> None:
+        """Mixed Persian/English punctuation → both are recognized."""
+        text = (
+            "[PAGE 1]\n"
+            "این یک جمله است؟ This is a sentence. "
+            "و این هم جمله سوم!"
+        )
+        chunks = chunker.chunk_text(
+            text, chunk_size=50, overlap=0, legal_chunking_enabled=False
+        )
+        assert len(chunks) >= 2
+
+    def test_persian_endings_in_legal_text(self, chunker: ChunkingService) -> None:
+        """Persian punctuation in non-legal text → split correctly."""
+        text = (
+            "[PAGE 1]\n"
+            "این یک متن ساده است؟ بله، اینطور است. "
+            "البته؛ این هم یک نکته مهم است."
+        )
+        chunks = chunker.chunk_text(
+            text, chunk_size=40, overlap=0, legal_chunking_enabled=False
+        )
+        assert len(chunks) >= 2

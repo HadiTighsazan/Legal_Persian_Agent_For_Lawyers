@@ -6,6 +6,7 @@ Covers:
 - :func:`~documents.tasks.document_processing.chunk_document`
 - :func:`~documents.tasks.document_processing.process_document`
 - :func:`~documents.tasks.embedding_tasks.embed_document`
+- :func:`~documents.tasks.document_processing._has_shattered_persian_words`
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from documents.services.chunking_service import ChunkingService
 from documents.tasks import process_document  # re-exported from services module
 from documents.tasks.document_processing import (
     _handle_chain_error,
+    _has_shattered_persian_words,
     chunk_document,
     extract_text_from_pdf,
 )
@@ -784,3 +786,87 @@ class HandleChainErrorTests(TestCase):
         self._run_callback(document_id="00000000-0000-0000-0000-000000000000")
 
 
+# ---------------------------------------------------------------------------
+# Tests — _has_shattered_persian_words
+# ---------------------------------------------------------------------------
+
+
+class HasShatteredPersianWordsTests(TestCase):
+    """Tests for the :func:`_has_shattered_persian_words` heuristic."""
+
+    # -- Shattered text (should return True) -------------------------------
+
+    def test_shattered_persian_text(self) -> None:
+        """Shattered Persian text ``ق ا ن و ن   م د ن ی`` → ``True``."""
+        text = "ق ا ن و ن   م د ن ی"
+        self.assertTrue(_has_shattered_persian_words(text))
+
+    def test_shattered_with_mixed_normal(self) -> None:
+        """Mixed text with some shattered words → ``True``."""
+        text = "قانون مدنی ج م ه و ر ی"
+        self.assertTrue(_has_shattered_persian_words(text))
+
+    def test_mostly_shattered_text(self) -> None:
+        """Text where most Persian chars are isolated → ``True``."""
+        text = "ب ه   ن ا م   خ د ا و ن د   م ه ر ب ا ن"
+        self.assertTrue(_has_shattered_persian_words(text))
+
+    # -- Normal text (should return False) ---------------------------------
+
+    def test_normal_persian_text(self) -> None:
+        """Normal Persian text ``قانون مدنی جمهوری اسلامی ایران`` → ``False``."""
+        text = "قانون مدنی جمهوری اسلامی ایران"
+        self.assertFalse(_has_shattered_persian_words(text))
+
+    def test_persian_with_legal_structure(self) -> None:
+        """Legal Persian text with article markers → ``False``."""
+        text = "ماده ۱: این قانون برای تنظیم روابط اجتماعی وضع می‌شود."
+        self.assertFalse(_has_shattered_persian_words(text))
+
+    def test_persian_with_single_char_words(self) -> None:
+        """Persian text with legitimate single-char words (و) → ``False``."""
+        text = "و اما بعد، این قانون برای تنظیم امور مالی و اداری وضع گردید"
+        self.assertFalse(_has_shattered_persian_words(text))
+
+    def test_english_text(self) -> None:
+        """English text with no Persian chars → ``False``."""
+        text = "This is a test document with multiple sentences."
+        self.assertFalse(_has_shattered_persian_words(text))
+
+    def test_mixed_persian_english(self) -> None:
+        """Mixed Persian/English text with normal Persian → ``False``."""
+        text = "این یک متن آزمایشی است This is a test document"
+        self.assertFalse(_has_shattered_persian_words(text))
+
+    # -- Edge cases -------------------------------------------------------
+
+    def test_empty_string(self) -> None:
+        """Empty string → ``False``."""
+        self.assertFalse(_has_shattered_persian_words(""))
+
+    def test_whitespace_only(self) -> None:
+        """Whitespace-only string → ``False``."""
+        self.assertFalse(_has_shattered_persian_words("   \n\n  "))
+
+    def test_no_persian_chars(self) -> None:
+        """Text with no Persian characters → ``False``."""
+        text = "Hello World! 123."
+        self.assertFalse(_has_shattered_persian_words(text))
+
+    def test_single_persian_word(self) -> None:
+        """Single normal Persian word → ``False``."""
+        text = "قانون"
+        self.assertFalse(_has_shattered_persian_words(text))
+
+    def test_shattered_single_word(self) -> None:
+        """Single shattered Persian word → ``True``."""
+        text = "ق ا ن و ن"
+        self.assertTrue(_has_shattered_persian_words(text))
+
+    def test_custom_threshold(self) -> None:
+        """Custom threshold changes detection sensitivity."""
+        text = "قانون مدنی ج م ه و ر ی"
+        # With a very high threshold, this should not be detected
+        self.assertFalse(_has_shattered_persian_words(text, threshold=0.9))
+        # With a very low threshold, this should be detected
+        self.assertTrue(_has_shattered_persian_words(text, threshold=0.1))

@@ -112,6 +112,62 @@ def _is_persian_text_garbled(text: str, threshold: float | None = None) -> bool:
     return ratio > threshold
 
 
+def _has_shattered_persian_words(text: str, threshold: float = 0.4) -> bool:
+    """Detect if Persian text has shattered words (spaces between letters).
+
+    In properly extracted Persian text, most space-delimited tokens contain
+    multiple Persian characters (e.g., ``قانون``, ``مدنی``). When PyMuPDF
+    mis-extracts RTL text, it inserts spaces between characters, turning
+    ``قانون`` into ``ق ا ن و ن`` — each character becomes its own "word".
+
+    This heuristic counts how many Persian "words" (space-delimited tokens)
+    consist of a single Persian character. In normal Persian text, single-
+    character words are rare (e.g., ``و`` meaning "and", ``به`` is two chars).
+    In shattered text, almost every character becomes its own "word".
+
+    Args:
+        text: Extracted text to evaluate.
+        threshold: If the ratio of single-Persian-char tokens to total
+            Persian tokens exceeds this value, the text is considered
+            shattered. Defaults to 0.4.
+
+    Returns:
+        ``True`` if text appears to have shattered Persian words.
+    """
+    tokens = text.split()
+    if not tokens:
+        return False
+
+    persian_range = range(0x0600, 0x06FF + 1)
+    single_char_count = 0
+    persian_token_count = 0
+
+    for token in tokens:
+        # Count Persian chars in this token
+        persian_chars = [c for c in token if ord(c) in persian_range]
+        if not persian_chars:
+            continue
+        persian_token_count += 1
+        # If the token is exactly one Persian character (possibly with
+        # surrounding non-Persian), it's suspicious
+        if len(persian_chars) == 1:
+            single_char_count += 1
+
+    if persian_token_count == 0:
+        return False
+
+    ratio = single_char_count / persian_token_count
+    logger.debug(
+        "Shattered Persian word check: %d/%d single-char tokens "
+        "(ratio=%.2f, threshold=%.2f)",
+        single_char_count,
+        persian_token_count,
+        ratio,
+        threshold,
+    )
+    return ratio > threshold
+
+
 # ---------------------------------------------------------------------------
 # Extraction strategy helpers
 # ---------------------------------------------------------------------------
@@ -133,33 +189,62 @@ def _extract_with_pymupdf_rtl(pdf_document: fitz.Document) -> str:
     page_texts: list[str] = []
     for page_num in range(pdf_document.page_count):
         page = pdf_document.load_page(page_num)
-        # RTL-aware flags for better Persian extraction
+        # RTL-aware flags for better Persian extraction.
+        # TEXT_PRESERVE_LIGATURES: keeps Arabic/Persian ligatures intact.
+        # TEXT_PRESERVE_WHITESPACE: preserves original whitespace layout.
+        # TEXT_PRESERVE_IMAGES: includes image alt-text if present.
+        # TEXT_DEHYPHENATE: re-joins hyphenated words broken across lines.
         text = page.get_text(
             "text",
-            flags=fitz.TEXT_PRESERVE_LIGATURES | fitz.TEXT_PRESERVE_WHITESPACE,
+            flags=(
+                fitz.TEXT_PRESERVE_LIGATURES
+                | fitz.TEXT_PRESERVE_WHITESPACE
+                | fitz.TEXT_PRESERVE_IMAGES
+                | fitz.TEXT_DEHYPHENATE
+            ),
         )
         page_texts.append(f"[PAGE {page_num + 1}]\n{text}")
     return "\n".join(page_texts)
 
 
 def _extract_with_pdfplumber(pdf_content: bytes) -> str:
-    """Fallback extraction using pdfplumber.
+    """Fallback extraction using pdfplumber with RTL reshaping.
 
     pdfplumber often preserves paragraph structure better for Persian PDFs
     than PyMuPDF, especially for documents with complex RTL layouts.
+
+    Additionally uses ``arabic_reshaper`` and ``python-bidi`` to properly
+    reconstruct Persian/Arabic text from pdfplumber's output, which handles
+    RTL layout better than PyMuPDF for complex legal PDFs.
 
     Args:
         pdf_content: Raw PDF file bytes.
 
     Returns:
-        Extracted text with ``[PAGE N]`` markers.
+        Extracted text with ``[PAGE N]`` markers, with Persian/Arabic
+        text reshaped for proper RTL rendering.
     """
     import pdfplumber  # noqa: PLC0415
+
+    # Optional RTL reshaping — gracefully degrade if libraries not installed
+    try:
+        import arabic_reshaper  # noqa: PLC0415
+        from bidi.algorithm import get_display  # noqa: PLC0415
+        _reshaping_available = True
+    except ImportError:
+        _reshaping_available = False
 
     with pdfplumber.open(io.BytesIO(pdf_content)) as pdf:
         page_texts: list[str] = []
         for i, page in enumerate(pdf.pages):
             text = page.extract_text() or ""
+            # Reshape Persian/Arabic text for proper RTL rendering
+            if text.strip() and _reshaping_available:
+                try:
+                    reshaped = arabic_reshaper.reshape(text)
+                    text = get_display(reshaped)
+                except Exception:
+                    pass  # Fall back to raw text if reshaping fails
             page_texts.append(f"[PAGE {i + 1}]\n{text}")
     return "\n".join(page_texts)
 
@@ -335,8 +420,12 @@ def extract_text_from_pdf(self, document_id: str) -> str:
 
     auto_fallback = getattr(settings, "EXTRACTION_AUTO_FALLBACK", True)
 
+    # Helper: check both garbled-text heuristics (isolated chars + shattered words)
+    def _is_garbled(t: str) -> bool:
+        return _is_persian_text_garbled(t) or _has_shattered_persian_words(t)
+
     # Stage 2: Check quality and fall back to pdfplumber if garbled
-    if auto_fallback and _is_persian_text_garbled(extracted_text):
+    if auto_fallback and _is_garbled(extracted_text):
         logger.warning(
             "extract_text_from_pdf: PyMuPDF output garbled for Persian text "
             "(document %s) — trying pdfplumber...",
@@ -353,7 +442,7 @@ def extract_text_from_pdf(self, document_id: str) -> str:
             )
 
         # Stage 3: Check again and fall back to Tesseract OCR
-        if _is_persian_text_garbled(extracted_text):
+        if _is_garbled(extracted_text):
             logger.warning(
                 "extract_text_from_pdf: pdfplumber also garbled for document "
                 "%s — falling back to Tesseract OCR...",
@@ -489,7 +578,7 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         chunk_results = chunking_service.chunk_text(
             extracted_text,
             chunk_size=1000,
-            overlap=200,
+            overlap=300,
             legal_chunking_enabled=legal_chunking_enabled,
             legal_max_chunk_size=legal_max_chunk_size,
             legal_overlap_clauses=legal_overlap_clauses,

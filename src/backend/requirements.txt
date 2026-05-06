@@ -38,6 +38,12 @@ pgvector>=0.2.0
 hazm>=0.10.0
 pdfplumber>=0.11.0
 pytesseract>=0.3.10
+arabic_reshaper>=3.0.0
+python-bidi>=0.4.2
+
+# Testing
+pytest>=9.0.0
+pytest-django>=4.12.0
 
 # Utilities
 python-dotenv==1.0.0
