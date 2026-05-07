@@ -564,6 +564,35 @@ Both fields are optional. At least one should be provided for meaningful updates
 
 ---
 
+#### GET /documents/{document_id}/extracted-text/
+**Description:** Retrieve the extracted text and extraction metadata for a document
+**Auth Required:** Yes
+**View Class:** `DocumentExtractedTextView`
+**Implementation Date:** 2026-05-07
+**Response:** `200 OK`
+```json
+{
+  "document_id": "uuid",
+  "extracted_text": "full extracted text with [PAGE N] markers...",
+  "extracted_text_length": 50000,
+  "total_pages": 42,
+  "extraction_method": "pymupdf",
+  "garbled_score": 0.12
+}
+```
+**Error Responses:**
+- `403 Forbidden`: Document belongs to another user
+- `404 Not Found`: Document does not exist
+
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies document ownership via `document.user != request.user`
+- Returns the full extracted text stored in `document.extracted_text` (populated by the extraction pipeline)
+- Returns extraction metadata: `extraction_method` (pymupdf/pdfplumber/tesseract), `garbled_score` (0.0–1.0 ratio), `extracted_text_length`, and `total_pages`
+- Used exclusively by the developer monitoring page at `/monitoring/:documentId`
+
+---
+
 ### ✅ Implemented Endpoints — Embedding Views (Epic E-05, Task 4)
 
 #### POST /documents/{document_id}/embed/

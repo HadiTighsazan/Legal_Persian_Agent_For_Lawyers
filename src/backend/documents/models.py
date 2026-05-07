@@ -76,6 +76,11 @@ class Document(models.Model):
     total_chunks = models.IntegerField(default=0)
     extracted_text_length = models.IntegerField(default=0)
     processing_error = models.TextField(null=True, blank=True)
+
+    # Monitoring / debugging fields (added for monitoring page)
+    extracted_text = models.TextField(blank=True, default="")
+    extraction_method = models.CharField(max_length=20, null=True, blank=True)
+    garbled_score = models.FloatField(null=True, blank=True)
     
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)

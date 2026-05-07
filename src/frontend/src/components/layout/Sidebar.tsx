@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, FileText, MessageSquare, X } from 'lucide-react';
+import { Activity, LayoutDashboard, FileText, MessageSquare, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -33,6 +33,11 @@ const navItems: NavItem[] = [
     icon: <MessageSquare className="h-5 w-5" />,
     href: '/conversations',
     disabled: true,
+  },
+  {
+    label: 'Monitoring',
+    icon: <Activity className="h-5 w-5" />,
+    href: '/monitoring',
   },
 ];
 

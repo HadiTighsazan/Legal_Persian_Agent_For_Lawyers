@@ -9,6 +9,8 @@ import DocumentDetailPage from '@/pages/documents/DocumentDetailPage';
 import ChatPage from '@/pages/ChatPage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
+import MonitoringDocumentPicker from '@/pages/MonitoringDocumentPicker';
+import MonitoringPage from '@/pages/MonitoringPage';
 
 const router = createBrowserRouter([
   {
@@ -28,6 +30,9 @@ const router = createBrowserRouter([
       // Chat routes — outside AppShell (no container padding)
       { path: '/documents/:documentId/chat', element: <ChatPage /> },
       { path: '/documents/:documentId/chat/:conversationId', element: <ChatPage /> },
+      // Monitoring routes — outside AppShell (full-height layout)
+      { path: '/monitoring', element: <MonitoringDocumentPicker /> },
+      { path: '/monitoring/:documentId', element: <MonitoringPage /> },
       // AppShell routes (with container padding)
       {
         element: <AppShell />,

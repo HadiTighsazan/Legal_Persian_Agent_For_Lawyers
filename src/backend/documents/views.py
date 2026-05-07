@@ -585,6 +585,56 @@ class DocumentChunksListView(APIView):
 
 
 # ---------------------------------------------------------------------------
+# Monitoring View — Extracted Text & Extraction Metadata
+# ---------------------------------------------------------------------------
+
+
+class DocumentExtractedTextView(APIView):
+    """Retrieve the extracted text and extraction metadata for a document.
+
+    **Endpoint:** ``GET /documents/<uuid:document_id>/extracted-text/``
+
+    **Authentication:** Required.
+
+    **Responses:**
+        - ``200 OK`` — Extracted text and metadata returned successfully.
+        - ``403 Forbidden`` — Document belongs to another user.
+        - ``404 Not Found`` — Document does not exist.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, document_id: str) -> Response:
+        """Handle the extracted-text GET request."""
+        try:
+            document = Document.objects.get(id=document_id)
+        except Document.DoesNotExist:
+            return Response(
+                {"error": "not_found", "message": "Document not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Verify ownership.
+        if document.user != request.user:
+            return Response(
+                {
+                    "error": "permission_denied",
+                    "message": "You do not have permission to view this document.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return Response({
+            "document_id": str(document.id),
+            "extracted_text": document.extracted_text or "",
+            "extracted_text_length": document.extracted_text_length,
+            "total_pages": document.total_pages,
+            "extraction_method": document.extraction_method,
+            "garbled_score": document.garbled_score,
+        })
+
+
+# ---------------------------------------------------------------------------
 # Embedding Views (Epic E-05, Task 4)
 # ---------------------------------------------------------------------------
 

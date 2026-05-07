@@ -14,6 +14,7 @@ from documents.views import (
     DocumentChunksListView,
     DocumentDetailView,
     DocumentEmbedView,
+    DocumentExtractedTextView,
     DocumentListView,
     DocumentProcessView,
     DocumentProcessingStatusView,
@@ -46,6 +47,11 @@ urlpatterns = [
         "<uuid:document_id>/chunks/",
         DocumentChunksListView.as_view(),
         name="document-chunks",
+    ),
+    path(
+        "<uuid:document_id>/extracted-text/",
+        DocumentExtractedTextView.as_view(),
+        name="document-extracted-text",
     ),
     path(
         "<uuid:document_id>/embed/",

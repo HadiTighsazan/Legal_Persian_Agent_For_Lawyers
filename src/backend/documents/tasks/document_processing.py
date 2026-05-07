@@ -53,32 +53,24 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _is_persian_text_garbled(text: str, threshold: float | None = None) -> bool:
-    """Check if extracted Persian text appears garbled (RTL reversal).
+def _compute_garbled_ratio(text: str) -> float:
+    """Compute the garbled ratio for Persian text.
 
-    Uses a heuristic: if a significant percentage of Persian/Arabic characters
-    appear isolated (surrounded by non-Persian characters), the text is likely
-    garbled due to RTL rendering issues in the PDF extractor.
+    Uses a heuristic: counts the proportion of Persian/Arabic characters that
+    appear isolated (surrounded by non-Persian characters). In properly rendered
+    Persian text, most characters should be adjacent to other Persian characters.
 
-    The Arabic/Persian Unicode block is U+0600–U+06FF. In properly rendered
-    Persian text, most Persian characters should be adjacent to other Persian
-    characters. If they're isolated (surrounded by non-Persian chars like
-    spaces, newlines, or Latin characters), the text is likely reversed.
+    The Arabic/Persian Unicode block is U+0600–U+06FF.
 
     Args:
         text: The extracted text to evaluate.
-        threshold: Ratio threshold (0.0–1.0). If the proportion of isolated
-            Persian chars exceeds this, the text is considered garbled.
-            Defaults to ``settings.EXTRACTION_GARBLED_THRESHOLD`` or 0.3.
 
     Returns:
-        ``True`` if the text appears garbled, ``False`` otherwise.
+        A float ratio (0.0–1.0) representing the proportion of isolated
+        Persian characters. Returns 0.0 if no Persian characters are found.
     """
     if not text or not text.strip():
-        return False
-
-    if threshold is None:
-        threshold = getattr(settings, "EXTRACTION_GARBLED_THRESHOLD", 0.3)
+        return 0.0
 
     persian_range = range(0x0600, 0x06FF + 1)
     isolated_count = 0
@@ -99,13 +91,35 @@ def _is_persian_text_garbled(text: str, threshold: float | None = None) -> bool:
                 isolated_count += 1
 
     if total_persian == 0:
+        return 0.0
+
+    return isolated_count / total_persian
+
+
+def _is_persian_text_garbled(text: str, threshold: float | None = None) -> bool:
+    """Check if extracted Persian text appears garbled (RTL reversal).
+
+    Uses :func:`_compute_garbled_ratio` to get the ratio of isolated Persian
+    characters, then compares it against the threshold.
+
+    Args:
+        text: The extracted text to evaluate.
+        threshold: Ratio threshold (0.0–1.0). If the proportion of isolated
+            Persian chars exceeds this, the text is considered garbled.
+            Defaults to ``settings.EXTRACTION_GARBLED_THRESHOLD`` or 0.3.
+
+    Returns:
+        ``True`` if the text appears garbled, ``False`` otherwise.
+    """
+    if not text or not text.strip():
         return False
 
-    ratio = isolated_count / total_persian
+    if threshold is None:
+        threshold = getattr(settings, "EXTRACTION_GARBLED_THRESHOLD", 0.3)
+
+    ratio = _compute_garbled_ratio(text)
     logger.debug(
-        "Persian garbled check: %d/%d isolated chars (ratio=%.2f, threshold=%.2f)",
-        isolated_count,
-        total_persian,
+        "Persian garbled check: ratio=%.2f, threshold=%.2f",
         ratio,
         threshold,
     )
@@ -420,6 +434,9 @@ def extract_text_from_pdf(self, document_id: str) -> str:
 
     auto_fallback = getattr(settings, "EXTRACTION_AUTO_FALLBACK", True)
 
+    # Track which extraction method succeeded
+    extraction_method = "pymupdf"
+
     # Helper: check both garbled-text heuristics (isolated chars + shattered words)
     def _is_garbled(t: str) -> bool:
         return _is_persian_text_garbled(t) or _has_shattered_persian_words(t)
@@ -433,6 +450,7 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         )
         try:
             extracted_text = _extract_with_pdfplumber(pdf_bytes)
+            extraction_method = "pdfplumber"
         except Exception as e:
             logger.warning(
                 "extract_text_from_pdf: pdfplumber extraction failed for "
@@ -450,6 +468,7 @@ def extract_text_from_pdf(self, document_id: str) -> str:
             )
             try:
                 extracted_text = _extract_with_tesseract(pdf_bytes)
+                extraction_method = "tesseract"
             except Exception as e:
                 logger.warning(
                     "extract_text_from_pdf: Tesseract OCR also failed for "
@@ -476,10 +495,24 @@ def extract_text_from_pdf(self, document_id: str) -> str:
                 e,
             )
 
-    # Update document metadata.
+    # Compute garbled score on the final extracted text.
+    garbled_score = _compute_garbled_ratio(extracted_text)
+
+    # Update document metadata including extraction monitoring fields.
+    document.extracted_text = extracted_text
+    document.extraction_method = extraction_method
+    document.garbled_score = garbled_score
     document.extracted_text_length = len(extracted_text)
     document.total_pages = num_pages
-    document.save(update_fields=["extracted_text_length", "total_pages"])
+    document.save(
+        update_fields=[
+            "extracted_text",
+            "extraction_method",
+            "garbled_score",
+            "extracted_text_length",
+            "total_pages",
+        ]
+    )
 
     # Mark the ProcessingTask as completed.
     processing_task.status = "completed"

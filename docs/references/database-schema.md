@@ -39,6 +39,9 @@
 | **extracted_text_length** | **INTEGER** | **DEFAULT 0** | **Length of extracted text in characters (added in E04-T2)** |
 | **processing_error** | **TEXT** | **NULL** | **Error details from pipeline processing (added in E04-T2)** |
 | **document_type** | **VARCHAR(20)** | **DEFAULT 'user_upload', INDEXED** | **Document type: 'user_upload' for regular files, 'reference_law' for system reference legal texts. Used by RAG service to determine whether to apply legal_status filters. (added in migration 0007)** |
+| **extracted_text** | **TEXT** | **BLANK, DEFAULT ''** | **Full extracted PDF text for monitoring/debug (added in migration 0012)** |
+| **extraction_method** | **VARCHAR(20)** | **NULL** | **Which extractor succeeded: pymupdf, pdfplumber, tesseract (added in migration 0012)** |
+| **garbled_score** | **FLOAT** | **NULL** | **Garbled detection ratio (0.0–1.0) from `_compute_garbled_ratio()` (added in migration 0012)** |
 | created_at | TIMESTAMP | DEFAULT NOW() | Upload timestamp |
 | updated_at | TIMESTAMP | DEFAULT NOW() | Last update timestamp |
 
@@ -306,6 +309,16 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 - **Purpose:** Enables trigram similarity search (`similarity()`, `show_trgm()`) for fuzzy matching of Persian legal text, catching OCR errors, spelling variations, and partial matches.
 - **Dependencies:** Depends on migration `0009_normalize_chunk_digits`.
 - **Applied:** Yes (via `docker-compose exec backend python manage.py migrate`).
+
+### Migration 0012 — Add extracted_text, extraction_method, garbled_score
+- **File:** `src/backend/documents/migrations/0012_add_extracted_text_and_extraction_metadata.py`
+- **Changes:**
+  - Added `extracted_text` (TextField, blank=True, default="") to `documents` table
+  - Added `extraction_method` (CharField, max_length=20, null=True, blank=True) to `documents` table
+  - Added `garbled_score` (FloatField, null=True, blank=True) to `documents` table
+- **Purpose:** Stores the full extracted PDF text, the extraction method that succeeded (pymupdf/pdfplumber/tesseract), and the garbled detection ratio for the developer monitoring page at `/monitoring/:documentId`.
+- **Dependencies:** Depends on migration `0011_normalize_presentation_forms`.
+- **Applied:** Pending (run `docker-compose exec backend python manage.py migrate` to apply).
 
 ### Migration 0011 — Normalize Arabic Presentation Forms in Chunk Content
 - **File:** `src/backend/documents/migrations/0011_normalize_presentation_forms.py`
