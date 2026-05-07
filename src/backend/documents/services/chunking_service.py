@@ -114,7 +114,9 @@ class ChunkingService:
     1. **Legal structural chunking** — Activated when the text contains Persian
        legal structure markers (ماده, فصل). Chunks are created at article
        (ماده) boundaries, with long articles split at clause (بند) boundaries
-       using clause-boundary-aware overlap.
+       using clause-boundary-aware overlap. Additionally, inter-article overlap
+       appends trailing text from the next article to provide cross-article
+       context for the RAG system.
 
     2. **Sentence-boundary chunking** — Fallback for non-legal documents.
        Splits at sentence endings (``.``, ``!``, ``?``) with character-based
@@ -142,6 +144,7 @@ class ChunkingService:
         legal_chunking_enabled: bool = True,
         legal_max_chunk_size: int = 2000,
         legal_overlap_clauses: int = 1,
+        legal_overlap_chars: int = 150,
     ) -> List[ChunkResult]:
         """Split ``text`` into a list of overlapping chunks.
 
@@ -163,6 +166,9 @@ class ChunkingService:
                 (for splitting long articles).
             legal_overlap_clauses: Number of clauses to overlap when
                 splitting long articles at clause boundaries.
+            legal_overlap_chars: Number of characters from the next article
+                to append as overlap to the current chunk. Provides context
+                for concepts that span article boundaries.
 
         Returns:
             A list of :class:`ChunkResult` instances, one per chunk.
@@ -190,6 +196,7 @@ class ChunkingService:
                 page_map=page_map,
                 max_chunk_size=legal_max_chunk_size,
                 overlap_clauses=legal_overlap_clauses,
+                legal_overlap_chars=legal_overlap_chars,
             )
         else:
             return self._chunk_sentence(
@@ -213,6 +220,7 @@ class ChunkingService:
         page_map: list[tuple[int, int]],
         max_chunk_size: int,
         overlap_clauses: int,
+        legal_overlap_chars: int = 150,
     ) -> List[ChunkResult]:
         """Chunk text using Persian legal structure boundaries.
 
@@ -223,6 +231,8 @@ class ChunkingService:
            a. If it fits within max_chunk_size, keep as single chunk
            b. If too long, split at clause boundaries with clause-aware overlap
         4. Attach legal metadata (article number, chapter, parent article)
+        5. Append inter-article overlap from the next article to provide
+           cross-article context for the RAG system.
 
         Args:
             text: Original text with page markers.
@@ -231,6 +241,8 @@ class ChunkingService:
             page_map: Page marker positions in original text.
             max_chunk_size: Maximum characters per legal chunk.
             overlap_clauses: Number of clauses to overlap when splitting.
+            legal_overlap_chars: Number of characters from the next article
+                to append as overlap to the current chunk.
 
         Returns:
             List of :class:`ChunkResult` instances.
@@ -250,11 +262,17 @@ class ChunkingService:
         # Group segments into articles (including their notes and clauses)
         article_groups = self._group_article_segments(segments)
 
+        # Pre-build content for each article group so we can reference
+        # the next article's content for overlap.
+        group_contents: list[str] = []
         for article_segments in article_groups:
-            # Combine all segments in this group into one content block
-            article_content = "\n".join(
+            content = "\n".join(
                 s.content for s in article_segments if s.content
             )
+            group_contents.append(content)
+
+        for i, article_segments in enumerate(article_groups):
+            article_content = group_contents[i]
 
             if not article_content.strip():
                 continue
@@ -268,6 +286,23 @@ class ChunkingService:
                 article_seg.segment_number if article_seg else None
             )
             chapter = article_seg.metadata.get("chapter") if article_seg else None
+
+            # --- NEW: Inter-article overlap ---
+            # Append trailing characters from the next article to provide
+            # cross-article context for the RAG system.
+            if i + 1 < len(article_groups):
+                next_content = group_contents[i + 1]
+                if next_content:
+                    overlap_text = next_content[:legal_overlap_chars]
+                    # Trim to last space or newline boundary to avoid mid-word break
+                    last_boundary = max(
+                        overlap_text.rfind(" "),
+                        overlap_text.rfind("\n"),
+                    )
+                    if last_boundary > 0:
+                        overlap_text = overlap_text[:last_boundary]
+                    article_content = article_content + "\n" + overlap_text
+            # --- END NEW ---
 
             # Check if this article fits within max_chunk_size
             if len(article_content) <= max_chunk_size:
@@ -295,6 +330,7 @@ class ChunkingService:
                     text=text,
                     clean_to_original=clean_to_original,
                     page_map=page_map,
+                    overlap=legal_overlap_chars,
                 )
                 chunks.extend(clause_chunks)
 
@@ -366,6 +402,7 @@ class ChunkingService:
         text: str,
         clean_to_original: list[int],
         page_map: list[tuple[int, int]],
+        overlap: int = 0,
     ) -> List[ChunkResult]:
         """Split a long article at clause boundaries with clause-aware overlap.
 
@@ -389,6 +426,8 @@ class ChunkingService:
             text: Original text with page markers.
             clean_to_original: Position mapping.
             page_map: Page marker positions.
+            overlap: Character overlap to use when falling back to
+                ``_split_by_chars()`` (no clause structure detected).
 
         Returns:
             List of :class:`ChunkResult` instances.
@@ -408,6 +447,7 @@ class ChunkingService:
                 text=text,
                 clean_to_original=clean_to_original,
                 page_map=page_map,
+                overlap=overlap,
             )
 
         chunks: List[ChunkResult] = []
@@ -512,10 +552,14 @@ class ChunkingService:
         text: str,
         clean_to_original: list[int],
         page_map: list[tuple[int, int]],
+        overlap: int = 0,
     ) -> List[ChunkResult]:
-        """Fallback: split content by character size (no clause boundaries).
+        """Fallback: split content by character size with sentence-boundary
+        awareness and overlap.
 
         Used when a long article has no detectable clause structure.
+        Attempts to split at sentence boundaries near the target size,
+        falling back to space boundaries, then hard split.
 
         Args:
             content: The text content to split.
@@ -527,18 +571,60 @@ class ChunkingService:
             text: Original text with page markers.
             clean_to_original: Position mapping.
             page_map: Page marker positions.
+            overlap: Number of characters of overlap between consecutive
+                sub-chunks.
 
         Returns:
             List of :class:`ChunkResult` instances.
         """
+        if len(content) <= max_chunk_size:
+            chunk = self._make_chunk(
+                content=content,
+                text=text,
+                clean_to_original=clean_to_original,
+                page_map=page_map,
+                legal_type=legal_type,
+                legal_number=legal_number,
+                parent_article=parent_article,
+                metadata=metadata,
+            )
+            return [chunk] if chunk else []
+
         chunks: List[ChunkResult] = []
         start = 0
         content_len = len(content)
 
         while start < content_len:
             end = min(start + max_chunk_size, content_len)
-            chunk_content = content[start:end].strip()
 
+            if end >= content_len:
+                # Last chunk — take remaining content
+                chunk_content = content[start:].strip()
+                if chunk_content:
+                    chunk = self._make_chunk(
+                        content=chunk_content,
+                        text=text,
+                        clean_to_original=clean_to_original,
+                        page_map=page_map,
+                        legal_type=legal_type,
+                        legal_number=legal_number,
+                        parent_article=parent_article,
+                        metadata=metadata,
+                    )
+                    if chunk:
+                        chunks.append(chunk)
+                break
+
+            # Try to find a good split point within the current window
+            split_at = self._find_split_point(content, start, end)
+
+            # If _find_split_point returns end (hard split), try sentence boundary
+            if split_at == end:
+                sentence_end = self._find_sentence_boundary(content, start, end)
+                if sentence_end is not None:
+                    split_at = sentence_end
+
+            chunk_content = content[start:split_at].strip()
             if chunk_content:
                 chunk = self._make_chunk(
                     content=chunk_content,
@@ -553,7 +639,15 @@ class ChunkingService:
                 if chunk:
                     chunks.append(chunk)
 
-            start = end
+            # Advance cursor with overlap
+            if overlap > 0:
+                start = max(split_at - overlap, 0)
+            else:
+                start = split_at
+
+            # Guard: cursor must always advance to prevent infinite loops
+            if start >= split_at and start < content_len:
+                start = split_at
 
         return chunks
 
@@ -743,6 +837,56 @@ class ChunkingService:
 
         detector = LegalStructureDetector()
         return detector.has_legal_structure(text)
+
+    # ------------------------------------------------------------------
+    # Boundary detection helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_sentence_boundary(
+        text: str, start: int, preferred_end: int
+    ) -> Optional[int]:
+        """Find the nearest sentence boundary to ``preferred_end``.
+
+        Searches in a window ``[preferred_end - 200, preferred_end + 200]``.
+        Returns the position after the sentence-ending character,
+        or ``None`` if no boundary is found within range.
+
+        Args:
+            text: The text to search within.
+            start: The start position of the current chunk (used to constrain
+                backward search).
+            preferred_end: The target end position (typically ``start + max_chunk_size``).
+
+        Returns:
+            The position after the sentence-ending character, or ``None``.
+        """
+        search_start = max(start, preferred_end - 200)
+        search_end = min(len(text), preferred_end + 200)
+        window = text[search_start:search_end]
+
+        # Persian + standard sentence-ending characters
+        sentence_markers = [".", "!", "?", "؟", "،", "؛"]
+        positions: list[int] = []
+
+        for marker in sentence_markers:
+            idx = window.find(marker)
+            while idx != -1:
+                # +1 to include the marker in the chunk
+                positions.append(search_start + idx + 1)
+                idx = window.find(marker, idx + 1)
+
+        if not positions:
+            return None
+
+        # Find closest to preferred_end
+        closest = min(positions, key=lambda x: abs(x - preferred_end))
+
+        # Only accept if within 300 chars of preferred_end
+        if abs(closest - preferred_end) < 300:
+            return closest
+
+        return None
 
     # ------------------------------------------------------------------
     # Original helpers (preserved from the original implementation)

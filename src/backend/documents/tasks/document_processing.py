@@ -607,6 +607,9 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         legal_overlap_clauses = getattr(
             settings, "LEGAL_CHUNK_OVERLAP_CLAUSES", 1
         )
+        legal_overlap_chars = getattr(
+            settings, "LEGAL_CHUNK_OVERLAP_CHARS", 150
+        )
 
         chunk_results = chunking_service.chunk_text(
             extracted_text,
@@ -615,6 +618,7 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
             legal_chunking_enabled=legal_chunking_enabled,
             legal_max_chunk_size=legal_max_chunk_size,
             legal_overlap_clauses=legal_overlap_clauses,
+            legal_overlap_chars=legal_overlap_chars,
         )
 
         # Build DocumentChunk instances with legal metadata.
