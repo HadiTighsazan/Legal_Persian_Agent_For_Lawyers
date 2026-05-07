@@ -283,6 +283,9 @@ LEGAL_CHUNKING_ENABLED = env.bool('LEGAL_CHUNKING_ENABLED', default=True)
 LEGAL_MAX_CHUNK_SIZE = env.int('LEGAL_MAX_CHUNK_SIZE', default=2000)
 LEGAL_CHUNK_OVERLAP_CLAUSES = env.int('LEGAL_CHUNK_OVERLAP_CLAUSES', default=1)
 
+# Non-Text Chunk Filtering (Epic E11)
+NON_TEXT_CHUNK_FILTERING_ENABLED = env.bool('NON_TEXT_CHUNK_FILTERING_ENABLED', default=True)
+
 # Extraction Strategy
 EXTRACTION_BACKEND = env('EXTRACTION_BACKEND', default='pymupdf')  # pymupdf | pdfplumber | tesseract
 EXTRACTION_AUTO_FALLBACK = env.bool('EXTRACTION_AUTO_FALLBACK', default=True)

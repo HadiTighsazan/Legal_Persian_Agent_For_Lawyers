@@ -1,8 +1,8 @@
-# WIP Context — Fix Missing Overlap Between Chunks in Persian Legal Document Chunking
+# WIP Context — Safe Non-Text Section Filtering for Persian Legal Chunking
 
 ## Status: ✅ COMPLETED (2026-05-07)
 
-All changes from the implementation plan [`plans/plan-fix-chunk-overlap-persian-legal.md`](plans/plan-fix-chunk-overlap-persian-legal.md) have been implemented and verified.
+All changes from the implementation plan [`plans/plan-safe-non-text-chunk-filtering.md`](plans/plan-safe-non-text-chunk-filtering.md) have been implemented and verified.
 
 ---
 
@@ -10,79 +10,86 @@ All changes from the implementation plan [`plans/plan-fix-chunk-overlap-persian-
 
 ### Problem Summary
 
-Chunks produced by the legal structural chunking pipeline had **no overlap between consecutive articles** (مواد). This was problematic for a RAG system on Persian legal texts because:
-- A legal concept often spans across article boundaries
-- Without overlap, a user query referencing a concept bridging two articles gets incomplete context
-- Chunks showed broken words/sentences across chunk boundaries (e.g., Chunk #20 ending with `خواه` and Chunk #21 starting with `د. کرد.`)
+When chunking Persian legal documents, certain sections are **not actual legal content** but structural artifacts (table of contents, headers, footers, page numbers, etc.). These sections, if chunked and embedded, pollute the vector database with meaningless content, degrading RAG retrieval quality.
 
-### Root Causes Addressed
+### Solution
 
-1. **`_chunk_legal()`** — Each article group became one chunk with no overlap from the next article
-2. **`_split_by_chars()`** — Had zero overlap at all; simply did `start = end` with no rewind mechanism; split blindly at `max_chunk_size` without checking sentence boundaries
-3. **`_split_long_article()` fallback** — When falling back to `_split_by_chars()` (no clauses found), no overlap parameter was passed
+A conservative (high-precision) non-text chunk filter that runs **after chunking** but **before persisting to the database**. The filter uses a chain of detector strategies — currently `TableOfContentsDetector` — with an extensible `BaseDetector` abstract class for future detectors.
 
-### Changes Made
+### Detection Criteria (Conservative)
 
-#### File: [`src/backend/documents/services/chunking_service.py`](src/backend/documents/services/chunking_service.py)
+1. **Explicit Title Check** (first 300 chars): `فهرست مطالب`, `فهرست مندرجات`, `Table of Contents`, etc.
+2. **Structural Line Check**: ≥3 lines ending with digits (page numbers) or containing dotted patterns (`...` or `…`)
+3. **Ratio Check**: Structural lines / total lines > **40%**
 
-| Change | Lines | Description |
-|--------|-------|-------------|
-| Added `legal_overlap_chars` param to `chunk_text()` | 143 | New parameter (default 150) for inter-article overlap |
-| Passed `legal_overlap_chars` to `_chunk_legal()` | 193 | Wired through the call chain |
-| Added `legal_overlap_chars` param to `_chunk_legal()` | 218 | New parameter accepted |
-| **Inter-article overlap logic** in `_chunk_legal()` | 275-286 | After building each article chunk, appends trailing chars from the next article, trimmed to last space/newline boundary to avoid mid-word breaks |
-| Added `overlap` param to `_split_long_article()` | 369 | New parameter (default 0) for character-based overlap fallback |
-| Passed `overlap` to `_split_by_chars()` fallback | 411 | When no clauses found, passes overlap to the character-based splitter |
-| **Rewrote `_split_by_chars()`** | 504-558 | Now uses `_find_split_point()` for space/sentence-boundary detection, falls back to `_find_sentence_boundary()`, and applies character-based overlap between sub-chunks |
-| **Added `_find_sentence_boundary()`** | 784-821 | New static method that searches for sentence-ending characters (`.`, `!`, `?`, `؟`, `،`, `؛`) within a 400-char window around the preferred end point |
+### Files Created
 
-#### File: [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py)
-
-| Change | Lines | Description |
-|--------|-------|-------------|
-| Read `LEGAL_CHUNK_OVERLAP_CHARS` from settings | 609 | `getattr(settings, "LEGAL_CHUNK_OVERLAP_CHARS", 150)` |
-| Pass `legal_overlap_chars` to `chunk_text()` | 618 | Wired through to the chunking service |
-
-#### File: [`src/backend/documents/tests/test_chunking_service.py`](src/backend/documents/tests/test_chunking_service.py)
-
-| Test Class | Tests | Description |
-|------------|-------|-------------|
-| `TestInterArticleOverlap` | 6 tests | `test_inter_article_overlap_appended`, `test_inter_article_overlap_zero`, `test_inter_article_overlap_metadata_preserved`, `test_last_article_no_overlap`, `test_single_article_no_inter_overlap`, `test_inter_article_overlap_trimmed_to_boundary` |
-| `TestSplitByChars` | 4 tests | `test_split_by_chars_sentence_boundary`, `test_split_by_chars_with_overlap`, `test_split_by_chars_no_overlap_when_zero`, `test_split_by_chars_small_content_no_split` |
-| `TestFindSentenceBoundary` | 4 tests | `test_finds_period_boundary`, `test_finds_persian_question_mark`, `test_no_boundary_returns_none`, `test_boundary_outside_range_returns_none` |
-
-### Key Design Decisions
-
-1. **Inter-article overlap is appended to the current chunk** — The overlap text from the next article is appended to the current chunk's content. This means the current chunk contains its own article PLUS a preview of the next article. The chunk's metadata (legal_type, legal_number) remains tied to the primary article.
-
-2. **Overlap trimmed to last space/newline** — To avoid mid-word breaks, the overlap text is trimmed to the last space or newline boundary within the overlap window.
-
-3. **`_split_by_chars()` reuses `_find_split_point()`** — The existing sentence-boundary detection logic is reused, with `_find_sentence_boundary()` as an additional fallback for cases where no standard boundary is found.
-
-4. **`_find_sentence_boundary()` searches bidirectionally** — It looks for sentence-ending characters in a window of `[preferred_end - 200, preferred_end + 200]`, finding the closest boundary to the preferred end point, accepting it only if within 300 characters.
-
-### Test Results
-
-**38 passed, 0 failed** — All existing tests plus 14 new tests pass successfully.
-
-### Configuration
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `LEGAL_CHUNK_OVERLAP_CHARS` | `150` | Number of characters from the next article to append as overlap (~30-40 Persian words) |
+| File | Description |
+|------|-------------|
+| [`src/backend/documents/services/non_text_filter.py`](src/backend/documents/services/non_text_filter.py) | **NEW** — `BaseDetector` (abstract), `TableOfContentsDetector`, `NonTextChunkFilter` (orchestrator) |
+| [`src/backend/documents/tests/test_non_text_filter.py`](src/backend/documents/tests/test_non_text_filter.py) | **NEW** — 20 tests across 3 test classes |
 
 ### Files Modified
 
-- `src/backend/documents/services/chunking_service.py` — Core changes (inter-article overlap, `_split_by_chars()` rewrite, `_find_sentence_boundary()`)
-- `src/backend/documents/tasks/document_processing.py` — Pass new setting to chunking service
-- `src/backend/documents/tests/test_chunking_service.py` — 14 new test cases
+| File | Change |
+|------|--------|
+| [`src/backend/config/settings.py`](src/backend/config/settings.py) | Added `NON_TEXT_CHUNK_FILTERING_ENABLED` setting (default `True`, line 286) |
+| [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py) | Imported `NonTextChunkFilter` (line 45); applied filter after `chunking_service.chunk_text()` and before `DocumentChunk.bulk_create()` (lines 625-640) |
+
+### New Setting
+
+```python
+# Non-Text Chunk Filtering (Epic E11)
+NON_TEXT_CHUNK_FILTERING_ENABLED = env.bool('NON_TEXT_CHUNK_FILTERING_ENABLED', default=True)
+```
+
+Can be disabled by setting `NON_TEXT_CHUNK_FILTERING_ENABLED=false` in the `.env` file.
+
+### Test Results
+
+```
+documents/tests/test_non_text_filter.py .............. 20 passed in 0.49s
+```
+
+#### TestTableOfContentsDetector (12 tests)
+
+| Test | Verifies |
+|------|----------|
+| `test_toc_with_title_and_page_numbers` | Persian TOC with title + page numbers → `True` |
+| `test_toc_with_dotted_lines` | Persian TOC with dotted separators → `True` |
+| `test_no_title_returns_false` | No explicit title → `False` |
+| `test_few_structural_lines` | Only 2 structural lines (<3) → `False` |
+| `test_low_structural_ratio` | Ratio <40% → `False` |
+| `test_english_toc` | English "Table of Contents" → `True` |
+| `test_legal_article_not_toc` | Article containing "فهرست" in body → `False` |
+| `test_empty_text` | Empty string → `False` |
+| `test_whitespace_only` | Whitespace only → `False` |
+| `test_persian_toc_alternative_title` | "فهرست مندرجات" → `True` |
+| `test_toc_with_arabic_digits` | Arabic (Eastern) digits → `True` |
+| `test_toc_title_appears_later_in_text` | Title beyond 300-char scan window → `False` (safe miss) |
+
+#### TestNonTextChunkFilter (6 tests)
+
+| Test | Verifies |
+|------|----------|
+| `test_filters_toc_chunks` | TOC chunk removed, real chunks preserved |
+| `test_passes_all_real_chunks` | All real chunks unchanged |
+| `test_empty_chunks_list` | Empty input → empty output |
+| `test_single_toc_chunk` | Single TOC chunk → empty list |
+| `test_custom_detector_chain` | Custom detector chain works |
+| `test_custom_detector_chain_all_pass` | Custom chain preserves when none match |
+
+#### TestIntegrationWithChunkingService (2 tests)
+
+| Test | Verifies |
+|------|----------|
+| `test_toc_at_start_of_document` | TOC at start filtered, article chunks preserved |
+| `test_toc_in_middle_of_document` | TOC between chapters filtered, surrounding preserved |
 
 ---
 
-## Rollback Plan
+## Next Steps
 
-If any change causes regression:
-
-1. **Chunking service**: Revert `src/backend/documents/services/chunking_service.py` — remove `legal_overlap_chars` param from `chunk_text()` and `_chunk_legal()`, remove inter-article overlap logic in `_chunk_legal()`, restore original `_split_by_chars()`, remove `_find_sentence_boundary()`, remove `overlap` param from `_split_long_article()`
-2. **Task file**: Revert `src/backend/documents/tasks/document_processing.py` — remove `legal_overlap_chars` reading and passing
-3. **Tests**: Remove `TestInterArticleOverlap`, `TestSplitByChars`, `TestFindSentenceBoundary` test classes
+1. Add more detectors (e.g., `HeaderFooterDetector`, `PageNumberDetector`) by subclassing `BaseDetector`
+2. Monitor false positive rate in production — the conservative thresholds are designed to err on the side of keeping content
+3. Consider adding a `NON_TEXT_FILTER_DEBUG_LOGGING` setting to log filtered chunk previews for tuning

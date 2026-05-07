@@ -41,6 +41,7 @@ from documents.services.error_handler import (
     fail_processing_task,
     log_milestone,
 )
+from documents.services.non_text_filter import NonTextChunkFilter
 from documents.services.persian_normalizer import PersianNormalizer
 from documents.storage import get_storage_backend
 from tasks.models import ProcessingTask
@@ -620,6 +621,23 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
             legal_overlap_clauses=legal_overlap_clauses,
             legal_overlap_chars=legal_overlap_chars,
         )
+
+        # NEW: Filter out non-text chunks (e.g., table of contents) before
+        # persisting to the database. This prevents structural artifacts from
+        # polluting the vector store.
+        if getattr(settings, "NON_TEXT_CHUNK_FILTERING_ENABLED", True):
+            pre_filter_count = len(chunk_results)
+            non_text_filter = NonTextChunkFilter()
+            chunk_results = non_text_filter.filter_chunks(chunk_results)
+            filtered_count = pre_filter_count - len(chunk_results)
+            if filtered_count > 0:
+                logger.info(
+                    "Non-text chunk filter removed %d chunk(s) "
+                    "(kept %d) for document %d",
+                    filtered_count,
+                    len(chunk_results),
+                    document_id,
+                )
 
         # Build DocumentChunk instances with legal metadata.
         # Denormalized fields (law_name, legal_status, approval_date, legal_type)
