@@ -35,8 +35,8 @@ env = environ.Env(
     GEMINI_CHAT_MODEL=(str, 'gemini-2.0-flash'),
     OLLAMA_CHAT_MODEL=(str, 'llama3'),
     OPENAI_EMBEDDING_MODEL=(str, 'text-embedding-3-small'),
-    OLLAMA_EMBEDDING_MODEL=(str, 'nomic-embed-text'),
-    EMBEDDING_DIMENSION=(int, 768),
+    OLLAMA_EMBEDDING_MODEL=(str, 'bge-m3'),
+    EMBEDDING_DIMENSION=(int, 1024),
     VECTOR_SEARCH_PROBES=(int, 10),
 )
 
@@ -252,8 +252,8 @@ OLLAMA_BASE_URL = env('OLLAMA_BASE_URL', default='http://host.docker.internal:11
 EMBEDDING_PROVIDER = env('EMBEDDING_PROVIDER', default='google')
 CHAT_PROVIDER = env('CHAT_PROVIDER', default='openai')
 OPENAI_EMBEDDING_MODEL = env('OPENAI_EMBEDDING_MODEL', default='text-embedding-3-small')
-OLLAMA_EMBEDDING_MODEL = env('OLLAMA_EMBEDDING_MODEL', default='nomic-embed-text')
-EMBEDDING_DIMENSION = env('EMBEDDING_DIMENSION', default=768)
+OLLAMA_EMBEDDING_MODEL = env('OLLAMA_EMBEDDING_MODEL', default='bge-m3')
+EMBEDDING_DIMENSION = env('EMBEDDING_DIMENSION', default=1024)
 GEMINI_CHAT_MODEL = env('GEMINI_CHAT_MODEL', default='gemini-2.0-flash')
 OLLAMA_CHAT_MODEL = env('OLLAMA_CHAT_MODEL', default='llama3')
 

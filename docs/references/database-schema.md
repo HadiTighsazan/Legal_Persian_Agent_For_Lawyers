@@ -64,7 +64,7 @@
 | page_end | INTEGER | NOT NULL | Ending page number |
 | content | TEXT | NOT NULL | Extracted text content |
 | token_count | INTEGER | NULL | Token count for LLM |
-| embedding | VECTOR(768) | NULL | Ollama nomic-embed-text embedding vector |
+| embedding | VECTOR(1024) | NULL | Ollama bge-m3 embedding vector |
 | metadata | JSONB | DEFAULT '{}' | Additional metadata |
 | **search_vector** | **TSVECTOR** | **NULL** | **Full-text search vector, auto-populated by DB trigger on INSERT/UPDATE of content using `to_tsvector('simple', ...)`. Added in Epic 6 (migration 0006).** |
 | **law_name** | **VARCHAR(500)** | **NULL, INDEXED** | **Denormalized law name for efficient filtering. Populated from `metadata['law_name']` during chunking. Added in Epic 6 (migration 0006).** |
@@ -224,7 +224,7 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 ## Migration Notes
 
 - Use pgvector extension for similarity search on embeddings
-- Default embedding dimension: 768 (Ollama nomic-embed-text)
+- Default embedding dimension: 1024 (Ollama bge-m3)
 - All timestamps in UTC
 - Use CASCADE delete for related records
 - **Epic 6 (migration 0006):** Added `search_vector` (TSVECTOR with GIN index), denormalized metadata columns (`law_name`, `legal_status`, `approval_date`, `legal_type`), and a DB trigger `trg_chunk_search_vector` that auto-populates `search_vector` from `content` using `to_tsvector('simple', ...)` on INSERT/UPDATE.

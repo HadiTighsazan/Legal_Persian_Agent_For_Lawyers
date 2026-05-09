@@ -119,7 +119,7 @@ class DocumentChunk(models.Model):
     page_end = models.IntegerField()
     content = models.TextField()
     token_count = models.IntegerField(null=True, blank=True)
-    embedding = VectorField(dimensions=768, null=True, blank=True)
+    embedding = VectorField(dimensions=1024, null=True, blank=True)
     metadata = models.JSONField(default=dict)
 
     # ------------------------------------------------------------------

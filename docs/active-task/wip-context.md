@@ -1,95 +1,60 @@
-# WIP Context — Safe Non-Text Section Filtering for Persian Legal Chunking
+# WIP Context — Switch Ollama Embedding Model from `nomic-embed-text` to `bge-m3`
 
-## Status: ✅ COMPLETED (2026-05-07)
+## Status: ✅ COMPLETED (2026-05-09)
 
-All changes from the implementation plan [`plans/plan-safe-non-text-chunk-filtering.md`](plans/plan-safe-non-text-chunk-filtering.md) have been implemented and verified.
+All changes from the implementation plan [`plans/plan-switch-ollama-embedding-to-bge-m3.md`](plans/plan-switch-ollama-embedding-to-bge-m3.md) have been implemented and verified.
 
 ---
 
 ## What Changed
 
-### Problem Summary
+### Summary
 
-When chunking Persian legal documents, certain sections are **not actual legal content** but structural artifacts (table of contents, headers, footers, page numbers, etc.). These sections, if chunked and embedded, pollute the vector database with meaningless content, degrading RAG retrieval quality.
-
-### Solution
-
-A conservative (high-precision) non-text chunk filter that runs **after chunking** but **before persisting to the database**. The filter uses a chain of detector strategies — currently `TableOfContentsDetector` — with an extensible `BaseDetector` abstract class for future detectors.
-
-### Detection Criteria (Conservative)
-
-1. **Explicit Title Check** (first 300 chars): `فهرست مطالب`, `فهرست مندرجات`, `Table of Contents`, etc.
-2. **Structural Line Check**: ≥3 lines ending with digits (page numbers) or containing dotted patterns (`...` or `…`)
-3. **Ratio Check**: Structural lines / total lines > **40%**
-
-### Files Created
-
-| File | Description |
-|------|-------------|
-| [`src/backend/documents/services/non_text_filter.py`](src/backend/documents/services/non_text_filter.py) | **NEW** — `BaseDetector` (abstract), `TableOfContentsDetector`, `NonTextChunkFilter` (orchestrator) |
-| [`src/backend/documents/tests/test_non_text_filter.py`](src/backend/documents/tests/test_non_text_filter.py) | **NEW** — 20 tests across 3 test classes |
+Switched the Ollama embedding model from `nomic-embed-text` (768-dim) to `bge-m3` (1024-dim). Since this is a fresh project with no existing data, no re-embedding was needed.
 
 ### Files Modified
 
 | File | Change |
 |------|--------|
-| [`src/backend/config/settings.py`](src/backend/config/settings.py) | Added `NON_TEXT_CHUNK_FILTERING_ENABLED` setting (default `True`, line 286) |
-| [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py) | Imported `NonTextChunkFilter` (line 45); applied filter after `chunking_service.chunk_text()` and before `DocumentChunk.bulk_create()` (lines 625-640) |
+| [`src/backend/config/settings.py`](src/backend/config/settings.py:38) | Changed `OLLAMA_EMBEDDING_MODEL` default from `'nomic-embed-text'` to `'bge-m3'` (line 38) |
+| [`src/backend/config/settings.py`](src/backend/config/settings.py:39) | Changed `EMBEDDING_DIMENSION` default from `768` to `1024` (line 39) |
+| [`src/backend/config/settings.py`](src/backend/config/settings.py:255) | Changed `OLLAMA_EMBEDDING_MODEL` env default from `'nomic-embed-text'` to `'bge-m3'` (line 255) |
+| [`src/backend/config/settings.py`](src/backend/config/settings.py:256) | Changed `EMBEDDING_DIMENSION` env default from `768` to `1024` (line 256) |
+| [`src/backend/documents/models.py`](src/backend/documents/models.py:122) | Changed `VectorField(dimensions=768)` to `VectorField(dimensions=1024)` |
+| [`docker-compose.yml`](docker-compose.yml:104) | Changed `OLLAMA_EMBEDDING_MODEL` default from `nomic-embed-text` to `bge-m3` (backend, celery_worker, celery_beat) |
+| [`docker-compose.yml`](docker-compose.yml:107) | Changed `EMBEDDING_DIMENSION` default from `768` to `1024` (backend, celery_worker, celery_beat) |
+| [`.env.example`](.env.example:113) | Changed `OLLAMA_EMBEDDING_MODEL=nomic-embed-text` to `bge-m3` |
+| [`.env.example`](.env.example:197) | Changed `EMBEDDING_DIMENSION=768` to `1024` |
+| [`.env`](.env:56) | Changed `OLLAMA_EMBEDDING_MODEL=e5-small` to `bge-m3` |
+| [`.env`](.env:59) | Changed `EMBEDDING_DIMENSION=384` to `1024` and updated comment |
+| [`docs/references/database-schema.md`](docs/references/database-schema.md:67) | Updated `embedding` column from `VECTOR(768)` to `VECTOR(1024)` |
+| [`docs/references/database-schema.md`](docs/references/database-schema.md:227) | Updated migration notes from `768 (Ollama nomic-embed-text)` to `1024 (Ollama bge-m3)` |
 
-### New Setting
+### Files Created
 
-```python
-# Non-Text Chunk Filtering (Epic E11)
-NON_TEXT_CHUNK_FILTERING_ENABLED = env.bool('NON_TEXT_CHUNK_FILTERING_ENABLED', default=True)
-```
+| File | Description |
+|------|-------------|
+| [`src/backend/documents/migrations/0013_change_embedding_dim_to_1024.py`](src/backend/documents/migrations/0013_change_embedding_dim_to_1024.py) | **NEW** — Migration that drops ivfflat index, alters `embedding` column to `VECTOR(1024)`, and re-creates the index |
 
-Can be disabled by setting `NON_TEXT_CHUNK_FILTERING_ENABLED=false` in the `.env` file.
+### Files Not Modified (Confirmed No Changes Needed)
 
-### Test Results
+| File | Reason |
+|------|--------|
+| [`src/backend/providers/ollama_embedding.py`](src/backend/providers/ollama_embedding.py) | Reads settings dynamically — no hardcoded values |
+| [`src/backend/providers/registration.py`](src/backend/providers/registration.py) | Provider registration unchanged (still `ollama`) |
+| [`src/backend/documents/services/embedding_service.py`](src/backend/documents/services/embedding_service.py) | Delegates to provider — no hardcoded dimension |
+| [`src/backend/documents/services/search_service.py`](src/backend/documents/services/search_service.py) | Validates dimension against settings dynamically |
+| [`src/backend/conversations/rag_service.py`](src/backend/conversations/rag_service.py) | No hardcoded dimension references |
+| [`src/backend/documents/checks.py`](src/backend/documents/checks.py) | pgvector index check — no dimension hardcoded |
+| [`docs/references/api-registry.md`](docs/references/api-registry.md) | No embedding dimension references found |
+| Frontend code | No embedding dimension references |
 
-```
-documents/tests/test_non_text_filter.py .............. 20 passed in 0.49s
-```
+### Verification
 
-#### TestTableOfContentsDetector (12 tests)
+- All migrations applied successfully (0013 + auto-generated 0014 faked)
+- Environment variables confirmed: `OLLAMA_EMBEDDING_MODEL=bge-m3`, `EMBEDDING_DIMENSION=1024`
+- Containers rebuilt and restarted successfully
 
-| Test | Verifies |
-|------|----------|
-| `test_toc_with_title_and_page_numbers` | Persian TOC with title + page numbers → `True` |
-| `test_toc_with_dotted_lines` | Persian TOC with dotted separators → `True` |
-| `test_no_title_returns_false` | No explicit title → `False` |
-| `test_few_structural_lines` | Only 2 structural lines (<3) → `False` |
-| `test_low_structural_ratio` | Ratio <40% → `False` |
-| `test_english_toc` | English "Table of Contents" → `True` |
-| `test_legal_article_not_toc` | Article containing "فهرست" in body → `False` |
-| `test_empty_text` | Empty string → `False` |
-| `test_whitespace_only` | Whitespace only → `False` |
-| `test_persian_toc_alternative_title` | "فهرست مندرجات" → `True` |
-| `test_toc_with_arabic_digits` | Arabic (Eastern) digits → `True` |
-| `test_toc_title_appears_later_in_text` | Title beyond 300-char scan window → `False` (safe miss) |
+### Next Steps
 
-#### TestNonTextChunkFilter (6 tests)
-
-| Test | Verifies |
-|------|----------|
-| `test_filters_toc_chunks` | TOC chunk removed, real chunks preserved |
-| `test_passes_all_real_chunks` | All real chunks unchanged |
-| `test_empty_chunks_list` | Empty input → empty output |
-| `test_single_toc_chunk` | Single TOC chunk → empty list |
-| `test_custom_detector_chain` | Custom detector chain works |
-| `test_custom_detector_chain_all_pass` | Custom chain preserves when none match |
-
-#### TestIntegrationWithChunkingService (2 tests)
-
-| Test | Verifies |
-|------|----------|
-| `test_toc_at_start_of_document` | TOC at start filtered, article chunks preserved |
-| `test_toc_in_middle_of_document` | TOC between chapters filtered, surrounding preserved |
-
----
-
-## Next Steps
-
-1. Add more detectors (e.g., `HeaderFooterDetector`, `PageNumberDetector`) by subclassing `BaseDetector`
-2. Monitor false positive rate in production — the conservative thresholds are designed to err on the side of keeping content
-3. Consider adding a `NON_TEXT_FILTER_DEBUG_LOGGING` setting to log filtered chunk previews for tuning
+None — task is complete. The system is now configured to use `bge-m3` (1024-dim) for all new embeddings.
