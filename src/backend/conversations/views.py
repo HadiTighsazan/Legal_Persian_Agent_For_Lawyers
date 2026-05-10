@@ -24,6 +24,10 @@ from rest_framework.views import APIView
 
 from conversations.models import Conversation, Message
 from documents.models import Document
+from conversations.global_rag_service import (
+    GlobalRAGServiceException,
+    run_global_rag_query,
+)
 from conversations.rag_service import RAGServiceException, run_rag_query, run_rag_query_stream
 from conversations.serializers import (
     AskQuestionSerializer,
@@ -318,6 +322,7 @@ class ConversationMessageView(APIView):
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
         question = validated_data["content"]
+        mode = validated_data.get("mode", "local_rag")
 
         # ------------------------------------------------------------------
         # 3. Persist the user message first
@@ -338,46 +343,77 @@ class ConversationMessageView(APIView):
         ]
 
         # ------------------------------------------------------------------
-        # 5. Call run_rag_query
+        # 5. Route to the appropriate RAG pipeline based on mode
         # ------------------------------------------------------------------
-        try:
-            result = run_rag_query(
-                question=question,
-                document_id=str(conversation.document_id),
-                conversation_history=conversation_history,
-                top_k=15,
-            )
-        except RAGServiceException as e:
-            error_msg = str(e).lower()
-            if isinstance(e.__cause__, RateLimitError) or "rate limit" in error_msg or "429" in error_msg:
-                return Response(
-                    {
-                        "error": "rate_limit_exceeded",
-                        "message": "AI provider rate limit exceeded. Please try again later.",
-                        "retry_after": 60,
-                    },
-                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+        if mode == "global_rag":
+            try:
+                result = run_global_rag_query(
+                    question=question,
+                    conversation_history=conversation_history,
+                    top_k_per_hub=10,
                 )
-            logger.error(
-                "RAG query failed for conversation %s: %s",
-                conversation_id,
-                e,
-            )
-            return Response(
-                {"error": "rag_error", "message": str(e)},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+            except GlobalRAGServiceException as e:
+                error_msg = str(e).lower()
+                if "rate limit" in error_msg or "429" in error_msg:
+                    return Response(
+                        {
+                            "error": "rate_limit_exceeded",
+                            "message": "AI provider rate limit exceeded. Please try again later.",
+                            "retry_after": 60,
+                        },
+                        status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    )
+                logger.error(
+                    "Global RAG query failed for conversation %s: %s",
+                    conversation_id,
+                    e,
+                )
+                return Response(
+                    {"error": "global_rag_error", "message": str(e)},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+        else:
+            try:
+                result = run_rag_query(
+                    question=question,
+                    document_id=str(conversation.document_id),
+                    conversation_history=conversation_history,
+                    top_k=15,
+                )
+            except RAGServiceException as e:
+                error_msg = str(e).lower()
+                if isinstance(e.__cause__, RateLimitError) or "rate limit" in error_msg or "429" in error_msg:
+                    return Response(
+                        {
+                            "error": "rate_limit_exceeded",
+                            "message": "AI provider rate limit exceeded. Please try again later.",
+                            "retry_after": 60,
+                        },
+                        status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    )
+                logger.error(
+                    "RAG query failed for conversation %s: %s",
+                    conversation_id,
+                    e,
+                )
+                return Response(
+                    {"error": "rag_error", "message": str(e)},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
 
         # ------------------------------------------------------------------
-        # 6. Persist the assistant message with sources and token_usage
+        # 6. Persist the assistant message with sources, token_usage, and hub_metadata
         # ------------------------------------------------------------------
-        assistant_message = Message.objects.create(
-            conversation=conversation,
-            role="assistant",
-            content=result["content"],
-            sources=result["sources"],
-            token_usage=result["token_usage"],
-        )
+        assistant_kwargs = {
+            "conversation": conversation,
+            "role": "assistant",
+            "content": result["content"],
+            "sources": result["sources"],
+            "token_usage": result["token_usage"],
+        }
+        if mode == "global_rag" and "hub_metadata" in result:
+            assistant_kwargs["hub_metadata"] = result["hub_metadata"]
+        assistant_message = Message.objects.create(**assistant_kwargs)
 
         # ------------------------------------------------------------------
         # 7. Touch conversation.updated_at
@@ -433,6 +469,7 @@ class ConversationMessageStreamView(APIView):
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
         question = validated_data["content"]
+        mode = validated_data.get("mode", "local_rag")
 
         # 3. Persist the user message
         Message.objects.create(
@@ -451,30 +488,54 @@ class ConversationMessageStreamView(APIView):
         # 5. Create a streaming SSE response
         def event_stream():
             try:
-                for event_type, data in run_rag_query_stream(
-                    question=question,
-                    document_id=str(conversation.document_id),
-                    conversation_history=conversation_history,
-                    top_k=15,
-                ):
-                    if event_type == "token":
-                        yield f"data: {json.dumps({'type': 'token', 'content': data['content']})}\n\n"
-                    elif event_type == "done":
-                        # Persist the assistant message
-                        assistant_message = Message.objects.create(
-                            conversation=conversation,
-                            role="assistant",
-                            content=data["content"],
-                            sources=data["sources"],
-                            token_usage=data["token_usage"],
-                        )
-                        # Touch conversation.updated_at
-                        conversation.save()
+                if mode == "global_rag":
+                    # Global RAG (non-streaming for now — uses run_global_rag_query)
+                    result = run_global_rag_query(
+                        question=question,
+                        conversation_history=conversation_history,
+                        top_k_per_hub=10,
+                    )
+                    # Persist the assistant message
+                    assistant_kwargs = {
+                        "conversation": conversation,
+                        "role": "assistant",
+                        "content": result["content"],
+                        "sources": result["sources"],
+                        "token_usage": result["token_usage"],
+                    }
+                    if "hub_metadata" in result:
+                        assistant_kwargs["hub_metadata"] = result["hub_metadata"]
+                    assistant_message = Message.objects.create(**assistant_kwargs)
+                    conversation.save()
 
-                        # Send done event with message metadata
-                        yield f"data: {json.dumps({'type': 'done', 'message_id': str(assistant_message.id), 'sources': data['sources'], 'token_usage': data['token_usage']})}\n\n"
+                    # Send the full content as a single token
+                    yield f"data: {json.dumps({'type': 'token', 'content': result['content']})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'message_id': str(assistant_message.id), 'sources': result['sources'], 'token_usage': result['token_usage'], 'hub_metadata': result.get('hub_metadata')})}\n\n"
+                else:
+                    for event_type, data in run_rag_query_stream(
+                        question=question,
+                        document_id=str(conversation.document_id),
+                        conversation_history=conversation_history,
+                        top_k=15,
+                    ):
+                        if event_type == "token":
+                            yield f"data: {json.dumps({'type': 'token', 'content': data['content']})}\n\n"
+                        elif event_type == "done":
+                            # Persist the assistant message
+                            assistant_message = Message.objects.create(
+                                conversation=conversation,
+                                role="assistant",
+                                content=data["content"],
+                                sources=data["sources"],
+                                token_usage=data["token_usage"],
+                            )
+                            # Touch conversation.updated_at
+                            conversation.save()
 
-            except RAGServiceException as e:
+                            # Send done event with message metadata
+                            yield f"data: {json.dumps({'type': 'done', 'message_id': str(assistant_message.id), 'sources': data['sources'], 'token_usage': data['token_usage']})}\n\n"
+
+            except (RAGServiceException, GlobalRAGServiceException) as e:
                 error_msg = str(e).lower()
                 if "rate limit" in error_msg or "429" in error_msg:
                     yield f"data: {json.dumps({'type': 'error', 'error': 'rate_limit_exceeded', 'message': 'AI provider rate limit exceeded. Please try again later.'})}\n\n"

@@ -39,6 +39,7 @@
 | **extracted_text_length** | **INTEGER** | **DEFAULT 0** | **Length of extracted text in characters (added in E04-T2)** |
 | **processing_error** | **TEXT** | **NULL** | **Error details from pipeline processing (added in E04-T2)** |
 | **document_type** | **VARCHAR(20)** | **DEFAULT 'user_upload', INDEXED** | **Document type: 'user_upload' for regular files, 'reference_law' for system reference legal texts. Used by RAG service to determine whether to apply legal_status filters. (added in migration 0007)** |
+| **hub_type** | **VARCHAR(50)** | **NULL, INDEXED** | **Legal knowledge hub type: 'legislation', 'judicial_precedent', 'advisory_opinion'. Only set for reference_law documents. Used by Global RAG (Phase 2a) to route queries to the correct hub. (added in migration 0015)** |
 | **extracted_text** | **TEXT** | **BLANK, DEFAULT ''** | **Full extracted PDF text for monitoring/debug (added in migration 0012)** |
 | **extraction_method** | **VARCHAR(20)** | **NULL** | **Which extractor succeeded: pymupdf, pdfplumber, tesseract (added in migration 0012)** |
 | **garbled_score** | **FLOAT** | **NULL** | **Garbled detection ratio (0.0–1.0) from `_compute_garbled_ratio()` (added in migration 0012)** |
@@ -71,6 +72,7 @@
 | **legal_status** | **VARCHAR(50)** | **NULL, INDEXED** | **Denormalized legal status for filtering (e.g., "valid", "obsolete"). Populated from `metadata['legal_status']` during chunking. Added in Epic 6 (migration 0006).** |
 | **approval_date** | **DATE** | **NULL, INDEXED** | **Denormalized approval date for date-range filtering. Populated from `metadata['approval_date']` during chunking. Added in Epic 6 (migration 0006).** |
 | **legal_type** | **VARCHAR(50)** | **NULL, INDEXED** | **Denormalized legal segment type (e.g., "article", "note", "chapter"). Populated from `metadata['legal_type']` during chunking. Added in Epic 6 (migration 0006).** |
+| **hub_type** | **VARCHAR(50)** | **NULL, INDEXED** | **Denormalized hub type for efficient per-hub filtering. Populated from parent document's `hub_type` during chunking. Used by Global RAG (Phase 2a) cross-document hybrid search. (added in migration 0015)** |
 | created_at | TIMESTAMP | DEFAULT NOW() | Creation timestamp |
 
 **Indexes:**
@@ -83,6 +85,7 @@
 - `idx_chunks_approval_date` on `approval_date` (added in Epic 6)
 - `idx_chunks_legal_type` on `legal_type` (added in Epic 6)
 - **`idx_chunks_content_trgm`** on **`content`** USING **GIN** with **`gin_trgm_ops`** (for PostgreSQL `pg_trgm` trigram similarity search, added in migration 0010)
+- **`idx_chunks_hub_type`** on **`hub_type`** (for per-hub filtering in Global RAG, added in migration 0015)
 
 **Constraints:**
 - UNIQUE(`document_id`, `chunk_index`)
@@ -120,6 +123,7 @@
 | content | TEXT | NOT NULL | Message content |
 | sources | JSONB | DEFAULT '[]' | Array of source chunks used |
 | token_usage | JSONB | NULL | Token usage stats |
+| **hub_metadata** | **JSONB** | **NULL** | **Global RAG metadata: stores per-hub search results, sub-queries, and hub-level source counts. Only populated when `mode='global_rag'`. (added in migration 0002 of conversations app)** |
 | created_at | TIMESTAMP | DEFAULT NOW() | Message timestamp |
 
 **Indexes:**
@@ -319,6 +323,24 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 - **Purpose:** Stores the full extracted PDF text, the extraction method that succeeded (pymupdf/pdfplumber/tesseract), and the garbled detection ratio for the developer monitoring page at `/monitoring/:documentId`.
 - **Dependencies:** Depends on migration `0011_normalize_presentation_forms`.
 - **Applied:** Pending (run `docker-compose exec backend python manage.py migrate` to apply).
+
+### Migration 0015 — Add hub_type to documents and document_chunks (Phase 2a — Global RAG)
+- **File:** `src/backend/documents/migrations/0015_document_hub_type_documentchunk_hub_type_and_more.py`
+- **Changes:**
+  - Added `hub_type` column to `documents` table: `VARCHAR(50)`, nullable, indexed
+  - Added `hub_type` column to `document_chunks` table: `VARCHAR(50)`, nullable, indexed (denormalized from parent document)
+  - Choices: `'legislation'` (قوانین مصوب), `'judicial_precedent'` (رویه‌های قضایی), `'advisory_opinion'` (نظریات مشورتی)
+  - Created `idx_chunks_hub_type` index on `document_chunks.hub_type`
+  - **Purpose:** Enables per-hub filtering in Global RAG cross-document hybrid search without JOINs
+  - **Note:** The GIN index `chunk_search_vector_gin` was NOT re-added (it already exists from migration 0014)
+  - **Applied:** Yes (via `docker-compose exec backend python manage migrate documents 0015`)
+
+### Migration 0002 (conversations) — Add hub_metadata to messages (Phase 2a — Global RAG)
+- **File:** `src/backend/conversations/migrations/0002_message_hub_metadata.py`
+- **Changes:**
+  - Added `hub_metadata` column to `messages` table: `JSONB`, nullable
+  - **Purpose:** Stores Global RAG metadata including per-hub search results, sub-queries, and hub-level source counts for assistant messages generated with `mode='global_rag'`
+  - **Applied:** Yes (via `docker-compose exec backend python manage migrate conversations 0002`)
 
 ### Migration 0011 — Normalize Arabic Presentation Forms in Chunk Content
 - **File:** `src/backend/documents/migrations/0011_normalize_presentation_forms.py`

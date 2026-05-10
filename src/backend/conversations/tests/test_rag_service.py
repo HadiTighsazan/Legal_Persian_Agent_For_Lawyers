@@ -201,6 +201,48 @@ class ExtractCitationsTests:
         citations = extract_citations("", sample_chunks)
         assert citations == []
 
+    def test_extracts_hub_type_from_chunk_metadata(self) -> None:
+        """hub_type is extracted from chunk metadata when present."""
+        chunks_with_hub = [
+            {
+                "chunk_id": "chunk-leg-1",
+                "chunk_index": 0,
+                "page_start": 1,
+                "page_end": 3,
+                "content": "Legal content about forgery.",
+                "relevance_score": 0.95,
+                "token_count": 10,
+                "metadata": {"hub_type": "legislation", "law_name": "قانون مجازات اسلامی"},
+            },
+            {
+                "chunk_id": "chunk-jud-1",
+                "chunk_index": 0,
+                "page_start": 10,
+                "page_end": 12,
+                "content": "Judicial precedent content.",
+                "relevance_score": 0.92,
+                "token_count": 8,
+                "metadata": {"hub_type": "judicial_precedent"},
+            },
+        ]
+        content = (
+            "According to [Source 1] and [Source 2], "
+            "the law is clear."
+        )
+        citations = extract_citations(content, chunks_with_hub)
+
+        assert len(citations) == 2
+        assert citations[0]["hub_type"] == "legislation"
+        assert citations[1]["hub_type"] == "judicial_precedent"
+
+    def test_skips_hub_type_when_metadata_missing(self, sample_chunks: list[dict]) -> None:
+        """No hub_type key in citation when metadata is empty or missing."""
+        content = "Reference [Source 1] is valid."
+        citations = extract_citations(content, sample_chunks)
+
+        assert len(citations) == 1
+        assert "hub_type" not in citations[0]
+
 
 # ---------------------------------------------------------------------------
 # RunRagQueryTests

@@ -859,7 +859,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 #### POST /conversations/{conversation_id}/messages/
 **Description:** Ask question in conversation (RAG query)
 **Auth Required:** Yes
-**Implementation Date:** 2026-04-28
+**Implementation Date:** 2026-04-28 (updated 2026-05-10 with Phase 2a — Global RAG)
 **View Class:** `ConversationMessageView`
 **Test Coverage:** 11 tests (10 unit + 1 integration) in `ConversationMessageViewTests`
 **Status:** ✅ Implemented
@@ -867,24 +867,35 @@ Both fields are optional. At least one should be provided for meaningful updates
 - Uses `IsAuthenticated` permission class
 - Verifies conversation ownership (403 if wrong user, 404 if not found)
 - Validates input with `AskQuestionSerializer` (content required, 1–10,000 chars)
+- **Supports two modes** via the `mode` field:
+  - `"local_rag"` (default) — Original single-document RAG. Requires `document_id` on the conversation. Calls `run_rag_query(question, document_id, conversation_history, top_k=5)`.
+  - `"global_rag"` — Multi-hub legal research. Routes the question through the Question Router (LLM) to determine relevant legal hubs, performs parallel cross-document hybrid search across each hub, then synthesizes a comprehensive answer. Calls `run_global_rag_query(question, conversation_history, top_k_per_hub=5)`.
 - Persists user message **before** calling RAG service
 - Builds conversation history from all messages ordered by `created_at`
-- Calls `run_rag_query(question, document_id, conversation_history, top_k=5)`
-- Persists assistant message with `sources` and `token_usage` from RAG result
+- Persists assistant message with `sources`, `token_usage`, and `hub_metadata` (for global_rag mode) from RAG result
 - Touches `conversation.updated_at` via `conversation.save()`
 - Returns `201 Created` with `MessageSerializer` of the assistant message
 - `RAGServiceException` → `502 Bad Gateway` with `{"error": "rag_error", ...}`
+- `GlobalRAGServiceException` → `502 Bad Gateway` with `{"error": "global_rag_error", ...}`
 - OpenAI rate limit errors → `429 Too Many Requests` with `{"error": "rate_limit_exceeded", "retry_after": 60}`
 - URL registered at `conversations/<uuid:conversation_id>/messages/` with name `conversation-messages`
 
-**Request Body:**
+**Request Body (local_rag — default):**
 ```json
 {
   "content": "What is the main conclusion of the study?"
 }
 ```
 
-**Response:** `201 Created`
+**Request Body (global_rag):**
+```json
+{
+  "content": "مجازات جعل اسناد رسمی چیست؟",
+  "mode": "global_rag"
+}
+```
+
+**Response (local_rag):** `201 Created`
 ```json
 {
   "id": "uuid",
@@ -904,17 +915,73 @@ Both fields are optional. At least one should be provided for meaningful updates
     "completion_tokens": 250,
     "total_tokens": 3750
   },
+  "hub_metadata": null,
+  "created_at": "2026-04-18T10:10:00Z"
+}
+```
+
+**Response (global_rag):** `201 Created`
+```json
+{
+  "id": "uuid",
+  "role": "assistant",
+  "content": "بر اساس قوانین مصوب و رویه‌های قضایی، مجازات جعل اسناد رسمی... [استناد ۱] [استناد ۲]",
+  "sources": [
+    {
+      "chunk_id": "uuid",
+      "page_start": 45,
+      "page_end": 47,
+      "content_preview": "ماده ۵۲۳ - هرکس در اسناد رسمی...",
+      "relevance_score": 0.92,
+      "hub_type": "legislation"
+    },
+    {
+      "chunk_id": "uuid",
+      "page_start": 120,
+      "page_end": 122,
+      "content_preview": "رأی وحدت رویه شماره...",
+      "relevance_score": 0.88,
+      "hub_type": "judicial_precedent"
+    }
+  ],
+  "token_usage": {
+    "prompt_tokens": 4500,
+    "completion_tokens": 350,
+    "total_tokens": 4850
+  },
+  "hub_metadata": {
+    "sub_queries": {
+      "legislation": "مجازات جعل اسناد رسمی در قانون مجازات اسلامی",
+      "judicial_precedent": "آرای وحدت رویه درباره جعل اسناد رسمی",
+      "advisory_opinion": "نظریات مشورتی اداره حقوقی درباره جعل اسناد رسمی"
+    },
+    "hub_results": {
+      "legislation": {
+        "total_results": 3,
+        "source_start_index": 0
+      },
+      "judicial_precedent": {
+        "total_results": 2,
+        "source_start_index": 3
+      },
+      "advisory_opinion": {
+        "total_results": 1,
+        "source_start_index": 5
+      }
+    },
+    "reasoning": "The user asks about forgery punishment. This is a penal matter so legislation is primary. Judicial precedent provides interpretive guidance. Advisory opinions may provide procedural clarification."
+  },
   "created_at": "2026-04-18T10:10:00Z"
 }
 ```
 
 **Error Responses:**
-- `400 Bad Request` — Validation error (empty content, etc.)
+- `400 Bad Request` — Validation error (empty content, invalid mode, etc.)
 - `401 Unauthorized` — Missing or invalid authentication
 - `403 Forbidden` — Conversation belongs to another user
 - `404 Not Found` — Conversation does not exist
 - `429 Too Many Requests` — OpenAI API rate limit exceeded
-- `502 Bad Gateway` — RAG service error
+- `502 Bad Gateway` — RAG service error or Global RAG service error
 
 ---
 

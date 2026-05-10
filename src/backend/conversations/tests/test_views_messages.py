@@ -3,6 +3,7 @@ Tests for the conversation message view endpoint.
 
 Covers:
 - :class:`~conversations.views.ConversationMessageView` (POST /messages/)
+- ``mode`` parameter for local_rag (default) and global_rag
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from conversations.models import Conversation, Message
+from conversations.global_rag_service import GlobalRAGServiceException
 from conversations.rag_service import RAGServiceException
 from documents.models import Document
 from users.models import User
@@ -355,3 +357,253 @@ class ConversationMessageViewTests(TestCase):
         self.assertEqual(history[0]["content"], "First question")
         self.assertEqual(history[1]["content"], "Based on the document, the answer is...")
         self.assertEqual(history[2]["content"], "Second question")
+
+
+# ---------------------------------------------------------------------------
+# Tests — Global RAG mode (Phase 2a)
+# ---------------------------------------------------------------------------
+
+
+class ConversationMessageViewGlobalRagTests(TestCase):
+    """Tests for :class:`ConversationMessageView` with ``mode='global_rag'``."""
+
+    _MOCK_GLOBAL_RAG_RESPONSE: dict = {
+        "content": (
+            "بر اساس قوانین مصوب، مجازات جعل اسناد رسمی حبس است [Source 1]. "
+            "بر اساس رویه قضایی، جعل اسناد رسمی جرم مطلق محسوب می‌شود [Source 3]."
+        ),
+        "sources": [
+            {
+                "chunk_id": "chunk-leg-1",
+                "page_start": 1,
+                "page_end": 3,
+                "content_preview": "ماده ۵۲۳ - هرکس در اسناد رسمی جعل نماید...",
+                "relevance_score": 0.95,
+                "hub_type": "legislation",
+            },
+            {
+                "chunk_id": "chunk-jud-1",
+                "page_start": 10,
+                "page_end": 12,
+                "content_preview": "رأی وحدت رویه شماره ۷۴۲...",
+                "relevance_score": 0.92,
+                "hub_type": "judicial_precedent",
+            },
+        ],
+        "token_usage": {
+            "prompt_tokens": 500,
+            "completion_tokens": 100,
+            "total_tokens": 600,
+        },
+        "hub_metadata": {
+            "legislation": {
+                "chunks_count": 2,
+                "sub_query": {
+                    "fts_query": "مجازات جعل اسناد رسمی",
+                    "vector_query": "مجازات جعل اسناد رسمی حسب قانون مجازات اسلامی حبس است.",
+                },
+            },
+            "judicial_precedent": {
+                "chunks_count": 1,
+                "sub_query": {
+                    "fts_query": "جعل اسناد رسمی رأی وحدت رویه",
+                    "vector_query": "در رویه قضایی مجازات جعل اسناد رسمی تعیین می‌گردد.",
+                },
+            },
+            "advisory_opinion": {
+                "chunks_count": 0,
+                "sub_query": {
+                    "fts_query": "",
+                    "vector_query": "",
+                },
+            },
+        },
+        "raw_chunks": [],
+    }
+
+    def setUp(self) -> None:
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="global-rag-test@example.com",
+            password="testpass123",
+        )
+        self.other_user = User.objects.create_user(
+            email="other-global-rag@example.com",
+            password="testpass123",
+        )
+        self.document = _create_document(self.user)
+        self.conversation = Conversation.objects.create(
+            user=self.user,
+            document=self.document,
+            title="Global RAG Test Conversation",
+        )
+        self.url = reverse(
+            "conversations:conversation-messages",
+            kwargs={"conversation_id": self.conversation.id},
+        )
+
+    def _post_global_rag(
+        self,
+        content: str = "مجازات جعل اسناد رسمی چیست؟",
+        **extra,
+    ):
+        """POST a global_rag question to the messages endpoint."""
+        payload = {"content": content, "mode": "global_rag"}
+        return self.client.post(
+            self.url,
+            payload,
+            format="json",
+            **_auth_header(self.user),
+            **extra,
+        )
+
+    # -- 1. Global RAG happy path -------------------------------------------
+
+    @patch("conversations.views.run_global_rag_query")
+    def test_global_rag_creates_user_and_assistant_messages(
+        self,
+        mock_run_global_rag: MagicMock,
+    ) -> None:
+        """POST with mode='global_rag' creates 2 messages with hub_metadata."""
+        mock_run_global_rag.return_value = self._MOCK_GLOBAL_RAG_RESPONSE
+
+        response = self._post_global_rag()
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        messages = Message.objects.filter(conversation=self.conversation).order_by(
+            "created_at"
+        )
+        self.assertEqual(messages.count(), 2)
+        self.assertEqual(messages[0].role, "user")
+        self.assertEqual(messages[1].role, "assistant")
+        self.assertEqual(
+            messages[1].hub_metadata,
+            self._MOCK_GLOBAL_RAG_RESPONSE["hub_metadata"],
+        )
+
+    # -- 2. Response includes hub_metadata ----------------------------------
+
+    @patch("conversations.views.run_global_rag_query")
+    def test_global_rag_response_includes_hub_metadata(
+        self,
+        mock_run_global_rag: MagicMock,
+    ) -> None:
+        """Response JSON includes hub_metadata field."""
+        mock_run_global_rag.return_value = self._MOCK_GLOBAL_RAG_RESPONSE
+
+        response = self._post_global_rag()
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        data = response.json()
+        self.assertIn("hub_metadata", data)
+        self.assertIsNotNone(data["hub_metadata"])
+        self.assertIn("legislation", data["hub_metadata"])
+        self.assertIn("judicial_precedent", data["hub_metadata"])
+
+    # -- 3. Default mode (no mode param) uses local_rag ---------------------
+
+    @patch("conversations.views.run_rag_query")
+    def test_default_mode_is_local_rag(
+        self,
+        mock_run_rag_query: MagicMock,
+    ) -> None:
+        """POST without mode parameter defaults to local_rag."""
+        mock_run_rag_query.return_value = {
+            "content": "Local RAG answer",
+            "sources": [],
+            "token_usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            "raw_chunks": [],
+        }
+
+        payload = {"content": "What is this about?"}
+        response = self.client.post(
+            self.url,
+            payload,
+            format="json",
+            **_auth_header(self.user),
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        data = response.json()
+        self.assertEqual(data["role"], "assistant")
+        self.assertEqual(data["content"], "Local RAG answer")
+        # hub_metadata should be null for local_rag
+        self.assertIsNone(data.get("hub_metadata"))
+
+    # -- 4. Invalid mode value -> 400 ---------------------------------------
+
+    def test_global_rag_invalid_mode(self) -> None:
+        """POST with invalid mode value returns 400."""
+        payload = {"content": "Test question", "mode": "invalid_mode"}
+        response = self.client.post(
+            self.url,
+            payload,
+            format="json",
+            **_auth_header(self.user),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # -- 5. Global RAG service failure -> 502 -------------------------------
+
+    @patch("conversations.views.run_global_rag_query")
+    def test_global_rag_service_failure(
+        self,
+        mock_run_global_rag: MagicMock,
+    ) -> None:
+        """Global RAG service failure returns 502."""
+        mock_run_global_rag.side_effect = GlobalRAGServiceException(
+            "Global RAG pipeline failed"
+        )
+
+        response = self._post_global_rag()
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertEqual(response.data["error"], "global_rag_error")
+
+    # -- 6. Global RAG rate limit -> 429 ------------------------------------
+
+    @patch("conversations.views.run_global_rag_query")
+    def test_global_rag_rate_limit(
+        self,
+        mock_run_global_rag: MagicMock,
+    ) -> None:
+        """Global RAG rate limit error returns 429."""
+        mock_run_global_rag.side_effect = GlobalRAGServiceException(
+            "rate limit exceeded: 429 Too Many Requests"
+        )
+
+        response = self._post_global_rag()
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertEqual(response.data["error"], "rate_limit_exceeded")
+        self.assertEqual(response.data["retry_after"], 60)
+
+    # -- 7. Global RAG with conversation history ----------------------------
+
+    @patch("conversations.views.run_global_rag_query")
+    def test_global_rag_passes_conversation_history(
+        self,
+        mock_run_global_rag: MagicMock,
+    ) -> None:
+        """Global RAG receives conversation history."""
+        # Create prior messages
+        Message.objects.create(
+            conversation=self.conversation,
+            role="user",
+            content="Prior question",
+        )
+        Message.objects.create(
+            conversation=self.conversation,
+            role="assistant",
+            content="Prior answer",
+        )
+
+        mock_run_global_rag.return_value = self._MOCK_GLOBAL_RAG_RESPONSE
+
+        response = self._post_global_rag("Follow-up question")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        call_kwargs = mock_run_global_rag.call_args[1]
+        history = call_kwargs["conversation_history"]
+        self.assertEqual(len(history), 3)
+        self.assertEqual(history[0]["content"], "Prior question")
+        self.assertEqual(history[1]["content"], "Prior answer")
+        self.assertEqual(history[2]["content"], "Follow-up question")

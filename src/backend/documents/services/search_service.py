@@ -1020,6 +1020,414 @@ def hybrid_search(
 
 
 # ---------------------------------------------------------------------------
+# Cross-document hybrid search (Global RAG)
+# ---------------------------------------------------------------------------
+
+
+def _vector_search_by_hub(
+    hub_type: str,
+    query_vector: list[float],
+    top_k: int,
+    min_score: float = 0.0,
+    filters: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Vector search filtered by ``hub_type`` instead of ``document_id``.
+
+    Shares the same logic as :func:`_vector_search` but filters on the
+    denormalized ``hub_type`` column of :class:`DocumentChunk`, enabling
+    cross-document search within a legal knowledge hub.
+
+    Args:
+        hub_type: The hub to search within (``legislation``,
+            ``judicial_precedent``, or ``advisory_opinion``).
+        query_vector: Embedding vector for the query.
+        top_k: Maximum number of results to return.
+        min_score: Minimum relevance score threshold.
+        filters: Optional metadata filter conditions.
+
+    Returns:
+        A list of result dicts ordered by relevance descending.
+    """
+    _set_probes()
+
+    expected_dim = settings.EMBEDDING_DIMENSION
+    if len(query_vector) != expected_dim:
+        raise ValueError(
+            f"query_vector dimension {len(query_vector)} does not match "
+            f"expected dimension {expected_dim}."
+        )
+
+    queryset = DocumentChunk.objects.filter(
+        hub_type=hub_type,
+        embedding__isnull=False,
+    )
+    queryset = _apply_metadata_filters(queryset, filters)
+
+    queryset = queryset.annotate(
+        distance=CosineDistance("embedding", query_vector),
+    )
+    queryset = queryset.annotate(
+        relevance_score=Value(1.0) - F("distance"),
+    )
+    queryset = queryset.filter(relevance_score__gte=min_score)
+    queryset = queryset.order_by("distance")
+
+    chunks = queryset[:top_k]
+
+    results: list[dict[str, Any]] = []
+    for chunk in chunks:
+        results.append(
+            _build_result_dict(chunk, float(chunk.relevance_score))
+        )
+
+    logger.info(
+        "_vector_search_by_hub: hub_type=%s top_k=%d min_score=%.2f filters=%s → %d results",
+        hub_type,
+        top_k,
+        min_score,
+        filters,
+        len(results),
+    )
+
+    return results
+
+
+def _keyword_search_by_hub(
+    hub_type: str,
+    query_text: str,
+    top_k: int = 10,
+    filters: dict[str, Any] | None = None,
+    enable_trigram_fallback: bool = True,
+) -> list[dict[str, Any]]:
+    """Keyword search filtered by ``hub_type`` instead of ``document_id``.
+
+    Shares the same logic as :func:`keyword_search` but filters on the
+    denormalized ``hub_type`` column of :class:`DocumentChunk`.
+
+    Args:
+        hub_type: The hub to search within.
+        query_text: The keyword query string.
+        top_k: Maximum number of results to return (default 10).
+        filters: Optional metadata filter conditions.
+        enable_trigram_fallback: Whether to fall back to trigram search when
+            FTS returns zero results (default ``True``).
+
+    Returns:
+        A list of result dicts ordered by relevance descending.
+    """
+    if not query_text or not query_text.strip():
+        logger.warning(
+            "_keyword_search_by_hub: empty query for hub_type=%s — returning empty results",
+            hub_type,
+        )
+        return []
+
+    _original_query = query_text
+    query_text = PersianNormalizer.normalize_for_fts(query_text)
+    query_text = _remove_stop_words(query_text)
+
+    if not query_text or not query_text.strip():
+        logger.warning(
+            "_keyword_search_by_hub: query reduced to empty after stop word removal "
+            "for hub_type=%s — returning empty results",
+            hub_type,
+        )
+        return []
+
+    search_query = SearchQuery(query_text, config="simple", search_type="websearch")
+
+    queryset = DocumentChunk.objects.filter(
+        hub_type=hub_type,
+        search_vector__isnull=False,
+    )
+    queryset = _apply_metadata_filters(queryset, filters)
+
+    queryset = queryset.annotate(
+        relevance_score=SearchRank(
+            F("search_vector"),
+            search_query,
+        ),
+    )
+    queryset = queryset.filter(search_vector=search_query)
+    queryset = queryset.order_by("-relevance_score")
+
+    chunks = queryset[:top_k]
+
+    results: list[dict[str, Any]] = []
+    for chunk in chunks:
+        results.append(
+            _build_result_dict(chunk, float(chunk.relevance_score))
+        )
+
+    logger.info(
+        "_keyword_search_by_hub: hub_type=%s top_k=%d filters=%s → %d results",
+        hub_type,
+        top_k,
+        filters,
+        len(results),
+    )
+
+    # Progressive fallback chain (same as keyword_search)
+    if not results:
+        logger.info(
+            "_keyword_search_by_hub: websearch returned zero results for '%s' "
+            "on hub_type=%s — trying plainto_tsquery fallback",
+            query_text,
+            hub_type,
+        )
+        fallback_query = SearchQuery(
+            query_text, config="simple", search_type="plain",
+        )
+        fallback_qs = DocumentChunk.objects.filter(
+            hub_type=hub_type,
+            search_vector__isnull=False,
+        )
+        fallback_qs = _apply_metadata_filters(fallback_qs, filters)
+        fallback_qs = fallback_qs.annotate(
+            relevance_score=SearchRank(
+                F("search_vector"),
+                fallback_query,
+            ),
+        )
+        fallback_qs = fallback_qs.filter(
+            search_vector=fallback_query,
+        ).order_by("-relevance_score")[:top_k]
+
+        for chunk in fallback_qs:
+            results.append(
+                _build_result_dict(chunk, float(chunk.relevance_score))
+            )
+
+        logger.info(
+            "_keyword_search_by_hub: plainto_tsquery fallback for hub_type=%s → %d results",
+            hub_type,
+            len(results),
+        )
+
+    if not results and enable_trigram_fallback:
+        logger.info(
+            "_keyword_search_by_hub: FTS returned zero results for '%s' on hub_type=%s "
+            "— falling back to trigram search (min_similarity=0.1)",
+            query_text,
+            hub_type,
+        )
+        results = _trigram_search_by_hub(
+            hub_type=hub_type,
+            query_text=query_text,
+            top_k=top_k,
+            min_similarity=0.1,
+            filters=filters,
+        )
+
+    return results
+
+
+def _trigram_search_by_hub(
+    hub_type: str,
+    query_text: str,
+    top_k: int = 10,
+    min_similarity: float = _TRIGRAM_MIN_SIMILARITY,
+    filters: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Trigram search filtered by ``hub_type`` instead of ``document_id``.
+
+    Shares the same logic as :func:`trigram_search` but filters on the
+    denormalized ``hub_type`` column of :class:`DocumentChunk`.
+
+    Args:
+        hub_type: The hub to search within.
+        query_text: The query string to compare via trigram similarity.
+        top_k: Maximum number of results to return (default 10).
+        min_similarity: Minimum trigram similarity threshold (0.0–1.0).
+        filters: Optional metadata filter conditions.
+
+    Returns:
+        A list of result dicts ordered by relevance descending.
+    """
+    if not query_text or not query_text.strip():
+        logger.warning(
+            "_trigram_search_by_hub: empty query for hub_type=%s — returning empty results",
+            hub_type,
+        )
+        return []
+
+    queryset = DocumentChunk.objects.filter(hub_type=hub_type)
+    queryset = _apply_metadata_filters(queryset, filters)
+
+    queryset = queryset.annotate(
+        trgm_score=Func(
+            F("content"),
+            Value(query_text),
+            function="similarity",
+            output_field=FloatField(),
+        ),
+    )
+    queryset = queryset.filter(trgm_score__gte=min_similarity)
+    queryset = queryset.order_by("-trgm_score")[:top_k]
+
+    results: list[dict[str, Any]] = []
+    for chunk in queryset:
+        results.append(
+            _build_result_dict(chunk, float(chunk.trgm_score))
+        )
+
+    logger.info(
+        "_trigram_search_by_hub: hub_type=%s top_k=%d min_similarity=%.2f "
+        "filters=%s → %d results",
+        hub_type,
+        top_k,
+        min_similarity,
+        filters,
+        len(results),
+    )
+
+    return results
+
+
+def cross_document_hybrid_search(
+    hub_type: str,
+    query_vector: list[float],
+    query_text: str,
+    top_k: int = 10,
+    min_score: float = 0.0,
+    filters: dict[str, Any] | None = None,
+    enable_trigram: bool = True,
+    rrf_weights: list[float] | None = None,
+) -> list[dict[str, Any]]:
+    """Cross-document hybrid search within a legal knowledge hub.
+
+    Searches across **all documents** in a given hub (``legislation``,
+    ``judicial_precedent``, or ``advisory_opinion``) using the same
+    vector + keyword + trigram RRF fusion strategy as :func:`hybrid_search`,
+    but filtering by the denormalized ``hub_type`` column instead of a
+    single ``document_id``.
+
+    This is the core retrieval function for **Global RAG (Lite)** — it
+    enables the system to find relevant chunks across an entire legal
+    knowledge hub without needing to know which specific document to
+    search.
+
+    Args:
+        hub_type: The legal knowledge hub to search within (``legislation``,
+            ``judicial_precedent``, or ``advisory_opinion``).
+        query_vector: Embedding vector for the query.
+        query_text: Raw keyword query text.
+        top_k: Maximum number of fused results to return (default 10).
+        min_score: Minimum relevance score threshold for vector search.
+        filters: Optional metadata filter conditions.
+        enable_trigram: Whether to include trigram search (default ``True``).
+        rrf_weights: Optional alpha weights for RRF fusion, one per retrieval
+            method. Defaults to ``[3.0, 1.0, 1.0]``.
+
+    Returns:
+        A list of up to *top_k* result dicts, fused and re-ranked by RRF score
+        descending. Each dict includes the additional keys:
+
+        - **vector_score** (*float*) — Original vector relevance score.
+        - **keyword_score** (*float*) — Original keyword search rank score.
+        - **trigram_score** (*float*) — Original trigram similarity score.
+        - **rrf_score** (*float*) — The fused RRF score.
+    """
+    rrf_depth = max(top_k * _RRF_DEPTH_MULTIPLIER, _RRF_MIN_DEPTH)
+
+    logger.info(
+        "cross_document_hybrid_search: hub_type=%s query_text=%.500s "
+        "top_k=%d rrf_depth=%d filters=%s enable_trigram=%s",
+        hub_type,
+        query_text,
+        top_k,
+        rrf_depth,
+        filters,
+        enable_trigram,
+    )
+
+    # Run vector search across the hub.
+    vector_results = _vector_search_by_hub(
+        hub_type=hub_type,
+        query_vector=query_vector,
+        top_k=rrf_depth,
+        min_score=min_score,
+        filters=filters,
+    )
+
+    logger.info(
+        "cross_document_hybrid_search: vector_search returned %d results for hub_type=%s",
+        len(vector_results),
+        hub_type,
+    )
+
+    # Run keyword search across the hub.
+    keyword_results = _keyword_search_by_hub(
+        hub_type=hub_type,
+        query_text=query_text,
+        top_k=rrf_depth,
+        filters=filters,
+    )
+
+    logger.info(
+        "cross_document_hybrid_search: keyword_search returned %d results for hub_type=%s",
+        len(keyword_results),
+        hub_type,
+    )
+
+    # Collect result lists and score keys.
+    result_lists: list[list[dict[str, Any]]] = [vector_results, keyword_results]
+    score_keys: list[str] = ["vector_score", "keyword_score"]
+
+    # Optionally run trigram search.
+    trigram_results: list[dict[str, Any]] = []
+    if enable_trigram:
+        trigram_results = _trigram_search_by_hub(
+            hub_type=hub_type,
+            query_text=query_text,
+            top_k=rrf_depth,
+            filters=filters,
+        )
+
+        logger.info(
+            "cross_document_hybrid_search: trigram_search returned %d results for hub_type=%s",
+            len(trigram_results),
+            hub_type,
+        )
+
+        result_lists.append(trigram_results)
+        score_keys.append("trigram_score")
+
+    # Determine RRF weights.
+    if rrf_weights is None:
+        if enable_trigram:
+            rrf_weights = [3.0, 1.0, 1.0]
+        else:
+            rrf_weights = [3.0, 1.0]
+
+    # Fuse using multi-list RRF with alpha weights.
+    fused = _rrf_fusion_multi(
+        result_lists, top_k, score_keys=score_keys, weights=rrf_weights,
+    )
+
+    if not enable_trigram:
+        for result in fused:
+            result["trigram_score"] = 0.0
+
+    logger.info(
+        "cross_document_hybrid_search: hub_type=%s top_k=%d min_score=%.2f filters=%s "
+        "enable_trigram=%s rrf_weights=%s → vector=%d keyword=%d trigram=%d fused=%d",
+        hub_type,
+        top_k,
+        min_score,
+        filters,
+        enable_trigram,
+        rrf_weights,
+        len(vector_results),
+        len(keyword_results),
+        len(trigram_results),
+        len(fused),
+    )
+
+    return fused
+
+
+# ---------------------------------------------------------------------------
 # Original search_chunks (backward compatible)
 # ---------------------------------------------------------------------------
 

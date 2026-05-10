@@ -49,6 +49,11 @@ class Message(models.Model):
     content = models.TextField()
     sources = models.JSONField(default=list)  # Array of source chunks used
     token_usage = models.JSONField(null=True, blank=True)  # Token usage stats
+    hub_metadata = models.JSONField(
+        null=True, blank=True, default=None,
+        help_text="Metadata for Global RAG queries: stores per-hub results, "
+                  "sub-queries, and hub-level token usage.",
+    )
     created_at = models.DateTimeField(default=timezone.now)
     
     class Meta:

@@ -42,6 +42,12 @@ class MessageSerializer(serializers.ModelSerializer):
         allow_null=True,
         help_text="Token usage statistics for the message, or null if not available.",
     )
+    hub_metadata = serializers.JSONField(
+        read_only=True,
+        allow_null=True,
+        help_text="Metadata for Global RAG queries: per-hub results, sub-queries, "
+                  "and hub-level token usage. Null for local RAG queries.",
+    )
     created_at = serializers.DateTimeField(
         read_only=True,
         help_text="Timestamp when the message was created.",
@@ -55,6 +61,7 @@ class MessageSerializer(serializers.ModelSerializer):
             "content",
             "sources",
             "token_usage",
+            "hub_metadata",
             "created_at",
         ]
 
@@ -192,11 +199,25 @@ class ConversationCreateSerializer(serializers.Serializer):
 class AskQuestionSerializer(serializers.Serializer):
     """Validate input for asking a question in a conversation (POST /conversations/{id}/messages)."""
 
+    MODE_CHOICES = [
+        ("local_rag", "Local RAG — search within the conversation's document"),
+        ("global_rag", "Global RAG — search across all legal knowledge hubs"),
+    ]
+
     content = serializers.CharField(
         required=True,
         min_length=1,
         max_length=10000,
         help_text="The question text to ask (1–10,000 characters).",
+    )
+    mode = serializers.ChoiceField(
+        choices=MODE_CHOICES,
+        default="local_rag",
+        required=False,
+        help_text="RAG mode: 'local_rag' (default) searches within the "
+                  "conversation's document; 'global_rag' searches across all "
+                  "legal knowledge hubs (legislation, judicial precedent, "
+                  "advisory opinions).",
     )
 
     def validate_content(self, value: str) -> str:

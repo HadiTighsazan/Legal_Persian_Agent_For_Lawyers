@@ -49,6 +49,12 @@ class Document(models.Model):
         ('user_upload', 'User Upload'),
         ('reference_law', 'Reference Law'),
     ]
+
+    HUB_TYPE_CHOICES = [
+        ('legislation', 'Legislation'),
+        ('judicial_precedent', 'Judicial Precedent'),
+        ('advisory_opinion', 'Advisory Opinion'),
+    ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='documents')
@@ -69,6 +75,16 @@ class Document(models.Model):
         db_index=True,
         help_text="Type of document: 'user_upload' for regular files, "
                   "'reference_law' for system reference legal texts.",
+    )
+    hub_type = models.CharField(
+        max_length=50,
+        choices=HUB_TYPE_CHOICES,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Legal knowledge hub this document belongs to: "
+                  "'legislation', 'judicial_precedent', or 'advisory_opinion'. "
+                  "Null/blank means not a reference document.",
     )
     
     # Document processing pipeline fields
@@ -134,6 +150,14 @@ class DocumentChunk(models.Model):
     legal_status = models.CharField(max_length=50, null=True, blank=True, db_index=True)
     approval_date = models.DateField(null=True, blank=True, db_index=True)
     legal_type = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    hub_type = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Denormalized hub_type from the parent Document for "
+                  "efficient cross-document filtering without JOINs.",
+    )
 
     created_at = models.DateTimeField(default=timezone.now)
 
@@ -142,6 +166,7 @@ class DocumentChunk(models.Model):
         indexes = [
             models.Index(fields=['document']),
             models.Index(fields=['document', 'chunk_index']),
+            models.Index(fields=['hub_type']),
             # GIN index on search_vector for FTS performance
             GinIndex(fields=['search_vector'], name='chunk_search_vector_gin'),
         ]

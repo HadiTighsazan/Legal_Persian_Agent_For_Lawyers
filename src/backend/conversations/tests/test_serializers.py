@@ -58,9 +58,9 @@ class MessageSerializerTests(TestCase):
         self.assertTrue(serializer.is_valid())
 
     def test_read_only_fields(self) -> None:
-        """``id``, ``created_at``, ``sources``, and ``token_usage`` should be read_only."""
+        """``id``, ``created_at``, ``sources``, ``token_usage``, and ``hub_metadata`` should be read_only."""
         serializer = MessageSerializer()
-        for field_name in ("id", "created_at", "sources", "token_usage"):
+        for field_name in ("id", "created_at", "sources", "token_usage", "hub_metadata"):
             with self.subTest(field=field_name):
                 self.assertTrue(
                     serializer.fields[field_name].read_only,
@@ -80,6 +80,28 @@ class MessageSerializerTests(TestCase):
         # JSONField
         self.assertEqual(output["sources"], self.data["sources"])
         self.assertEqual(output["token_usage"], self.data["token_usage"])
+
+    def test_hub_metadata_in_output(self) -> None:
+        """``hub_metadata`` should be included in serialized output when present."""
+        hub_metadata = {
+            "legislation": {
+                "chunks_count": 2,
+                "sub_query": {"fts_query": "test", "vector_query": "test"},
+            },
+        }
+        data_with_hub = {**self.data, "hub_metadata": hub_metadata}
+        serializer = MessageSerializer(instance=data_with_hub)
+        output = serializer.data
+        self.assertIn("hub_metadata", output)
+        self.assertEqual(output["hub_metadata"], hub_metadata)
+
+    def test_hub_metadata_allows_null(self) -> None:
+        """``hub_metadata`` should allow null (for local_rag messages)."""
+        data_null_hub = {**self.data, "hub_metadata": None}
+        serializer = MessageSerializer(instance=data_null_hub)
+        output = serializer.data
+        self.assertIn("hub_metadata", output)
+        self.assertIsNone(output["hub_metadata"])
 
     def test_help_text_on_all_fields(self) -> None:
         """Every field should have a descriptive help_text."""
@@ -423,6 +445,38 @@ class AskQuestionSerializerTests(TestCase):
                     field.help_text,
                     f"Field '{field_name}' is missing help_text",
                 )
+
+    # -- Mode field tests (Phase 2a — Global RAG) ---------------------------
+
+    def test_default_mode_is_local_rag(self) -> None:
+        """Omitting ``mode`` should default to ``'local_rag'``."""
+        serializer = AskQuestionSerializer(data={"content": "Test question"})
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["mode"], "local_rag")
+
+    def test_valid_global_rag_mode(self) -> None:
+        """``mode='global_rag'`` should pass validation."""
+        serializer = AskQuestionSerializer(
+            data={"content": "Test question", "mode": "global_rag"},
+        )
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["mode"], "global_rag")
+
+    def test_valid_local_rag_mode(self) -> None:
+        """``mode='local_rag'`` should pass validation."""
+        serializer = AskQuestionSerializer(
+            data={"content": "Test question", "mode": "local_rag"},
+        )
+        self.assertTrue(serializer.is_valid())
+        self.assertEqual(serializer.validated_data["mode"], "local_rag")
+
+    def test_invalid_mode_fails(self) -> None:
+        """An invalid ``mode`` value should fail validation."""
+        serializer = AskQuestionSerializer(
+            data={"content": "Test question", "mode": "invalid_mode"},
+        )
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("mode", serializer.errors)
 
 
 # ---------------------------------------------------------------------------

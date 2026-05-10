@@ -131,6 +131,10 @@ def extract_citations(content: str, chunks: list[dict]) -> list[dict]:
     citation dict matches the ``sources`` JSONB schema on the
     :class:`~conversations.models.Message` model.
 
+    For Global RAG flows, chunks may include ``hub_type`` in their
+    ``metadata`` dict, which is extracted and included in the citation
+    so the frontend can display per-hub source attribution.
+
     Args:
         content: The assistant's response text.
         chunks: The list of chunk dicts that were provided in the context
@@ -139,7 +143,8 @@ def extract_citations(content: str, chunks: list[dict]) -> list[dict]:
     Returns:
         A list of citation dicts with keys:
         ``chunk_id``, ``page_start``, ``page_end``, ``content_preview``,
-        ``relevance_score``.
+        ``relevance_score``, and optionally ``hub_type`` (if present in
+        chunk metadata).
     """
     # Find all unique source numbers cited in the response
     cited_numbers: set[int] = set()
@@ -155,13 +160,19 @@ def extract_citations(content: str, chunks: list[dict]) -> list[dict]:
         idx = num - 1
         if 0 <= idx < len(chunks):
             chunk = chunks[idx]
-            citations.append({
+            citation: dict[str, Any] = {
                 "chunk_id": chunk["chunk_id"],
                 "page_start": chunk["page_start"],
                 "page_end": chunk["page_end"],
                 "content_preview": chunk["content"][:200],
                 "relevance_score": chunk["relevance_score"],
-            })
+            }
+            # Extract hub_type from chunk metadata (Global RAG chunks
+            # store hub_type in metadata during import)
+            hub_type = chunk.get("metadata", {}).get("hub_type")
+            if hub_type:
+                citation["hub_type"] = hub_type
+            citations.append(citation)
 
     return citations
 
