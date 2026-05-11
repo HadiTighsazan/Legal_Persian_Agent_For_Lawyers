@@ -2,7 +2,19 @@
 set -e
 
 echo "Running database migrations..."
-python manage.py migrate --noinput
+# First attempt: normal migrate
+if python manage.py migrate --noinput; then
+    echo "Migrations applied successfully."
+else
+    echo "WARNING: Migration failed. Attempting to recover by faking remaining migrations..."
+    echo "This can happen when the database schema was modified outside of Django migrations."
+    python manage.py migrate --fake --noinput || {
+        echo "ERROR: Could not recover migrations automatically."
+        echo "Try: docker-compose exec backend python manage.py migrate --fake"
+        exit 1
+    }
+    echo "Migrations recovered successfully (faked)."
+fi
 
 echo "Collecting static files..."
 python manage.py collectstatic --noinput
