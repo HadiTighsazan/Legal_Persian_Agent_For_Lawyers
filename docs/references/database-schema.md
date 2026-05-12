@@ -494,3 +494,31 @@ docker-compose exec backend python manage.py import_chunked_data \
 - 2 chunks skipped (empty `text` field)
 - All 18,927 chunks embedded via `batch_generate_embeddings()` with batch size 16
 - Superuser `admin@docuchat.local` used as default owner
+
+### Reimport Command
+
+A dedicated management command [`reimport_legislation_hub`](src/backend/documents/management/commands/reimport_legislation_hub.py) was created to:
+
+1. **Purge** all existing legislation hub data (`hub_type='legislation'`)
+2. **Re-import** from pre-chunked JSON files (Format B — flat array of chunks)
+3. **Group** chunks by `metadata.source` (law name) — one Document per unique law
+4. **Generate embeddings** via `batch_generate_embeddings()` with configurable batch size
+
+**Key differences from `import_chunked_data`:**
+- Groups by `metadata.source` instead of `full_title`/`parent_title`
+- Only operates on `hub_type='legislation'`
+- Always purges existing legislation data before import (idempotent)
+- Preserves all original metadata fields (`chunk_id`, `madde_number`, `madde_suffix`, `madde_raw`, etc.)
+
+**Usage:**
+```bash
+# Dry-run
+docker-compose exec backend python manage.py reimport_legislation_hub \
+    --data-dir /data/chunked_datasets/هاب قوانین مصوب/laws --dry-run
+
+# Actual import
+docker-compose exec backend python manage.py reimport_legislation_hub \
+    --data-dir /data/chunked_datasets/هاب قوانین مصوب/laws
+```
+
+**Test coverage:** 20 tests covering purge isolation, import, embedding, dry-run, error handling, idempotency, metadata preservation, and user assignment.

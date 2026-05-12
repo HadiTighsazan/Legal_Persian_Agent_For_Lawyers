@@ -1,65 +1,142 @@
-# WIP Context — Fix: JSON Parsing & Hub Type Mapping
+# WIP Context — Purge & Re-import Legislation Hub (هاب قوانین مصوب)
 
-## Status: ✅ COMPLETED — Fixes Verified
+## Status: ✅ COMPLETED — Implementation & Tests Verified
 
 ## Summary
 
-Both critical fixes have been implemented and **verified working** through a live test query.
+A new management command [`reimport_legislation_hub`](src/backend/documents/management/commands/reimport_legislation_hub.py) has been implemented to:
+1. **Purge** all existing data in the legislation hub (`hub_type='legislation'`)
+2. **Re-import** pre-chunked JSON data from `C:\Users\starlap\Desktop\chunked_datasets\هاب قوانین مصوب\laws\` (~98-99 JSON files, one per law)
 
-### Test Query
-**"پسری که مشمول باشه ولی خودشو معرفی نکنه جرمش فرار از خدمت است؟"**
+The JSON files are **Format B** (flat array of chunk objects) where each chunk has `chunk_id`, `text`, and `metadata.source` fields. Chunks are grouped by `metadata.source` (the law name) — one Document per unique law name.
 
-### Test Result ✅
-The Global RAG pipeline successfully:
-1. **Question Router** — Parsed LLM JSON response correctly (3-tier fallback worked)
-2. **Multi-Hub Search** — Retrieved relevant chunks from all 3 hubs
-3. **Synthesis** — Generated a comprehensive answer citing:
-   - ماده 77 قانون مجازات جرایم نیروهای مسلح (از نظریات مشورتی)
-   - رأی وحدت رویه شماره 671 (از رویه قضایی)
-   - Correctly identified legislation hub had no direct match
+### Key Design Decisions
 
-**Note:** Container restart was required for the changes to take effect (Django's auto-reload didn't pick up the modified files).
+| Decision | Rationale |
+|----------|-----------|
+| New command (not modifying existing) | Existing `import_chunked_data` groups by `full_title`/`parent_title`, but legislation files lack these fields |
+| Group by `metadata.source` | Each JSON file represents one law; `metadata.source` contains the law name |
+| Volume mount approach | Docker containers need access to host path; mapped to `/data/chunked_datasets` |
+| CASCADE purge | Deleting legislation Documents cascades to chunks, conversations, tasks |
+| `transaction.atomic()` per document | Ensures per-document transactional integrity |
+| `bulk_create`/`bulk_update` | Efficient batch operations for chunks and embeddings |
+
+### 5-Phase Architecture
+
+| Phase | Description |
+|-------|-------------|
+| **Phase 1: Purge** | Delete all `hub_type='legislation'` documents (CASCADE handles chunks) |
+| **Phase 2: Load** | Read and validate JSON files (Format B flat array, non-empty `text` field) |
+| **Phase 3: Group** | Group chunks by `metadata.source` (law name) |
+| **Phase 4: Create** | Create one Document per law + bulk create DocumentChunks with denormalized fields |
+| **Phase 5: Embed** | Batch generate embeddings via `batch_generate_embeddings()` |
+
+### Denormalized Fields on Chunks
+
+| Field | Source |
+|-------|--------|
+| `law_name` | `metadata.source` |
+| `legal_status` | `metadata.status` |
+| `approval_date` | Parsed from `metadata.approval_date` (YYYY/MM/DD format) |
+| `legal_type` | Defaults to `"article"` |
+| `hub_type` | Always `"legislation"` |
+
+### Metadata Preserved in Chunk Metadata
+
+- `chunk_id` — Original chunk identifier
+- `madde_number` — Article number
+- `madde_suffix` — Article suffix
+- `madde_raw` — Raw article text
+- All original metadata fields (source, hub_type, approval_date, status, summary, kitab, bakhsh, fasl, etc.)
 
 ---
 
 ## Changes Made
 
-### Fix 1: 3-Tier JSON Parsing Fallback
+### Files Modified
 
-**Files modified:**
-- [`src/backend/conversations/question_router.py`](src/backend/conversations/question_router.py:315) — `_parse_router_response()`
-- [`src/backend/conversations/query_formulation.py`](src/backend/conversations/query_formulation.py:271) — `_parse_formulation_response()`
+1. [`docker-compose.yml`](docker-compose.yml) — Added volume mount:
+   ```yaml
+   - C:/Users/starlap/Desktop/chunked_datasets:/data/chunked_datasets
+   ```
+   Applied to both `backend` and `celery_worker` services.
 
-**The 3-tier fallback chain:**
+### Files Created
 
-| Tier | Method | Handles |
-|------|--------|---------|
-| 1 | `json.loads(cleaned)` | Standard valid JSON |
-| 2 | `json.loads(cleaned, strict=False)` | Unescaped newlines/tabs inside Persian text strings |
-| 3 | Regex `r"\{.*\}"` + `strict=False` | LLM wraps JSON in markdown or adds extra text |
+2. [`src/backend/documents/management/commands/reimport_legislation_hub.py`](src/backend/documents/management/commands/reimport_legislation_hub.py) — Full management command (678 lines) with:
+   - `ReimportStats` dataclass tracking all phases
+   - `Command` class with arguments: `--data-dir`, `--dry-run`, `--user-id`, `--embedding-batch-size`, `--skip-embedding`
+   - 5-phase orchestration in `handle()`
+   - Error handling with `CommandError` on early return paths
 
-### Fix 2: Hub Type Assignment Logic
+3. [`src/backend/documents/tests/test_reimport_legislation_hub.py`](src/backend/documents/tests/test_reimport_legislation_hub.py) — 20 test cases (948 lines):
+   - Purge phase tests (2): existing data deletion, other hub isolation
+   - Import phase tests (3): single file, multiple files, grouping by source
+   - Denormalized fields tests (2): field population, hub_type correctness
+   - Embedding tests (3): generation, skip flag, batch size
+   - Dry-run test (1): no DB modifications
+   - Error handling tests (4): missing text, invalid JSON, empty dir, non-existent dir, wrong format
+   - Idempotency test (1): safe re-run
+   - Metadata preservation test (1): all fields preserved
+   - User assignment test (1): custom --user-id
+   - No existing data test (1): works with empty DB
 
-**File modified:**
-- [`src/backend/documents/management/commands/import_chunked_data.py`](src/backend/documents/management/commands/import_chunked_data.py:435) — `_process_document_group()` now uses `folder_hub_type` as authoritative source
+### Test Results
 
-**New file created:**
-- [`src/backend/documents/management/commands/fix_hub_types.py`](src/backend/documents/management/commands/fix_hub_types.py) — Management command with `audit`, `fix`, and `reembed` modes
+```
+20 passed in 10.26s
+```
 
-### Verification
-- ✅ Audit confirmed 3072 reference_law documents have correct hub_type
-- ✅ Live test query returned accurate, legally-cited answer
-- ✅ All 3 hubs contributed relevant information
+---
 
-## How to Use the New Command
+## How to Use
+
+### 1. Restart Docker containers (to pick up volume mount)
 
 ```bash
-# Audit only (safe)
-docker-compose exec backend python manage.py fix_hub_types audit
-
-# Fix mismatches + re-embed
-docker-compose exec backend python manage.py fix_hub_types fix --reembed
-
-# Re-embed only (after a previous fix)
-docker-compose exec backend python manage.py fix_hub_types reembed
+docker-compose down
+docker-compose up -d
 ```
+
+### 2. Dry-run (validate without writing)
+
+```bash
+docker-compose exec backend python manage.py reimport_legislation_hub \
+    --data-dir /data/chunked_datasets/هاب قوانین مصوب/laws \
+    --dry-run
+```
+
+### 3. Actual import
+
+```bash
+docker-compose exec backend python manage.py reimport_legislation_hub \
+    --data-dir /data/chunked_datasets/هاب قوانین مصوب/laws
+```
+
+### 4. Custom options
+
+```bash
+# Skip embedding (for testing)
+docker-compose exec backend python manage.py reimport_legislation_hub \
+    --data-dir /data/chunked_datasets/هاب قوانین مصوب/laws \
+    --skip-embedding
+
+# Custom embedding batch size
+docker-compose exec backend python manage.py reimport_legislation_hub \
+    --data-dir /data/chunked_datasets/هاب قوانین مصوب/laws \
+    --embedding-batch-size 32
+
+# Specify owner user
+docker-compose exec backend python manage.py reimport_legislation_hub \
+    --data-dir /data/chunked_datasets/هاب قوانین مصوب/laws \
+    --user-id <UUID>
+```
+
+---
+
+## Next Steps
+
+1. Restart Docker containers to pick up the volume mount change
+2. Run the dry-run command to validate
+3. Run the actual import command
+4. Verify the data in the database

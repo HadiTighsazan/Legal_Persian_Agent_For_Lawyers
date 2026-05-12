@@ -34,8 +34,13 @@ class EmbeddingBatchError(ProviderError):
 # Shared constants
 # ---------------------------------------------------------------------------
 
-EMBEDDING_SUB_BATCH_SIZE: int = 100
-"""Maximum number of texts to send in a single provider API call."""
+EMBEDDING_SUB_BATCH_SIZE: int = 8
+"""Maximum number of texts to send in a single provider API call.
+
+Reduced from 100 to 8 for bge-m3 on 4GB VRAM. Sending too many texts at
+once causes Ollama to run out of CUDA memory. Each text produces a 1024-dim
+embedding vector; 8 texts per batch keeps peak VRAM usage well within 4GB.
+"""
 
 
 class BaseEmbeddingProvider(ABC):

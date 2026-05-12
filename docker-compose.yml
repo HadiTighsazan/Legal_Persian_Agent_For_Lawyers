@@ -108,6 +108,7 @@ services:
       - ./src/backend:/app
       - backend_static:/app/staticfiles
       - backend_media:/app/media
+      - C:/Users/starlap/Desktop/chunked_datasets:/data/chunked_datasets
     ports:
       - "8000:8000"
     healthcheck:
@@ -161,6 +162,7 @@ services:
     volumes:
       - ./src/backend:/app
       - backend_media:/app/media
+      - C:/Users/starlap/Desktop/chunked_datasets:/data/chunked_datasets
     command: celery -A config worker --loglevel=info --concurrency=4
     networks:
       - docuchat_network
