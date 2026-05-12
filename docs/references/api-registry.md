@@ -718,13 +718,31 @@ Both fields are optional. At least one should be provided for meaningful updates
 ## Conversations
 
 #### POST /conversations
-**Description:** Create new conversation for a document  
-**Auth Required:** Yes  
-**Request Body:**
+**Description:** Create new conversation (document-scoped or Global RAG)
+**Auth Required:** Yes
+**Implementation Date:** 2026-04-28 (updated 2026-05-12 with Phase 3 — nullable document_id)
+**View Class:** `ConversationListCreateView.post()`
+**Test Coverage:** 10 tests in `ConversationListCreateViewTests`
+**Status:** ✅ Implemented
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Validates input with `ConversationCreateSerializer`
+- `document_id` is **optional** — omit for Global RAG conversations (no document needed)
+- If `document_id` is provided, validates document ownership (403 if wrong user, 404 if not found)
+- Creates conversation with `user=request.user` and optional `document`
+- Returns the created conversation via `ConversationListSerializer`
+- `ConversationCreateException` → `502 Bad Gateway` with `{"error": "conversation_create_error", ...}`
+**Request Body (document-scoped):**
 ```json
 {
   "document_id": "uuid",
   "title": "Questions about Chapter 5"
+}
+```
+**Request Body (Global RAG — no document):**
+```json
+{
+  "title": "Legal Research on Forgery Penalties"
 }
 ```
 **Response:** `201 Created`
@@ -732,21 +750,44 @@ Both fields are optional. At least one should be provided for meaningful updates
 {
   "id": "uuid",
   "document_id": "uuid",
+  "document_title": "Document Title",
   "title": "Questions about Chapter 5",
+  "message_count": 0,
   "created_at": "2026-04-18T10:00:00Z",
   "updated_at": "2026-04-18T10:00:00Z"
 }
 ```
+**Response (Global RAG — null document):**
+```json
+{
+  "id": "uuid",
+  "document_id": null,
+  "document_title": null,
+  "title": "Legal Research on Forgery Penalties",
+  "message_count": 0,
+  "created_at": "2026-04-18T10:00:00Z",
+  "updated_at": "2026-04-18T10:00:00Z"
+}
+```
+**Error Responses:**
+- `400 Bad Request` — Missing title or invalid data
+- `403 Forbidden` — Document belongs to another user
+- `404 Not Found` — Document does not exist
+- `502 Bad Gateway` — Conversation creation error
 
 ---
 
 #### GET /conversations
-**Description:** List user's conversations  
-**Auth Required:** Yes  
+**Description:** List user's conversations
+**Auth Required:** Yes
+**Implementation Date:** 2026-04-28 (updated 2026-05-12 with Phase 3 — nullable document_id)
+**View Class:** `ConversationListCreateView.get()`
+**Test Coverage:** 10 tests in `ConversationListCreateViewTests`
+**Status:** ✅ Implemented
 **Query Parameters:**
 - `page`: Integer (default: 1)
 - `page_size`: Integer (default: 20)
-- `document_id`: UUID (filter by document)
+- `document_id`: UUID (optional — filter by document; omit to list all conversations including Global RAG)
 
 **Response:** `200 OK`
 ```json
@@ -763,6 +804,15 @@ Both fields are optional. At least one should be provided for meaningful updates
       "message_count": 8,
       "created_at": "2026-04-18T10:00:00Z",
       "updated_at": "2026-04-18T11:00:00Z"
+    },
+    {
+      "id": "uuid",
+      "document_id": null,
+      "document_title": null,
+      "title": "Legal Research on Forgery Penalties",
+      "message_count": 3,
+      "created_at": "2026-04-18T12:00:00Z",
+      "updated_at": "2026-04-18T13:00:00Z"
     }
   ]
 }
@@ -771,15 +821,25 @@ Both fields are optional. At least one should be provided for meaningful updates
 ---
 
 #### GET /conversations/{conversation_id}
-**Description:** Get conversation details with messages  
-**Auth Required:** Yes  
-**Response:** `200 OK`
+**Description:** Get conversation details with messages
+**Auth Required:** Yes
+**Implementation Date:** 2026-04-28 (updated 2026-05-12 with Phase 3 — nullable document_id)
+**View Class:** `ConversationDetailView.get()`
+**Test Coverage:** 5 tests in `ConversationDetailViewTests`
+**Status:** ✅ Implemented
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies conversation ownership (403 if wrong user, 404 if not found)
+- Returns conversation with all messages ordered by `created_at`
+- `document_id` and `document_title` can be `null` for Global RAG conversations
+**Response (document-scoped):** `200 OK`
 ```json
 {
   "id": "uuid",
   "document_id": "uuid",
   "document_title": "Document Title",
   "title": "Questions about Chapter 5",
+  "message_count": 2,
   "created_at": "2026-04-18T10:00:00Z",
   "updated_at": "2026-04-18T11:00:00Z",
   "messages": [
@@ -806,6 +866,37 @@ Both fields are optional. At least one should be provided for meaningful updates
   ]
 }
 ```
+**Response (Global RAG):** `200 OK`
+```json
+{
+  "id": "uuid",
+  "document_id": null,
+  "document_title": null,
+  "title": "Legal Research on Forgery Penalties",
+  "message_count": 3,
+  "created_at": "2026-04-18T12:00:00Z",
+  "updated_at": "2026-04-18T13:00:00Z",
+  "messages": [
+    {
+      "id": "uuid",
+      "role": "user",
+      "content": "مجازات جعل اسناد رسمی چیست؟",
+      "created_at": "2026-04-18T12:05:00Z"
+    },
+    {
+      "id": "uuid",
+      "role": "assistant",
+      "content": "بر اساس قوانین مصوب...",
+      "sources": [...],
+      "hub_metadata": {...},
+      "created_at": "2026-04-18T12:05:15Z"
+    }
+  ]
+}
+```
+**Error Responses:**
+- `403 Forbidden` — Conversation belongs to another user
+- `404 Not Found` — Conversation does not exist
 
 ---
 
@@ -813,7 +904,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 **Description:** Rename conversation (update title)
 **Auth Required:** Yes
 **View Class:** `ConversationDetailView.patch()`
-**Implementation Date:** 2026-05-04 (Deep Refactor — Issue 2)
+**Implementation Date:** 2026-05-04 (Deep Refactor — Issue 2; updated 2026-05-12 with Phase 3 — nullable document_id in response)
 **Request Body:**
 ```json
 {
@@ -832,6 +923,7 @@ Both fields are optional. At least one should be provided for meaningful updates
   "updated_at": "2026-04-18T11:00:00Z"
 }
 ```
+**Note:** For Global RAG conversations, `document_id` and `document_title` will be `null` in the response.
 **Error Responses:**
 - `400 Bad Request`: Title is empty or invalid
 - `403 Forbidden`: Conversation belongs to another user
@@ -868,8 +960,8 @@ Both fields are optional. At least one should be provided for meaningful updates
 - Verifies conversation ownership (403 if wrong user, 404 if not found)
 - Validates input with `AskQuestionSerializer` (content required, 1–10,000 chars)
 - **Supports two modes** via the `mode` field:
-  - `"local_rag"` (default) — Original single-document RAG. Requires `document_id` on the conversation. Calls `run_rag_query(question, document_id, conversation_history, top_k=5)`.
-  - `"global_rag"` — Multi-hub legal research. Routes the question through the Question Router (LLM) to determine relevant legal hubs, performs parallel cross-document hybrid search across each hub, generates per-hub partial answers (Phase 2b), then synthesizes a comprehensive answer with conflict detection. Calls `run_global_rag_query(question, conversation_history, top_k_per_hub=5)`.
+  - `"local_rag"` (default) — Original single-document RAG. **Requires `document_id` on the conversation** (returns 400 if conversation has no document). Calls `run_rag_query(question, document_id, conversation_history, top_k=5)`.
+  - `"global_rag"` — Multi-hub legal research. Works with or without a document. Routes the question through the Question Router (LLM) to determine relevant legal hubs, performs parallel cross-document hybrid search across each hub, generates per-hub partial answers (Phase 2b), then synthesizes a comprehensive answer with conflict detection. Calls `run_global_rag_query(question, conversation_history, top_k_per_hub=5)`.
 - Persists user message **before** calling RAG service
 - Builds conversation history from all messages ordered by `created_at`
 - Persists assistant message with `sources`, `token_usage`, and `hub_metadata` (for global_rag mode) from RAG result
@@ -1031,6 +1123,60 @@ Both fields are optional. At least one should be provided for meaningful updates
 
 **Error Responses:**
 - `400 Bad Request` — Validation error (empty content, invalid mode, etc.)
+- `401 Unauthorized` — Missing or invalid authentication
+- `403 Forbidden` — Conversation belongs to another user
+- `404 Not Found` — Conversation does not exist
+- `429 Too Many Requests` — OpenAI API rate limit exceeded
+- `502 Bad Gateway` — RAG service error or Global RAG service error
+
+---
+
+#### POST /conversations/{conversation_id}/messages/stream/
+**Description:** Ask question in conversation with SSE streaming response
+**Auth Required:** Yes
+**Implementation Date:** 2026-05-04 (Deep Refactor — Issue 2; updated 2026-05-12 with Phase 3 — mode parameter)
+**View Class:** `ConversationMessageStreamView`
+**Test Coverage:** 11 tests in `ConversationMessageStreamViewTests`
+**Status:** ✅ Implemented
+**Implementation Notes:**
+- Uses `IsAuthenticated` permission class
+- Verifies conversation ownership (403 if wrong user, 404 if not found)
+- Validates input with `AskQuestionSerializer` (content required, 1–10,000 chars)
+- **Supports two modes** via the `mode` field (same as non-streaming endpoint):
+  - `"local_rag"` (default) — Single-document RAG. **Requires `document_id` on the conversation** (returns 400 if conversation has no document).
+  - `"global_rag"` — Multi-hub legal research. Works with or without a document.
+- Returns SSE stream with the following event types:
+  - `data: {"type": "token", "content": "..."}` — Streaming token from the LLM response
+  - `data: {"type": "metadata", "message_id": "uuid", "sources": [...], "token_usage": {...}, "hub_metadata": {...}}` — Final metadata after stream completes
+- Persists user message **before** streaming begins
+- Persists assistant message after stream completes (with `sources`, `token_usage`, `hub_metadata`)
+- Touches `conversation.updated_at` via `conversation.save()`
+- `RAGServiceException` → SSE error event with `502 Bad Gateway`
+- `GlobalRAGServiceException` → SSE error event with `502 Bad Gateway`
+- OpenAI rate limit errors → SSE error event with `429 Too Many Requests`
+- URL registered at `conversations/<uuid:conversation_id>/messages/stream/` with name `conversation-messages-stream`
+**Request Body (local_rag — default):**
+```json
+{
+  "content": "What is the main conclusion of the study?"
+}
+```
+**Request Body (global_rag):**
+```json
+{
+  "content": "مجازات جعل اسناد رسمی چیست؟",
+  "mode": "global_rag"
+}
+```
+**SSE Stream Response:** `200 OK`
+```
+data: {"type": "token", "content": "بر اساس "}
+data: {"type": "token", "content": "قوانین مصوب"}
+data: {"type": "token", "content": "، مجازات جعل اسناد رسمی..."}
+data: {"type": "metadata", "message_id": "uuid", "sources": [...], "token_usage": {"prompt_tokens": 4500, "completion_tokens": 350, "total_tokens": 4850}, "hub_metadata": {...}}
+```
+**Error Responses:**
+- `400 Bad Request` — Validation error (empty content, invalid mode, local_rag without document)
 - `401 Unauthorized` — Missing or invalid authentication
 - `403 Forbidden` — Conversation belongs to another user
 - `404 Not Found` — Conversation does not exist

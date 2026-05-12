@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Activity, LayoutDashboard, FileText, MessageSquare, X } from 'lucide-react';
+import { Activity, LayoutDashboard, FileText, MessageSquare, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -27,6 +27,11 @@ const navItems: NavItem[] = [
     icon: <FileText className="h-5 w-5" />,
     href: '/documents',
     // disabled: true,  // removed — Documents nav is now active
+  },
+  {
+    label: 'Legal Research',
+    icon: <Search className="h-5 w-5" />,
+    href: '/legal-research',
   },
   {
     label: 'Conversations',
@@ -92,6 +97,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             const isActive =
               item.href === '/documents'
                 ? location.pathname.startsWith('/documents')
+                : item.href === '/legal-research'
+                ? location.pathname.startsWith('/legal-research')
                 : location.pathname === item.href;
 
             return (

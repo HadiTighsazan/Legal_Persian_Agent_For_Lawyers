@@ -14,11 +14,9 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
-  Scale,
-  Gavel,
-  BookOpen,
   AlertTriangle,
 } from 'lucide-react';
+import HubStatusBadge from '@/components/rag/HubStatusBadge';
 import type { Message, PartialAnswer } from '@/api/conversations';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -26,50 +24,6 @@ import type { Message, PartialAnswer } from '@/api/conversations';
 interface MessageBubbleProps {
   message: Message;
   isStreaming?: boolean;
-}
-
-// ── Hub Configuration ──────────────────────────────────────────────────────
-
-interface HubConfig {
-  label: string;
-  icon: React.ReactNode;
-  color: string;       // Tailwind border color
-  bgColor: string;     // Tailwind background color
-  badgeColor: string;  // Tailwind text color for badge
-}
-
-const HUB_CONFIG: Record<string, HubConfig> = {
-  legislation: {
-    label: 'قوانین مصوب',
-    icon: <Scale className="h-3.5 w-3.5" />,
-    color: 'border-blue-400 dark:border-blue-600',
-    bgColor: 'bg-blue-50 dark:bg-blue-950/30',
-    badgeColor: 'text-blue-700 dark:text-blue-300',
-  },
-  judicial_precedent: {
-    label: 'رویه‌های قضایی',
-    icon: <Gavel className="h-3.5 w-3.5" />,
-    color: 'border-emerald-400 dark:border-emerald-600',
-    bgColor: 'bg-emerald-50 dark:bg-emerald-950/30',
-    badgeColor: 'text-emerald-700 dark:text-emerald-300',
-  },
-  advisory_opinion: {
-    label: 'نظریات مشورتی',
-    icon: <BookOpen className="h-3.5 w-3.5" />,
-    color: 'border-orange-400 dark:border-orange-600',
-    bgColor: 'bg-orange-50 dark:bg-orange-950/30',
-    badgeColor: 'text-orange-700 dark:text-orange-300',
-  },
-};
-
-function getHubConfig(hubType: string): HubConfig {
-  return HUB_CONFIG[hubType] ?? {
-    label: hubType,
-    icon: <FileText className="h-3.5 w-3.5" />,
-    color: 'border-gray-400 dark:border-gray-600',
-    bgColor: 'bg-gray-50 dark:bg-gray-950/30',
-    badgeColor: 'text-gray-700 dark:text-gray-300',
-  };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -177,21 +131,17 @@ function PartialAnswersSection({
       <CollapsibleContent className="space-y-2 pt-2" id={partialAnswersId}>
         {hubTypes.map((hubType) => {
           const pa = partialAnswers[hubType];
-          const config = getHubConfig(hubType);
           const hasError = pa.error != null;
 
           return (
             <Card
               key={hubType}
-              className={`border-l-4 ${config.color} ${config.bgColor}`}
+              className="border-l-4 border-muted"
             >
               <CardContent className="p-3 space-y-2">
                 {/* Hub header */}
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold">
-                    {config.icon}
-                    <span className={config.badgeColor}>{config.label}</span>
-                  </div>
+                  <HubStatusBadge hubType={hubType} />
 
                   {/* Token usage badge */}
                   {pa.token_usage && pa.token_usage.total_tokens > 0 && (

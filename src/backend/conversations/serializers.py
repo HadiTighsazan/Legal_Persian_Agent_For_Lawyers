@@ -70,7 +70,8 @@ class ConversationListSerializer(serializers.ModelSerializer):
     """Serialize a :class:`~conversations.models.Conversation` for list views.
 
     Includes ``document_id`` and ``document_title`` sourced from the related
-    :class:`~documents.models.Document`, and an annotated ``message_count``.
+    :class:`~documents.models.Document` (nullable for Global RAG conversations),
+    and an annotated ``message_count``.
 
     .. note::
 
@@ -86,12 +87,14 @@ class ConversationListSerializer(serializers.ModelSerializer):
     document_id = serializers.UUIDField(
         read_only=True,
         source="document.id",
-        help_text="UUID of the associated document.",
+        allow_null=True,
+        help_text="UUID of the associated document (null for Global RAG conversations).",
     )
     document_title = serializers.CharField(
         read_only=True,
         source="document.title",
-        help_text="Title of the associated document.",
+        allow_null=True,
+        help_text="Title of the associated document (null for Global RAG conversations).",
     )
     title = serializers.CharField(
         required=False,
@@ -145,15 +148,19 @@ class ConversationDetailSerializer(ConversationListSerializer):
 class ConversationCreateSerializer(serializers.Serializer):
     """Validate input for creating a new conversation (POST /conversations).
 
-    Validates that:
+    ``document_id`` is optional to support Global RAG conversations that are
+    not tied to any specific user-uploaded document.
+
+    When ``document_id`` is provided, validates that:
     1. The referenced document exists.
     2. The document belongs to the requesting user.
     3. The document's processing is complete.
     """
 
     document_id = serializers.UUIDField(
-        required=True,
-        help_text="UUID of the document to create a conversation about.",
+        required=False,
+        help_text="UUID of the document to create a conversation about. "
+                  "Omit for Global RAG conversations (no document).",
     )
     title = serializers.CharField(
         required=False,
@@ -162,22 +169,27 @@ class ConversationCreateSerializer(serializers.Serializer):
         help_text="Optional human-readable title for the conversation.",
     )
 
-    def validate_document_id(self, value: uuid.UUID) -> Document:
-        """Validate that the document exists, belongs to the user, and is processed.
+    def validate_document_id(self, value: uuid.UUID | None) -> Document | None:
+        """Validate the document ID if provided.
 
-        Extracts the authenticated user from ``self.context['request'].user``
-        to verify document ownership.
+        If ``value`` is ``None`` (Global RAG conversation), skip validation
+        and return ``None``. Otherwise, validate that the document exists,
+        belongs to the user, and is fully processed.
 
         Args:
-            value: The UUID of the document to validate.
+            value: The UUID of the document, or ``None``.
 
         Returns:
-            The validated :class:`~documents.models.Document` instance.
+            The validated :class:`~documents.models.Document` instance,
+            or ``None`` if no document was provided.
 
         Raises:
             serializers.ValidationError: If the document does not exist,
                 does not belong to the user, or is not fully processed.
         """
+        if value is None:
+            return None
+
         request = self.context.get("request")
         if request is None:
             raise serializers.ValidationError("Request context is required.")

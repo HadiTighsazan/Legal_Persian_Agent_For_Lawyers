@@ -2,10 +2,12 @@ import { apiClient } from './axios';
 
 // ── TypeScript Interfaces ──────────────────────────────────────────────
 
+export type RagMode = 'local_rag' | 'global_rag';
+
 export interface Conversation {
   id: string;
-  document_id: string;
-  document_title: string;
+  document_id: string | null;
+  document_title: string | null;
   title: string | null;
   message_count: number;
   created_at: string;
@@ -57,8 +59,8 @@ export interface Message {
 
 export interface ConversationDetail {
   id: string;
-  document_id: string;
-  document_title: string;
+  document_id: string | null;
+  document_title: string | null;
   title: string | null;
   message_count: number;
   created_at: string;
@@ -117,15 +119,21 @@ function handleError(error: unknown): never {
 // ── API Functions ──────────────────────────────────────────────────────
 
 /**
- * Create a new conversation for a document.
+ * Create a new conversation.
  * POST /conversations/
+ *
+ * @param documentId - Optional document UUID. Omit for Global RAG conversations.
+ * @param title - Optional human-readable title.
  */
 export async function createConversation(
-  documentId: string,
+  documentId?: string,
   title?: string,
 ): Promise<Conversation> {
   try {
-    const body: Record<string, string> = { document_id: documentId };
+    const body: Record<string, string> = {};
+    if (documentId !== undefined) {
+      body.document_id = documentId;
+    }
     if (title !== undefined) {
       body.title = title;
     }
@@ -209,15 +217,24 @@ export async function deleteConversation(
 /**
  * Send a message (question) in a conversation and get the assistant response.
  * POST /conversations/{id}/messages/
+ *
+ * @param conversationId - The conversation ID.
+ * @param content - The message content.
+ * @param mode - Optional RAG mode ('local_rag' or 'global_rag'). Defaults to 'local_rag'.
  */
 export async function sendMessage(
   conversationId: string,
   content: string,
+  mode?: RagMode,
 ): Promise<Message> {
   try {
+    const body: Record<string, string> = { content };
+    if (mode !== undefined) {
+      body.mode = mode;
+    }
     const { data } = await apiClient.post<Message>(
       `conversations/${conversationId}/messages/`,
-      { content },
+      body,
     );
     return data;
   } catch (error) {
@@ -244,12 +261,17 @@ export function sendMessageStream(
   onToken: (token: string) => void,
   onDone: (data: { message_id: string; sources: MessageSource[]; token_usage: TokenUsage }) => void,
   onError: (error: Error) => void,
+  mode?: RagMode,
 ): AbortController {
   const controller = new AbortController();
   const token = localStorage.getItem('access_token');
 
   (async () => {
     try {
+      const body: Record<string, string> = { content };
+      if (mode !== undefined) {
+        body.mode = mode;
+      }
       const response = await fetch(
         `${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/'}conversations/${conversationId}/messages/stream/`,
         {
@@ -258,7 +280,7 @@ export function sendMessageStream(
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify(body),
           signal: controller.signal,
         },
       );

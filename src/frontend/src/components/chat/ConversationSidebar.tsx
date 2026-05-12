@@ -10,7 +10,7 @@ import type { Conversation } from '@/api/conversations';
 // ── Props ──────────────────────────────────────────────────────────────────
 
 interface ConversationSidebarProps {
-  documentId: string;
+  documentId?: string;
   activeConversationId: string | null;
   onSelect: (conversationId: string) => void;
 }

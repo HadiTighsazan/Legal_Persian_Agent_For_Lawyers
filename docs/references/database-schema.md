@@ -102,7 +102,7 @@
 |--------|------|-------------|-------------|
 | id | UUID | PRIMARY KEY | Conversation unique identifier |
 | user_id | UUID | FOREIGN KEY (users.id) ON DELETE CASCADE | Conversation owner |
-| document_id | UUID | FOREIGN KEY (documents.id) ON DELETE CASCADE | Related document |
+| **document_id** | **UUID** | **FOREIGN KEY (documents.id) ON DELETE CASCADE, NULL** | **Related document (NULL for Global RAG conversations). Made nullable in Phase 3 (migration 0003 of conversations app).** |
 | title | VARCHAR(500) | NULL | Conversation title |
 | created_at | TIMESTAMP | DEFAULT NOW() | Creation timestamp |
 | updated_at | TIMESTAMP | DEFAULT NOW() | Last message timestamp |

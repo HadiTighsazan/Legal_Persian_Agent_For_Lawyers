@@ -8,7 +8,7 @@ import {
   deleteConversation as apiDeleteConversation,
   renameConversation as apiRenameConversation,
 } from '@/api/conversations';
-import type { Conversation, ConversationDetail, Message, MessageSource, TokenUsage } from '@/api/conversations';
+import type { Conversation, ConversationDetail, Message, MessageSource, RagMode, TokenUsage } from '@/api/conversations';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -35,18 +35,20 @@ interface ConversationState {
   isCreatingConversation: boolean;
   streamingContent: string;
   error: string | null;
+  ragMode: RagMode;
 }
 
 interface ConversationActions {
-  fetchConversations: (documentId: string) => Promise<void>;
-  createConversation: (documentId: string, title?: string) => Promise<Conversation>;
+  fetchConversations: (documentId?: string) => Promise<void>;
+  createConversation: (documentId?: string, title?: string) => Promise<Conversation>;
   loadConversation: (conversationId: string) => Promise<void>;
-  sendMessage: (conversationId: string, content: string) => Promise<void>;
-  sendMessageStream: (conversationId: string, content: string) => Promise<void>;
+  sendMessage: (conversationId: string, content: string, mode?: RagMode) => Promise<void>;
+  sendMessageStream: (conversationId: string, content: string, mode?: RagMode) => Promise<void>;
   renameConversation: (conversationId: string, title: string) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
   clearActiveConversation: () => void;
   clearError: () => void;
+  setRagMode: (mode: RagMode) => void;
 }
 
 type ConversationStore = ConversationState & ConversationActions;
@@ -62,6 +64,7 @@ const initialState: ConversationState = {
   isCreatingConversation: false,
   streamingContent: '',
   error: null,
+  ragMode: 'local_rag',
 };
 
 // ── Store ──────────────────────────────────────────────────────────────
@@ -69,7 +72,7 @@ const initialState: ConversationState = {
 export const useConversationStore = create<ConversationStore>((set) => ({
   ...initialState,
 
-  fetchConversations: async (documentId: string): Promise<void> => {
+  fetchConversations: async (documentId?: string): Promise<void> => {
     set({ isLoadingConversations: true, error: null });
     try {
       const data = await listConversations(documentId);
@@ -80,7 +83,7 @@ export const useConversationStore = create<ConversationStore>((set) => ({
     }
   },
 
-  createConversation: async (documentId: string, title?: string): Promise<Conversation> => {
+  createConversation: async (documentId?: string, title?: string): Promise<Conversation> => {
     set({ isCreatingConversation: true, error: null });
     try {
       const newConv = await apiCreateConversation(documentId, title);
@@ -106,7 +109,7 @@ export const useConversationStore = create<ConversationStore>((set) => ({
     }
   },
 
-  sendMessage: async (conversationId: string, content: string): Promise<void> => {
+  sendMessage: async (conversationId: string, content: string, mode?: RagMode): Promise<void> => {
     const tempId = generateTempId();
 
     const optimisticMessage: Message = {
@@ -130,7 +133,7 @@ export const useConversationStore = create<ConversationStore>((set) => ({
     }));
 
     try {
-      const assistantMessage = await apiSendMessage(conversationId, content);
+      const assistantMessage = await apiSendMessage(conversationId, content, mode);
 
       set((state) => ({
         isSendingMessage: false,
@@ -157,7 +160,7 @@ export const useConversationStore = create<ConversationStore>((set) => ({
     }
   },
 
-  sendMessageStream: async (conversationId: string, content: string): Promise<void> => {
+  sendMessageStream: async (conversationId: string, content: string, mode?: RagMode): Promise<void> => {
     const tempId = generateTempId();
     const tempAssistantId = 'temp-assistant-' + crypto.randomUUID();
 
@@ -254,6 +257,7 @@ export const useConversationStore = create<ConversationStore>((set) => ({
           }));
           reject(error);
         },
+        mode,
       );
     });
   },
@@ -296,5 +300,9 @@ export const useConversationStore = create<ConversationStore>((set) => ({
 
   clearError: (): void => {
     set({ error: null });
+  },
+
+  setRagMode: (mode: RagMode): void => {
+    set({ ragMode: mode });
   },
 }));

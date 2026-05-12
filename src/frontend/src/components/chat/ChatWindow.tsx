@@ -128,6 +128,7 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
   const isLoadingMessages = useConversationStore((s) => s.isLoadingMessages);
   const isSendingMessage = useConversationStore((s) => s.isSendingMessage);
   const error = useConversationStore((s) => s.error);
+  const ragMode = useConversationStore((s) => s.ragMode);
   const loadConversation = useConversationStore((s) => s.loadConversation);
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const sendMessageStream = useConversationStore((s) => s.sendMessageStream);
@@ -153,23 +154,23 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
       lastAttemptedContent.current = content;
       // Use streaming if available, fall back to non-streaming
       try {
-        await sendMessageStream(conversationId, content);
+        await sendMessageStream(conversationId, content, ragMode);
       } catch {
-        await sendMessage(conversationId, content);
+        await sendMessage(conversationId, content, ragMode);
       }
     },
-    [conversationId, sendMessageStream, sendMessage],
+    [conversationId, ragMode, sendMessageStream, sendMessage],
   );
 
   const handleRetry = useCallback(async () => {
     if (lastAttemptedContent.current) {
       try {
-        await sendMessageStream(conversationId, lastAttemptedContent.current);
+        await sendMessageStream(conversationId, lastAttemptedContent.current, ragMode);
       } catch {
-        await sendMessage(conversationId, lastAttemptedContent.current);
+        await sendMessage(conversationId, lastAttemptedContent.current, ragMode);
       }
     }
-  }, [conversationId, sendMessageStream, sendMessage]);
+  }, [conversationId, ragMode, sendMessageStream, sendMessage]);
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -215,6 +216,11 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
       <MessageInput
         onSend={handleSend}
         isDisabled={isSendingMessage}
+        placeholder={
+          ragMode === 'global_rag'
+            ? 'Ask a legal research question across all hubs...'
+            : 'Ask a question about this document...'
+        }
       />
     </div>
   );

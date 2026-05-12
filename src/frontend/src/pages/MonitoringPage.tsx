@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { getDocument, getDocumentChunks, getExtractedText } from '@/lib/api/documents';
-import type { Document, DocumentChunk, ExtractedTextResponse } from '@/types/document';
+import type { Document, DocumentChunk } from '@/types/document';
 
 // ---------------------------------------------------------------------------
 // Types

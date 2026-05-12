@@ -118,7 +118,7 @@ class ConversationListCreateView(APIView):
         serializer.is_valid(raise_exception=True)
 
         validated_data = serializer.validated_data
-        document = validated_data["document_id"]  # Document instance
+        document = validated_data.get("document_id")  # Document instance or None
         title = validated_data.get("title", "")
 
         conversation = Conversation.objects.create(
@@ -127,12 +127,19 @@ class ConversationListCreateView(APIView):
             title=title,
         )
 
-        logger.info(
-            "Conversation %s created for user=%s, document=%s",
-            conversation.id,
-            request.user,
-            document.id,
-        )
+        if document:
+            logger.info(
+                "Conversation %s created for user=%s, document=%s",
+                conversation.id,
+                request.user,
+                document.id,
+            )
+        else:
+            logger.info(
+                "Global RAG conversation %s created for user=%s",
+                conversation.id,
+                request.user,
+            )
 
         response_serializer = ConversationDetailSerializer(conversation)
         return Response(
@@ -343,7 +350,19 @@ class ConversationMessageView(APIView):
         ]
 
         # ------------------------------------------------------------------
-        # 5. Route to the appropriate RAG pipeline based on mode
+        # 5. Validate mode compatibility with conversation type
+        # ------------------------------------------------------------------
+        if mode == "local_rag" and conversation.document is None:
+            return Response(
+                {
+                    "error": "validation_error",
+                    "message": "Local RAG requires a document. Use global_rag mode or create a conversation with a document.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ------------------------------------------------------------------
+        # 6. Route to the appropriate RAG pipeline based on mode
         # ------------------------------------------------------------------
         if mode == "global_rag":
             try:
@@ -485,7 +504,17 @@ class ConversationMessageStreamView(APIView):
             for msg in all_messages
         ]
 
-        # 5. Create a streaming SSE response
+        # 5. Validate mode compatibility with conversation type
+        if mode == "local_rag" and conversation.document is None:
+            return Response(
+                {
+                    "error": "validation_error",
+                    "message": "Local RAG requires a document. Use global_rag mode or create a conversation with a document.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 6. Create a streaming SSE response
         def event_stream():
             try:
                 if mode == "global_rag":

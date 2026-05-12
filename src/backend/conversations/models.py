@@ -13,10 +13,16 @@ from users.models import User
 class Conversation(models.Model):
     """
     Conversation model for Q&A sessions about documents.
+
+    ``document`` is nullable to support Global RAG conversations that are not
+    tied to any specific user-uploaded document.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='conversations')
-    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='conversations')
+    document = models.ForeignKey(
+        Document, on_delete=models.CASCADE, related_name='conversations',
+        null=True, blank=True,
+    )
     title = models.CharField(max_length=500, null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
@@ -30,7 +36,9 @@ class Conversation(models.Model):
         ]
     
     def __str__(self):
-        return f"Conversation about {self.document.title} ({self.user.email})"
+        if self.document:
+            return f"Conversation about {self.document.title} ({self.user.email})"
+        return f"Global RAG Conversation ({self.user.email})"
 
 
 class Message(models.Model):
