@@ -123,7 +123,7 @@
 | content | TEXT | NOT NULL | Message content |
 | sources | JSONB | DEFAULT '[]' | Array of source chunks used |
 | token_usage | JSONB | NULL | Token usage stats |
-| **hub_metadata** | **JSONB** | **NULL** | **Global RAG metadata: stores per-hub search results, sub-queries, and hub-level source counts. Only populated when `mode='global_rag'`. (added in migration 0002 of conversations app)** |
+| **hub_metadata** | **JSONB** | **NULL** | **Global RAG metadata: stores per-hub search results, sub-queries, hub-level source counts, and Phase 2b per-hub partial answers (content, token_usage, error). Only populated when `mode='global_rag'`. (added in migration 0002 of conversations app; Phase 2b partial_answer fields added 2026-05-12, no schema migration needed — JSONB is schema-less)** |
 | created_at | TIMESTAMP | DEFAULT NOW() | Message timestamp |
 
 **Indexes:**

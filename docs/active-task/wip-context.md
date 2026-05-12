@@ -1,122 +1,131 @@
-# WIP Context — Phase 2a Completion & Data Injection
+# WIP Context — Phase 2b Implementation (Global RAG Full)
 
 ## Status: ✅ COMPLETED (2026-05-12)
 
 ## Summary
 
-Completed Phase 2a (Global RAG Lite) implementation by creating the `import_chunked_data` management command, writing 19 tests, and injecting 6 pre-chunked Persian legal datasets into the 3 knowledge hubs.
+Implemented Phase 2b (Global RAG Full) — transforming the Global RAG pipeline from a single-pass LLM synthesis (Phase 2a) to a per-hub partial answer + synthesis architecture with conflict detection. All 38 tests pass.
 
 ---
 
-## Step 1: Created `import_chunked_data` Management Command
+## What Was Built
 
-**File:** [`src/backend/documents/management/commands/import_chunked_data.py`](src/backend/documents/management/commands/import_chunked_data.py)
+### Step 1: Per-Hub Specialized System Prompts
 
-- Supports 3 auto-detected JSON formats (A: legislation object, B: precedent flat array, C: advisory flat array)
-- Folder-to-hub mapping: `"هاب قوانین مصوب"` → `legislation`, `"هاب رویه های قضایی"` → `judicial_precedent`, `"هاب نظریات مشورتی و رویه عملی"` → `advisory_opinion`
-- Hub type normalization: `"precedent"` → `"judicial_precedent"`, `"advisory"` → `"advisory_opinion"`
-- Idempotency via `metadata__chunk_id` lookup on `DocumentChunk`
-- Transactional atomicity per document group
-- Configurable embedding batch size (default 16 for bge-m3 on 4GB VRAM)
-- Dry-run mode (`--dry-run`)
-- User assignment via `--user-id`
+**File:** [`src/backend/conversations/global_rag_service.py`](src/backend/conversations/global_rag_service.py)
 
-## Step 2: Wrote 19 Tests
+Three new functions:
 
-**File:** [`src/backend/documents/tests/test_import_chunked_data.py`](src/backend/documents/tests/test_import_chunked_data.py)
+- **`build_hub_system_prompt(hub_type)`** (line 285): Returns a specialized system prompt for each hub:
+  - `legislation`: Focuses on articles, clauses, legal materials, exact article numbers
+  - `judicial_precedent`: Focuses on judgment numbers, court names, dates, binding precedents
+  - `advisory_opinion`: Focuses on opinion numbers, issuing authorities, advisory nature
+  - Raises `ValueError` for unknown hub types
 
-All 19 tests pass, covering:
-- Format A/B/C ingestion
-- All folder-to-hub mappings
-- Hub type normalization
-- Dry-run mode
-- Idempotency (re-running skips existing chunks)
-- Transactional rollback on failure
-- Missing text field handling
-- Invalid JSON handling
-- Unknown folder rejection
-- Non-existent directory error
-- User-id parameter
-- Multiple files in a folder
-- Format detection
-- Embedding batch size parameter
-- Empty chunks array handling
-- Format B multiple documents grouping
+- **`build_synthesis_system_prompt()`** (line 356): Returns the synthesis prompt with:
+  - Conflict detection instructions (`[Conflict]` marker)
+  - Legal hierarchy resolution (Legislation > Judicial Precedent > Advisory Opinions)
+  - Persian answer instruction
 
-## Step 3: Migrations
+- **`build_global_system_prompt()`** (line 623): Kept as legacy/deprecated for backward compatibility with Phase 2a
 
-All migrations already applied. No pending migrations.
+### Step 2: Per-Hub Partial Answer Generation
 
-## Step 4: Existing Tests
+**Function:** `generate_hub_partial_answer(hub_type, question, chunks)` (line 415)
 
-All 55 existing Phase 2a tests pass (no regressions).
+- If no chunks → returns immediately with Persian "no info" message (no LLM call)
+- Builds single-hub context via `build_global_context()`
+- Calls chat provider with hub-specific system prompt
+- Returns `{content, token_usage, error}`
+- Catches exceptions gracefully (returns error in dict, doesn't crash pipeline)
 
-## Step 5: Data Injection
+### Step 3: Answer Synthesis with Conflict Detection
 
-Injected 6 pre-chunked JSON files from `C:\Users\starlap\Desktop\chunked_datasets` into the Docker container at `/data/chunked_datasets/`.
+**Function:** `synthesize_answers(question, partial_answers)` (line 518)
 
-**Dry-run result:** 6 files processed, 3,074 documents, 18,935 chunks
-**Actual import result:** 6 files processed, 3,072 documents, 18,927 chunks, 18,927 embedded, 2 skipped
+- Builds synthesis context from all partial answers
+- Calls chat provider with synthesis prompt (conflict detection + legal hierarchy)
+- Returns `{content, token_usage, error}`
+- Catches exceptions gracefully
 
-## Step 6: Verified Data Injection
+### Step 4: Refactored `run_global_rag_query()` (line 676)
 
-| Hub Type | Documents | Chunks |
+Pipeline now executes 6 steps:
+1. **Route** the question to relevant hubs
+2. **Search** each relevant hub
+3. **Generate** per-hub partial answers (up to 3 LLM calls)
+4. **Synthesize** partial answers (1 LLM call)
+5. **Extract** citations
+6. **Return** result with `partial_answers` key
+
+Total: up to **4 LLM calls** per query (3 per-hub + 1 synthesis).
+
+Token usage is accumulated across all LLM calls.
+
+If synthesis returns an error (caught internally by `synthesize_answers()`), `run_global_rag_query()` raises `GlobalRAGServiceException`.
+
+### Step 5: Updated `hub_metadata`
+
+Each hub in `hub_metadata` now includes:
+- `partial_answer` (str): The partial answer text
+- `partial_answer_token_usage` (dict): Token usage for that hub's LLM call
+- `partial_answer_error` (str | None): Error message if the LLM call failed
+
+### Step 6: API Response — No Serializer Changes Needed
+
+The `MessageSerializer` already exposes `hub_metadata` as a read-only `JSONField`. The `partial_answers` dict is nested inside the response (not in `hub_metadata`), so no serializer changes were required.
+
+### Step 7: Tests — 38 Total (20 New + 18 Existing)
+
+**File:** [`src/backend/conversations/tests/test_global_rag_service.py`](src/backend/conversations/tests/test_global_rag_service.py)
+
+New test classes:
+| Class | Tests | Description |
 |---|---|---|
-| `legislation` | 2 | 4,612 |
-| `judicial_precedent` | 1,301 | 5,865 |
-| `advisory_opinion` | 1,769 | 8,450 |
-| **Total** | **3,072** | **18,927** |
+| `BuildHubSystemPromptTests` | 5 | Each hub prompt has specialized instructions, raises ValueError for unknown hub, all contain base instructions |
+| `BuildSynthesisSystemPromptTests` | 4 | Conflict detection, legal hierarchy, synthesis instructions, Persian answer instruction |
+| `GenerateHubPartialAnswerTests` | 4 | Generation with chunks, empty chunks (no LLM call), LLM error handling, correct system prompt per hub type |
+| `SynthesizeAnswersTests` | 4 | Merging partial answers, conflict detection, single hub, all hubs empty |
 
-All chunks have embeddings populated (not null).
+Updated `RunGlobalRagQueryTests` with 7 tests (3 updated from Phase 2a + 4 new):
+- `test_full_pipeline_returns_expected_keys` — checks `partial_answers` key + token accumulation
+- `test_partial_answers_included_in_hub_metadata` — checks per-hub `partial_answer` fields
+- `test_partial_answers_returned_in_response` — checks `partial_answers` dict structure
+- `test_token_usage_includes_all_llm_calls` — checks accumulated tokens across 3 calls (2 per-hub + 1 synthesis)
+- `test_passes_conversation_history` — backward compat check
+- `test_route_question_failure_raises_exception` — unchanged from Phase 2a
+- `test_synthesis_failure_raises_exception` — checks synthesis error raises exception
+- `test_backward_compatible_response_format` — checks Phase 2a keys still present
 
-## Step 7: Updated Reference Documentation
+### Step 8: Test Results — ✅ ALL 38 PASS
 
-- [`docs/references/database-schema.md`](docs/references/database-schema.md): Added Management Commands section documenting `import_chunked_data`, folder-to-hub mapping, data formats, idempotency, transactional integrity, embedding strategy, usage, and injected data summary.
-- [`docs/references/api-registry.md`](docs/references/api-registry.md): No changes needed — Global RAG endpoint (`mode="global_rag"`) and `hub_metadata` response format already thoroughly documented.
-- [`docs/active-task/wip-context.md`](docs/active-task/wip-context.md): This file.
+```
+38 passed in 3.66s
+```
 
-## Step 8: End-to-End Verification — ✅ PASSED
+### Step 9: Updated Reference Documentation
 
-Tested the full Global RAG pipeline by sending a Persian legal query:
-
-**Query:** `"مجازات جعل اسناد رسمی چیست؟"` (What is the punishment for forgery of official documents?)
-
-**Result:** ✅ All 3 hubs returned results with no errors:
-
-| Hub | Chunks Retrieved | Key Sources Cited |
-|---|---|---|
-| `legislation` | 10 | ماده 525 (حبس ۱-۱۰ سال), مواد 532-534 (کارمندان دولت), مواد 100-103 قانون ثبت |
-| `judicial_precedent` | 10 | رأی وحدت رویه شماره ۶۲۴ (تفکیک جرم جعل و استفاده از سند مجعول) |
-| `advisory_opinion` | 10 | نظریات مشورتی مرتبط |
-
-**Response highlights:**
-- LLM correctly differentiated punishments by perpetrator type (ordinary citizens, government employees, registry staff)
-- Cited specific legal articles with article numbers
-- Referenced judicial precedent (binding unified precedent)
-- Included a summary table
-- `hub_metadata` fully populated with per-hub sub-queries, chunk counts, and no errors
-- Token usage: 6,703 prompt + 1,000 completion = 7,703 total tokens
-- `sources` array returned empty (expected — sources are embedded in the LLM response text via citation markers)
-
-**Phase 2a (Global RAG Lite) is now COMPLETE.**
+- [`docs/active-task/wip-context.md`](docs/active-task/wip-context.md): This file — recorded Phase 2b completion
+- [`docs/references/api-registry.md`](docs/references/api-registry.md): Updated Global RAG response example to include `partial_answers` and updated `hub_metadata` structure
 
 ---
-
-## Files Created
-
-| File | Description |
-|---|---|
-| [`src/backend/documents/management/commands/import_chunked_data.py`](src/backend/documents/management/commands/import_chunked_data.py) | Management command for importing pre-chunked JSON datasets |
-| [`src/backend/documents/tests/test_import_chunked_data.py`](src/backend/documents/tests/test_import_chunked_data.py) | 19 tests for the import_chunked_data command |
 
 ## Files Modified
 
 | File | Description |
 |---|---|
-| [`docs/references/database-schema.md`](docs/references/database-schema.md) | Added Management Commands section with import_chunked_data documentation |
-| [`docs/active-task/wip-context.md`](docs/active-task/wip-context.md) | This file — recorded Phase 2a completion |
+| [`src/backend/conversations/global_rag_service.py`](src/backend/conversations/global_rag_service.py) | Added `build_hub_system_prompt()`, `build_synthesis_system_prompt()`, `generate_hub_partial_answer()`, `synthesize_answers()`. Refactored `run_global_rag_query()` for Phase 2b. Added synthesis error check. |
+| [`src/backend/conversations/tests/test_global_rag_service.py`](src/backend/conversations/tests/test_global_rag_service.py) | Added 20 new tests across 4 new test classes. Updated `RunGlobalRagQueryTests` with 4 new tests. |
+| [`docs/active-task/wip-context.md`](docs/active-task/wip-context.md) | This file — recorded Phase 2b completion |
+| [`docs/references/api-registry.md`](docs/references/api-registry.md) | Updated Global RAG response example with `partial_answers` and updated `hub_metadata` structure |
+
+## Files Created
+
+| File | Description |
+|---|---|
+| [`plans/plan-phase2b-implementation.md`](plans/plan-phase2b-implementation.md) | Detailed implementation plan for Phase 2b |
 
 ## Next Steps
 
-1. Run end-to-end verification: send a Global RAG query via the API and verify multi-hub response
-2. If verification passes, Phase 2a is complete
+1. **End-to-end verification**: Send a Global RAG query via the API and verify the new `partial_answers` field in the response
+2. **Phase 3 planning**: Streaming support for Global RAG, frontend enhancements

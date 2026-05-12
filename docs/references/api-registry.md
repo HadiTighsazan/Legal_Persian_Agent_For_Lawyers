@@ -859,7 +859,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 #### POST /conversations/{conversation_id}/messages/
 **Description:** Ask question in conversation (RAG query)
 **Auth Required:** Yes
-**Implementation Date:** 2026-04-28 (updated 2026-05-10 with Phase 2a — Global RAG)
+**Implementation Date:** 2026-04-28 (updated 2026-05-10 with Phase 2a — Global RAG; updated 2026-05-12 with Phase 2b — Per-Hub Partial Answers + Synthesis)
 **View Class:** `ConversationMessageView`
 **Test Coverage:** 11 tests (10 unit + 1 integration) in `ConversationMessageViewTests`
 **Status:** ✅ Implemented
@@ -869,7 +869,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 - Validates input with `AskQuestionSerializer` (content required, 1–10,000 chars)
 - **Supports two modes** via the `mode` field:
   - `"local_rag"` (default) — Original single-document RAG. Requires `document_id` on the conversation. Calls `run_rag_query(question, document_id, conversation_history, top_k=5)`.
-  - `"global_rag"` — Multi-hub legal research. Routes the question through the Question Router (LLM) to determine relevant legal hubs, performs parallel cross-document hybrid search across each hub, then synthesizes a comprehensive answer. Calls `run_global_rag_query(question, conversation_history, top_k_per_hub=5)`.
+  - `"global_rag"` — Multi-hub legal research. Routes the question through the Question Router (LLM) to determine relevant legal hubs, performs parallel cross-document hybrid search across each hub, generates per-hub partial answers (Phase 2b), then synthesizes a comprehensive answer with conflict detection. Calls `run_global_rag_query(question, conversation_history, top_k_per_hub=5)`.
 - Persists user message **before** calling RAG service
 - Builds conversation history from all messages ordered by `created_at`
 - Persists assistant message with `sources`, `token_usage`, and `hub_metadata` (for global_rag mode) from RAG result
@@ -950,26 +950,80 @@ Both fields are optional. At least one should be provided for meaningful updates
     "total_tokens": 4850
   },
   "hub_metadata": {
-    "sub_queries": {
-      "legislation": "مجازات جعل اسناد رسمی در قانون مجازات اسلامی",
-      "judicial_precedent": "آرای وحدت رویه درباره جعل اسناد رسمی",
-      "advisory_opinion": "نظریات مشورتی اداره حقوقی درباره جعل اسناد رسمی"
-    },
-    "hub_results": {
-      "legislation": {
-        "total_results": 3,
-        "source_start_index": 0
+    "legislation": {
+      "chunks_count": 10,
+      "sub_query": {
+        "fts_query": "مجازات جعل اسناد رسمی",
+        "vector_query": "مجازات جعل اسناد رسمی حسب قانون مجازات اسلامی حبس است."
       },
-      "judicial_precedent": {
-        "total_results": 2,
-        "source_start_index": 3
+      "error": null,
+      "partial_answer": "بر اساس قوانین مصوب، مجازات جعل اسناد رسمی حبس است [ماده ۵۲۳].",
+      "partial_answer_token_usage": {
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "total_tokens": 120
       },
-      "advisory_opinion": {
-        "total_results": 1,
-        "source_start_index": 5
-      }
+      "partial_answer_error": null
     },
-    "reasoning": "The user asks about forgery punishment. This is a penal matter so legislation is primary. Judicial precedent provides interpretive guidance. Advisory opinions may provide procedural clarification."
+    "judicial_precedent": {
+      "chunks_count": 8,
+      "sub_query": {
+        "fts_query": "جعل اسناد رسمی رأی وحدت رویه",
+        "vector_query": "در رویه قضایی مجازات جعل اسناد رسمی تعیین می‌گردد."
+      },
+      "error": null,
+      "partial_answer": "بر اساس رویه قضایی، جعل اسناد رسمی جرم مطلق محسوب می‌شود [رأی وحدت رویه شماره ۷۴۲].",
+      "partial_answer_token_usage": {
+        "prompt_tokens": 80,
+        "completion_tokens": 15,
+        "total_tokens": 95
+      },
+      "partial_answer_error": null
+    },
+    "advisory_opinion": {
+      "chunks_count": 0,
+      "sub_query": {
+        "fts_query": "",
+        "vector_query": ""
+      },
+      "error": null,
+      "partial_answer": "هیچ اطلاعات مرتبطی در نظریات مشورتی و رویه عملی یافت نشد.",
+      "partial_answer_token_usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0
+      },
+      "partial_answer_error": null
+    }
+  },
+  "partial_answers": {
+    "legislation": {
+      "content": "بر اساس قوانین مصوب، مجازات جعل اسناد رسمی حبس است [ماده ۵۲۳].",
+      "token_usage": {
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "total_tokens": 120
+      },
+      "error": null
+    },
+    "judicial_precedent": {
+      "content": "بر اساس رویه قضایی، جعل اسناد رسمی جرم مطلق محسوب می‌شود [رأی وحدت رویه شماره ۷۴۲].",
+      "token_usage": {
+        "prompt_tokens": 80,
+        "completion_tokens": 15,
+        "total_tokens": 95
+      },
+      "error": null
+    },
+    "advisory_opinion": {
+      "content": "هیچ اطلاعات مرتبطی در نظریات مشورتی و رویه عملی یافت نشد.",
+      "token_usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0
+      },
+      "error": null
+    }
   },
   "created_at": "2026-04-18T10:10:00Z"
 }

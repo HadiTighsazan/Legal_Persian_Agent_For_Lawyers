@@ -26,12 +26,32 @@ export interface TokenUsage {
   total_tokens: number;
 }
 
+export interface PartialAnswer {
+  content: string;
+  token_usage: TokenUsage;
+  error: string | null;
+}
+
+export interface HubMetadata {
+  chunks_count: number;
+  sub_query: {
+    fts_query: string;
+    vector_query: string;
+  };
+  error: string | null;
+  partial_answer?: string;
+  partial_answer_token_usage?: TokenUsage;
+  partial_answer_error?: string | null;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   sources: MessageSource[];
   token_usage: TokenUsage | null;
+  hub_metadata?: Record<string, HubMetadata> | null;
+  partial_answers?: Record<string, PartialAnswer> | null;
   created_at: string;
 }
 

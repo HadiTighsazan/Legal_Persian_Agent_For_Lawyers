@@ -1,9 +1,8 @@
 """
-Global RAG (Lite) Service — Multi-Hub Legal Research.
+Global RAG (Full) Service — Multi-Hub Legal Research with Per-Hub Partial Answers.
 
-Extends the existing RAG pipeline to support **cross-document** search across
-the three Persian legal knowledge hubs (Legislation, Judicial Precedent,
-Advisory Opinions).
+Extends the Phase 2a (Lite) pipeline to support **per-hub partial answers**
+with **answer synthesis** and **conflict detection**.
 
 Architecture::
 
@@ -20,40 +19,24 @@ Architecture::
     ┌──────────────────────┐
     │  Multi-Hub Search    │  ← multi_hub_search()
     │  (parallel per hub)  │
-    │                      │
-    │  ┌──────────────┐    │
-    │  │ Legislation  │────│── cross_document_hybrid_search()
-    │  └──────────────┘    │
-    │  ┌──────────────┐    │
-    │  │ Judicial     │────│── cross_document_hybrid_search()
-    │  │ Precedent    │    │
-    │  └──────────────┘    │
-    │  ┌──────────────┐    │
-    │  │ Advisory     │────│── cross_document_hybrid_search()
-    │  │ Opinions     │    │
-    │  └──────────────┘    │
     └─────────┬────────────┘
               │ hub_results: {hub: [chunks]}
               │
               ▼
     ┌──────────────────────┐
-    │  Context Builder     │  ← build_global_context()
-    │  (per-hub sections)  │
+    │  Per-Hub Partial     │  ← generate_hub_partial_answer()
+    │  Answers (3 LLM)     │     (specialized prompts per hub)
     └─────────┬────────────┘
-              │ context string
+              │ partial_answers: {hub: {content, token_usage}}
               │
               ▼
     ┌──────────────────────┐
-    │  LLM Synthesis       │  ← run_global_rag_query()
-    │  (single call)       │
-    │                      │
-    │  System Prompt:      │
-    │  "You are a Persian  │
-    │   legal researcher   │
-    │   synthesizing       │
-    │   answers from       │
-    │   multiple hubs..."  │
-    └──────────────────────┘
+    │  Answer Synthesis    │  ← synthesize_answers()
+    │  (1 LLM)             │     (conflict detection + legal hierarchy)
+    └─────────┬────────────┘
+              │
+              ▼
+    Final Answer + Conflict Report + Per-Document Citations + Hub Metadata
 """
 
 from __future__ import annotations
@@ -295,12 +278,355 @@ def build_global_context(
 
 
 # ---------------------------------------------------------------------------
-# System Prompt
+# Phase 2b: Per-Hub Specialized Prompts
+# ---------------------------------------------------------------------------
+
+
+def build_hub_system_prompt(hub_type: str) -> str:
+    """Build a specialized system prompt for a single legal knowledge hub.
+
+    Each prompt instructs the LLM to act as a specialist in that legal domain
+    and produce a **partial answer** focused only on that hub's data.
+
+    Args:
+        hub_type: One of ``"legislation"``, ``"judicial_precedent"``,
+            or ``"advisory_opinion"``.
+
+    Returns:
+        The specialized system prompt string for the given hub type.
+
+    Raises:
+        ValueError: If ``hub_type`` is not a recognised hub.
+    """
+    hub_label = HUB_LABELS.get(hub_type, hub_type)
+
+    base_instructions = (
+        f"You are a Persian legal {hub_label} specialist. Your task is to answer "
+        "the user's question based ONLY on the context provided below.\n\n"
+        "Instructions:\n"
+        "1. Answer the user's question based ONLY on the context provided below.\n"
+        "2. If the context does not contain enough information to answer the "
+        'question, say "I don\'t have enough information in this hub to answer '
+        'that question based on the provided context."\n'
+        "3. When you use information from the context, cite the source using "
+        "the format [Source N] where N is the source number as shown in the "
+        "context headers (e.g., [Source 1], [Source 2]).\n"
+        "4. Answer in Persian (formal legal Persian) unless the user asks in "
+        "another language.\n"
+        "5. Be precise and cite specific references (article numbers, judgment "
+        "numbers, opinion numbers, dates, issuing authorities) when available "
+        "in the context.\n"
+        "6. This is a PARTIAL answer — you are answering only from the "
+        "perspective of this specific legal hub. Do not try to answer from "
+        "other hubs' perspectives.\n"
+    )
+
+    if hub_type == "legislation":
+        return (
+            base_instructions
+            + "\n"
+            + "You are answering from the **Legislation (قوانین مصوب)** hub. "
+            "Focus on enacted laws, codes, and statutes. Cite specific article "
+            "numbers (ماده), law names, chapter references (فصل, کتاب, بخش), "
+            "and approval dates when available."
+        )
+    elif hub_type == "judicial_precedent":
+        return (
+            base_instructions
+            + "\n"
+            + "You are answering from the **Judicial Precedent (رویه‌های قضایی)** hub. "
+            "Focus on court rulings, judicial precedents, and case law. Cite "
+            "specific judgment numbers (شماره رأی), court names, issue dates, "
+            "and whether the ruling is a binding unified precedent (رأی وحدت رویه)."
+        )
+    elif hub_type == "advisory_opinion":
+        return (
+            base_instructions
+            + "\n"
+            + "You are answering from the **Advisory Opinions (نظریات مشورتی)** hub. "
+            "Focus on legal advisory opinions issued by the Legal Department of "
+            "the Judiciary (اداره کل حقوقی قوه قضاییه) and judicial meeting "
+            "proceedings (مشروح نشست‌های قضایی). Cite specific opinion numbers, "
+            "issue dates, and issuing authorities when available."
+        )
+    else:
+        raise ValueError(f"Unknown hub_type: {hub_type}")
+
+
+def build_synthesis_system_prompt() -> str:
+    """Build the system prompt for the answer synthesis LLM call.
+
+    The prompt instructs the assistant to:
+    - Merge partial answers from all three legal hubs into a comprehensive answer.
+    - Detect conflicts/contradictions between hubs.
+    - Resolve conflicts using legal hierarchy: Legislation > Judicial Precedent
+      > Advisory Opinions.
+    - Report conflicts explicitly with a ``[Conflict]`` marker.
+    - Produce a final comprehensive answer in Persian.
+
+    Returns:
+        The synthesis system prompt string.
+    """
+    return (
+        "You are a Persian legal synthesis specialist. Your task is to merge "
+        "partial answers from three specialised legal knowledge hubs into a "
+        "single comprehensive answer.\n\n"
+        "The partial answers below were generated independently by specialists "
+        "in each hub:\n"
+        "- **Legislation (قوانین مصوب)** — Enacted laws, codes, and statutes.\n"
+        "- **Judicial Precedent (رویه‌های قضایی)** — Court rulings and case law.\n"
+        "- **Advisory Opinions (نظریات مشورتی)** — Legal advisory opinions.\n\n"
+        "Instructions:\n"
+        "1. Synthesise the partial answers into a coherent, comprehensive "
+        "response that addresses the user's original question.\n"
+        "2. **Conflict Detection**: Carefully compare information across hubs. "
+        "If you find contradictions or differences between hubs:\n"
+        "   a. Mark each conflict explicitly with **[Conflict]** at the "
+        "beginning of the relevant paragraph.\n"
+        "   b. Explain both sides of the conflict clearly.\n"
+        "   c. Resolve the conflict using the following legal hierarchy:\n"
+        "      - **Legislation** (highest authority) — enacted laws take precedence.\n"
+        "      - **Judicial Precedent** (intermediate) — court interpretations "
+        "of legislation.\n"
+        "      - **Advisory Opinions** (lowest) — non-binding legal guidance.\n"
+        "   d. State which position prevails based on this hierarchy.\n"
+        "3. If there are NO conflicts, simply synthesise the information "
+        "without mentioning conflicts.\n"
+        "4. When you use information from a partial answer, indicate which "
+        "hub it comes from (e.g., \"According to legislation...\" or \"Based "
+        "on judicial precedent...\").\n"
+        "5. If a hub's partial answer says it has no relevant information, "
+        "you may omit that hub from the synthesis or note that it had no "
+        "relevant information.\n"
+        "6. Answer in Persian (formal legal Persian) unless the user asks in "
+        "another language.\n"
+        "7. Be precise and cite specific references (article numbers, judgment "
+        "numbers, opinion numbers) when available in the partial answers.\n"
+        "8. Structure your answer logically: start with the most authoritative "
+        "sources (legislation), then precedent, then advisory opinions."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b: Per-Hub Partial Answer Generation
+# ---------------------------------------------------------------------------
+
+
+def generate_hub_partial_answer(
+    hub_type: str,
+    question: str,
+    chunks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Generate a partial answer for a single legal knowledge hub.
+
+    Builds a mini-context from the hub's chunks, calls the chat provider with
+    a hub-specific system prompt, and returns the partial answer.
+
+    Args:
+        hub_type: One of ``"legislation"``, ``"judicial_precedent"``,
+            or ``"advisory_opinion"``.
+        question: The original user question.
+        chunks: List of chunk dicts retrieved for this hub.
+
+    Returns:
+        A dict with keys:
+        - ``content`` (str): The partial answer text.
+        - ``token_usage`` (dict): Token usage from the LLM call.
+        - ``error`` (str | None): Error message if the LLM call failed.
+    """
+    # If no chunks, return a "no info" answer immediately (no LLM call)
+    if not chunks:
+        hub_label = HUB_LABELS.get(hub_type, hub_type)
+        logger.info(
+            "generate_hub_partial_answer: Hub '%s' has no chunks — skipping LLM call",
+            hub_type,
+        )
+        return {
+            "content": f"هیچ اطلاعات مرتبطی در {hub_label} یافت نشد.",
+            "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "error": None,
+        }
+
+    logger.info(
+        "generate_hub_partial_answer: Generating partial answer for hub '%s' "
+        "with %d chunks",
+        hub_type,
+        len(chunks),
+    )
+
+    try:
+        # Build a single-hub context
+        single_hub_results = {
+            hub_type: {
+                "chunks": chunks,
+                "sub_query": SubQuery(),
+            }
+        }
+        context = build_global_context(single_hub_results)
+
+        # Build messages
+        system_prompt = build_hub_system_prompt(hub_type)
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": f"Context:\n{context}\n\nQuestion: {question}",
+            },
+        ]
+
+        # Call the chat provider
+        provider = get_chat_provider()
+        result = provider.chat(
+            messages=messages,
+            max_tokens=settings.CHAT_MAX_TOKENS,
+        )
+
+        logger.info(
+            "generate_hub_partial_answer: Hub '%s' partial answer generated "
+            "(%d tokens)",
+            hub_type,
+            result["token_usage"].get("total_tokens", 0),
+        )
+
+        return {
+            "content": result["content"],
+            "token_usage": result["token_usage"],
+            "error": None,
+        }
+
+    except Exception as e:
+        logger.exception(
+            "generate_hub_partial_answer: LLM call failed for hub '%s': %s",
+            hub_type,
+            e,
+        )
+        hub_label = HUB_LABELS.get(hub_type, hub_type)
+        return {
+            "content": (
+                f"تولید پاسخ جزئی برای {hub_label} با خطا مواجه شد: {str(e)}"
+            ),
+            "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "error": str(e),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b: Answer Synthesis with Conflict Detection
+# ---------------------------------------------------------------------------
+
+
+def synthesize_answers(
+    question: str,
+    partial_answers: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Synthesise partial answers from all hubs into a final answer.
+
+    Builds a synthesis context from the partial answers, calls the chat
+    provider with the synthesis prompt (which includes conflict detection
+    and legal hierarchy resolution), and returns the final answer.
+
+    Args:
+        question: The original user question.
+        partial_answers: A dict mapping hub type to its partial answer dict
+            (as returned by :func:`generate_hub_partial_answer`).
+
+    Returns:
+        A dict with keys:
+        - ``content`` (str): The synthesised final answer.
+        - ``token_usage`` (dict): Token usage from the LLM call.
+        - ``error`` (str | None): Error message if the LLM call failed.
+    """
+    # Build synthesis context from partial answers
+    hub_order = ["legislation", "judicial_precedent", "advisory_opinion"]
+    synthesis_parts: list[str] = []
+
+    for hub_type in hub_order:
+        pa = partial_answers.get(hub_type)
+        if not pa:
+            continue
+
+        hub_label = HUB_LABELS.get(hub_type, hub_type)
+        content = pa.get("content", "")
+        error = pa.get("error")
+
+        if error:
+            section = (
+                f"=== [{hub_label}] ===\n"
+                f"[Note: This hub's partial answer encountered an error: {error}]\n"
+                f"{content}"
+            )
+        else:
+            section = f"=== [{hub_label}] ===\n{content}"
+
+        synthesis_parts.append(section)
+
+    synthesis_context = "\n\n".join(synthesis_parts)
+
+    logger.info(
+        "synthesize_answers: Building synthesis from %d partial answers "
+        "(%d chars)",
+        len(partial_answers),
+        len(synthesis_context),
+    )
+
+    try:
+        # Build messages
+        system_prompt = build_synthesis_system_prompt()
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"Partial Answers:\n{synthesis_context}\n\n"
+                    f"Original Question: {question}"
+                ),
+            },
+        ]
+
+        # Call the chat provider
+        provider = get_chat_provider()
+        result = provider.chat(
+            messages=messages,
+            max_tokens=settings.CHAT_MAX_TOKENS,
+        )
+
+        logger.info(
+            "synthesize_answers: Synthesis generated (%d tokens)",
+            result["token_usage"].get("total_tokens", 0),
+        )
+
+        return {
+            "content": result["content"],
+            "token_usage": result["token_usage"],
+            "error": None,
+        }
+
+    except Exception as e:
+        logger.exception(
+            "synthesize_answers: LLM call failed: %s",
+            e,
+        )
+        return {
+            "content": (
+                f"تلفیق پاسخ‌های جزئی با خطا مواجه شد: {str(e)}"
+            ),
+            "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "error": str(e),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a (Legacy) System Prompt — kept for backward compatibility
 # ---------------------------------------------------------------------------
 
 
 def build_global_system_prompt() -> str:
     """Build the system prompt for the Global RAG synthesis LLM call.
+
+    .. deprecated::
+        This prompt is used by Phase 2a (Lite). Phase 2b (Full) uses
+        :func:`build_hub_system_prompt` and :func:`build_synthesis_system_prompt`
+        instead.
 
     The prompt instructs the assistant to:
     - Act as a Persian legal researcher synthesising answers from multiple hubs.
@@ -343,7 +669,7 @@ def build_global_system_prompt() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Main Pipeline
+# Main Pipeline (Phase 2b — Full)
 # ---------------------------------------------------------------------------
 
 
@@ -352,13 +678,14 @@ def run_global_rag_query(
     conversation_history: list[dict[str, str]] | None = None,
     top_k_per_hub: int = _GLOBAL_TOP_K_PER_HUB,
 ) -> dict[str, Any]:
-    """Execute the full Global RAG pipeline.
+    """Execute the full Global RAG pipeline (Phase 2b — Full).
 
     Steps:
     1. **Route** the question to relevant hubs via :func:`route_question`.
     2. **Search** each relevant hub via :func:`multi_hub_search`.
-    3. **Build** a structured context via :func:`build_global_context`.
-    4. **Synthesize** an answer via the configured chat provider.
+    3. **Generate** per-hub partial answers via :func:`generate_hub_partial_answer`.
+    4. **Synthesize** partial answers via :func:`synthesize_answers` with
+       conflict detection and legal hierarchy resolution.
     5. **Extract** citations and return the result.
 
     Args:
@@ -372,11 +699,11 @@ def run_global_rag_query(
         A dict with keys:
         - ``content`` (str): The assistant's synthesised response.
         - ``sources`` (list[dict]): Extracted citations across all hubs.
-        - ``token_usage`` (dict): Token usage from the LLM call.
-        - ``hub_metadata`` (dict): Per-hub metadata including chunks retrieved
-          and sub-queries used. This is stored in the ``hub_metadata`` JSONB
-          field on the :class:`~conversations.models.Message` model.
+        - ``token_usage`` (dict): Combined token usage from all LLM calls.
+        - ``hub_metadata`` (dict): Per-hub metadata including chunks retrieved,
+          sub-queries used, partial answers, and per-hub token usage.
         - ``raw_chunks`` (list[dict]): All raw chunks from all hubs.
+        - ``partial_answers`` (dict): Per-hub partial answers for transparency.
 
     Raises:
         GlobalRAGServiceException: If any step of the pipeline fails.
@@ -435,71 +762,101 @@ def run_global_rag_query(
         )
 
     # ------------------------------------------------------------------
-    # Step 3: Build structured context
+    # Step 3: Generate per-hub partial answers
     # ------------------------------------------------------------------
-    context = build_global_context(hub_results)
+    logger.info("run_global_rag_query: Generating per-hub partial answers")
+    partial_answers: dict[str, dict[str, Any]] = {}
+    total_token_usage: dict[str, int] = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+
+    for hub_type in ["legislation", "judicial_precedent", "advisory_opinion"]:
+        hub_data = hub_results.get(hub_type)
+        chunks = hub_data.get("chunks", []) if hub_data else []
+
+        pa = generate_hub_partial_answer(
+            hub_type=hub_type,
+            question=question,
+            chunks=chunks,
+        )
+        partial_answers[hub_type] = pa
+
+        # Accumulate token usage
+        pa_tokens = pa.get("token_usage", {})
+        for key in total_token_usage:
+            total_token_usage[key] += pa_tokens.get(key, 0)
+
+        # Update hub_metadata with partial answer info
+        hub_metadata[hub_type]["partial_answer"] = pa.get("content", "")
+        hub_metadata[hub_type]["partial_answer_token_usage"] = pa_tokens
+        hub_metadata[hub_type]["partial_answer_error"] = pa.get("error")
+
+        logger.info(
+            "run_global_rag_query: Hub '%s' partial answer generated (%d tokens)",
+            hub_type,
+            pa_tokens.get("total_tokens", 0),
+        )
+
+    # ------------------------------------------------------------------
+    # Step 4: Synthesize partial answers
+    # ------------------------------------------------------------------
+    logger.info("run_global_rag_query: Synthesizing partial answers")
+    try:
+        synthesis_result = synthesize_answers(
+            question=question,
+            partial_answers=partial_answers,
+        )
+    except Exception as e:
+        raise GlobalRAGServiceException(f"Answer synthesis failed: {e}") from e
+
+    # Check if synthesis returned an error (synthesize_answers catches exceptions
+    # internally and returns them in the result dict)
+    if synthesis_result.get("error"):
+        logger.error(
+            "run_global_rag_query: Synthesis returned an error: %s",
+            synthesis_result["error"],
+        )
+        raise GlobalRAGServiceException(
+            f"Answer synthesis failed: {synthesis_result['error']}"
+        )
+
+    # Accumulate synthesis token usage
+    synth_tokens = synthesis_result.get("token_usage", {})
+    for key in total_token_usage:
+        total_token_usage[key] += synth_tokens.get(key, 0)
+
+    response_content = synthesis_result.get("content", "")
+    synthesis_error = synthesis_result.get("error")
 
     logger.info(
-        "run_global_rag_query: Context built — %d chars, %d total chunks from %d hubs",
-        len(context),
-        len(all_chunks),
-        len(hub_results),
+        "run_global_rag_query: Synthesis complete (%d total tokens across all calls)",
+        total_token_usage.get("total_tokens", 0),
     )
 
     # ------------------------------------------------------------------
-    # Step 4: Build messages array
-    # ------------------------------------------------------------------
-    messages: list[dict[str, str]] = []
-
-    # System prompt
-    system_prompt = build_global_system_prompt()
-    messages.append({"role": "system", "content": system_prompt})
-
-    # Conversation history (last N turns)
-    if conversation_history:
-        max_turns = settings.RAG_MAX_HISTORY_TURNS
-        recent_history = conversation_history[-(max_turns * 2):]
-        messages.extend(recent_history)
-
-    # User question with context
-    user_message = (
-        f"Context:\n{context}\n\n"
-        f"Question: {question}"
-    )
-    messages.append({"role": "user", "content": user_message})
-
-    # ------------------------------------------------------------------
-    # Step 5: Call the configured chat provider
-    # ------------------------------------------------------------------
-    logger.info("run_global_rag_query: Calling chat provider")
-    try:
-        provider = get_chat_provider()
-        result = provider.chat(
-            messages=messages,
-            max_tokens=settings.CHAT_MAX_TOKENS,
-        )
-        response_content = result["content"]
-        token_usage = result["token_usage"]
-    except Exception as e:
-        logger.exception("run_global_rag_query: Chat provider API call failed")
-        raise GlobalRAGServiceException(
-            f"Chat provider API call failed: {e}"
-        ) from e
-
-    # ------------------------------------------------------------------
-    # Step 6: Extract citations
+    # Step 5: Extract citations from the final answer
     # ------------------------------------------------------------------
     from conversations.rag_service import extract_citations
 
     sources = extract_citations(response_content, all_chunks)
 
     # ------------------------------------------------------------------
-    # Step 7: Return result
+    # Step 6: Return result
     # ------------------------------------------------------------------
     return {
         "content": response_content,
         "sources": sources,
-        "token_usage": token_usage,
+        "token_usage": total_token_usage,
         "hub_metadata": hub_metadata,
         "raw_chunks": all_chunks,
+        "partial_answers": {
+            hub_type: {
+                "content": pa.get("content", ""),
+                "token_usage": pa.get("token_usage", {}),
+                "error": pa.get("error"),
+            }
+            for hub_type, pa in partial_answers.items()
+        },
     }
