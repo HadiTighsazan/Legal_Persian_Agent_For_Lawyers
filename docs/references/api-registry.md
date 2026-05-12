@@ -951,7 +951,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 #### POST /conversations/{conversation_id}/messages/
 **Description:** Ask question in conversation (RAG query)
 **Auth Required:** Yes
-**Implementation Date:** 2026-04-28 (updated 2026-05-10 with Phase 2a — Global RAG; updated 2026-05-12 with Phase 2b — Per-Hub Partial Answers + Synthesis)
+**Implementation Date:** 2026-04-28 (updated 2026-05-10 with Phase 2a — Global RAG; updated 2026-05-12 with Phase 2b — Per-Hub Partial Answers + Synthesis; updated 2026-05-12 with optimization: top_k_per_hub=5, synthesis max_tokens=2000)
 **View Class:** `ConversationMessageView`
 **Test Coverage:** 11 tests (10 unit + 1 integration) in `ConversationMessageViewTests`
 **Status:** ✅ Implemented
@@ -1134,7 +1134,7 @@ Both fields are optional. At least one should be provided for meaningful updates
 #### POST /conversations/{conversation_id}/messages/stream/
 **Description:** Ask question in conversation with SSE streaming response
 **Auth Required:** Yes
-**Implementation Date:** 2026-05-04 (Deep Refactor — Issue 2; updated 2026-05-12 with Phase 3 — mode parameter)
+**Implementation Date:** 2026-05-04 (Deep Refactor — Issue 2; updated 2026-05-12 with Phase 3 — mode parameter; updated 2026-05-12 with Global RAG streaming + optimization: top_k_per_hub=5, synthesis max_tokens=2000)
 **View Class:** `ConversationMessageStreamView`
 **Test Coverage:** 11 tests in `ConversationMessageStreamViewTests`
 **Status:** ✅ Implemented
@@ -1143,11 +1143,11 @@ Both fields are optional. At least one should be provided for meaningful updates
 - Verifies conversation ownership (403 if wrong user, 404 if not found)
 - Validates input with `AskQuestionSerializer` (content required, 1–10,000 chars)
 - **Supports two modes** via the `mode` field (same as non-streaming endpoint):
-  - `"local_rag"` (default) — Single-document RAG. **Requires `document_id` on the conversation** (returns 400 if conversation has no document).
-  - `"global_rag"` — Multi-hub legal research. Works with or without a document.
+  - `"local_rag"` (default) — Single-document RAG. **Requires `document_id` on the conversation** (returns 400 if conversation has no document). Calls `run_rag_query_stream()`.
+  - `"global_rag"` — Multi-hub legal research. Works with or without a document. **Now fully streaming** — calls `run_global_rag_query_stream()` which runs steps 1-3 (routing, search, partial answers) non-streaming, then streams the synthesis step token-by-token via `provider.chat_stream()`.
 - Returns SSE stream with the following event types:
-  - `data: {"type": "token", "content": "..."}` — Streaming token from the LLM response
-  - `data: {"type": "metadata", "message_id": "uuid", "sources": [...], "token_usage": {...}, "hub_metadata": {...}}` — Final metadata after stream completes
+  - `data: {"type": "token", "content": "..."}` — Streaming token from the LLM response (streamed incrementally for global_rag mode).
+  - `data: {"type": "done", "message_id": "uuid", "sources": [...], "token_usage": {...}, "hub_metadata": {...}}` — Final metadata after stream completes
 - Persists user message **before** streaming begins
 - Persists assistant message after stream completes (with `sources`, `token_usage`, `hub_metadata`)
 - Touches `conversation.updated_at` via `conversation.save()`

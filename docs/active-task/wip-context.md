@@ -1,172 +1,113 @@
-# WIP Context — Phase 3 Implementation (Frontend UI Refactoring & Global RAG Chat Interface)
+# WIP Context — Global RAG Optimization: Synthesis max_tokens, top_k, and Streaming
 
 ## Status: ✅ COMPLETED (2026-05-12)
 
 ## Summary
 
-Implemented Phase 3 — Frontend UI Refactoring & Global RAG Chat Interface. This phase made `Conversation.document` nullable in the backend to support Global RAG conversations (no document needed), updated the frontend API types and store to support optional document IDs and RAG mode selection, created new frontend components (`GlobalRagChatPage`, `ModeSelector`, `HubStatusBadge`, `GlobalRagEmptyState`), added new routes (`/legal-research`, `/legal-research/:conversationId`), refactored existing components (`ChatWindow`, `MessageInput`, `MessageBubble`, `ConversationSidebar`), and updated `Sidebar`, `DashboardPage`, and `App.tsx`. All 200 non-pre-existing backend tests pass and all 93 frontend tests pass.
+Implemented three high-impact optimizations for the Global RAG pipeline to fix two reported problems: **answer truncation** (synthesis cut off mid-sentence at "مسئ") and **high token cost** (18,085 tokens per query).
+
+### Changes Applied
+
+| # | Change | File | Impact |
+|---|--------|------|--------|
+| 1 | **Increased synthesis `max_tokens` from 1000 to 2000** | [`src/backend/conversations/global_rag_service.py`](src/backend/conversations/global_rag_service.py) (line 591) | Fixes truncation — comprehensive Persian legal answers now have room to complete |
+| 2 | **Reduced `top_k_per_hub` from 10 to 5** | [`src/backend/conversations/global_rag_service.py`](src/backend/conversations/global_rag_service.py) (line 71), [`src/backend/conversations/views.py`](src/backend/conversations/views.py) (lines 373, 531) | Reduces context size per hub by ~50%, cutting prompt token cost significantly |
+| 5 | **Implemented streaming for Global RAG synthesis** | [`src/backend/conversations/global_rag_service.py`](src/backend/conversations/global_rag_service.py) (lines 866-1103), [`src/backend/conversations/views.py`](src/backend/conversations/views.py) (lines 521-554) | Users see tokens arrive incrementally instead of waiting for full response |
+
+### Items Deferred (per user instruction)
+
+| # | Change | Reason |
+|---|--------|--------|
+| 3 | Per-hub context budget reduction in `build_global_context` | Lower priority — top_k reduction already cuts context significantly |
+| 4 | Conversation history truncation for Global RAG | Lower priority — history is already truncated by `RAG_MAX_HISTORY_TURNS` |
+| 6 | Prompt optimization (shorter hub prompts) | Lower priority — marginal gains compared to items 1, 2, 5 |
 
 ---
 
-## What Was Built
+## Detailed Changes
 
-### Step 1: Backend — Make Conversation.document Nullable
+### Item 1: Increase Synthesis `max_tokens`
 
-**Files modified:**
-- [`src/backend/conversations/models.py`](src/backend/conversations/models.py) — Made `document` ForeignKey nullable (`null=True, blank=True`). Updated `__str__` to handle null document (returns `"Global RAG Conversation ({user.email})"` when no document).
-- [`src/backend/conversations/serializers.py`](src/backend/conversations/serializers.py) — `ConversationListSerializer`: Added `allow_null=True` to `document_id` and `document_title`. `ConversationCreateSerializer`: Made `document_id` optional (`required=False`), updated `validate_document_id` to return `None` when value is `None`.
-- [`src/backend/conversations/views.py`](src/backend/conversations/views.py) — `ConversationListCreateView.post()`: Changed `validated_data["document_id"]` to `validated_data.get("document_id")`, added conditional logging. `ConversationMessageView.post()` and `ConversationMessageStreamView.post()`: Added validation that `local_rag` mode requires a document (returns 400 if document is None).
+**File:** [`src/backend/conversations/global_rag_service.py`](src/backend/conversations/global_rag_service.py) (line 591)
 
-**Migration:**
-- [`src/backend/conversations/migrations/0003_make_document_nullable.py`](src/backend/conversations/migrations/0003_make_document_nullable.py) — Created migration to make `document_id` nullable. Depends on `('documents', '0015_document_hub_type_documentchunk_hub_type_and_more')`.
+**Before:**
+```python
+result = provider.chat(
+    messages=messages,
+    max_tokens=settings.CHAT_MAX_TOKENS,  # 1000
+)
+```
 
-### Step 2: Frontend — API Types & Store Updates
+**After:**
+```python
+result = provider.chat(
+    messages=messages,
+    max_tokens=settings.CHAT_MAX_TOKENS * 2,  # 2000
+)
+```
 
-**File:** [`src/frontend/src/api/conversations.ts`](src/frontend/src/api/conversations.ts)
+**Rationale:** The synthesis step merges partial answers from all 3 hubs (legislation, judicial precedent, advisory opinions) with conflict detection. A comprehensive Persian legal answer with citations, conflict markers, and structured sections easily exceeds 1000 tokens. Doubling to 2000 provides sufficient headroom.
 
-Changes:
-- Added `RagMode` type: `export type RagMode = 'local_rag' | 'global_rag';`
-- Made `document_id` and `document_title` nullable in `Conversation` and `ConversationDetail` interfaces
-- Made `documentId` optional in `createConversation` function
-- Added `mode?: RagMode` parameter to `sendMessage` and `sendMessageStream` functions
+### Item 2: Reduce `top_k_per_hub` from 10 to 5
 
-**File:** [`src/frontend/src/stores/conversationStore.ts`](src/frontend/src/stores/conversationStore.ts)
+**File:** [`src/backend/conversations/global_rag_service.py`](src/backend/conversations/global_rag_service.py) (line 71)
 
-Changes:
-- Added `ragMode: RagMode` to `ConversationState`
-- Added `setRagMode: (mode: RagMode) => void` to `ConversationActions`
-- Made `documentId` optional in `fetchConversations` and `createConversation`
-- Added `mode?: RagMode` to `sendMessage` and `sendMessageStream`
-- Added `ragMode: 'local_rag'` to `initialState`
-- Passes `mode` to `apiSendMessage` and `apiSendMessageStream` calls
-- Added `setRagMode` action implementation
+**Before:**
+```python
+_GLOBAL_TOP_K_PER_HUB: int = 10
+```
 
-### Step 3: New Frontend Components
+**After:**
+```python
+_GLOBAL_TOP_K_PER_HUB: int = 5
+```
 
-**File:** [`src/frontend/src/components/rag/ModeSelector.tsx`](src/frontend/src/components/rag/ModeSelector.tsx)
+**File:** [`src/backend/conversations/views.py`](src/backend/conversations/views.py) (lines 373, 531)
 
-Toggle component that switches between `local_rag` (سند جاری) and `global_rag` (تحقیق سراسری). Uses `useConversationStore` to read/set `ragMode`. Styled as a segmented control with radio role. Shows a brief description below the toggle explaining each mode.
+**Before:**
+```python
+top_k_per_hub=10,
+```
 
-**File:** [`src/frontend/src/components/rag/HubStatusBadge.tsx`](src/frontend/src/components/rag/HubStatusBadge.tsx)
+**After:**
+```python
+top_k_per_hub=5,
+```
 
-Badge component showing hub type with color coding:
-- `legislation` → blue (`bg-blue-100`, `text-blue-800`)
-- `judicial_precedent` → emerald (`bg-emerald-100`, `text-emerald-800`)
-- `advisory_opinion` → orange (`bg-orange-100`, `text-orange-800`)
+**Rationale:** With 3 hubs, 10 chunks per hub = 30 chunks total in the context. Reducing to 5 per hub = 15 chunks total. This cuts the context prompt size by ~50%, reducing both prompt tokens and the LLM's processing burden. The RRF fusion (vector + keyword + trigram) with top_k=5 still retrieves 15 candidates per method (rrf_depth = max(top_k * 3, 60) = 60), so retrieval quality is preserved.
 
-Uses Lucide icons per hub type (`Scale`, `Gavel`, `BookOpen`). Supports dark mode with `dark:` variants.
+### Item 5: Implement Streaming for Global RAG
 
-**File:** [`src/frontend/src/components/rag/GlobalRagEmptyState.tsx`](src/frontend/src/components/rag/GlobalRagEmptyState.tsx)
+**New function:** [`run_global_rag_query_stream()`](src/backend/conversations/global_rag_service.py:871)
 
-Empty state for Global RAG chat with:
-- Hub overview cards (3 cards showing legislation, judicial precedent, advisory opinion with icons and descriptions in Persian)
-- 4 suggested questions in Persian (e.g., "مجازات جعل اسناد رسمی چیست؟")
-- Accepts `onSend` callback for suggested questions
+This function mirrors `run_global_rag_query()` for steps 1-3 (routing, search, partial answers) but uses `provider.chat_stream()` for step 4 (synthesis), yielding tokens incrementally.
 
-### Step 4: Page & Routing
+**Yield protocol:**
+- `("token", {"content": str})` — Each token from the synthesis LLM call
+- `("done", {...})` — Final event with full result dict (content, sources, token_usage, hub_metadata, raw_chunks, partial_answers)
 
-**File:** [`src/frontend/src/pages/GlobalRagChatPage.tsx`](src/frontend/src/pages/GlobalRagChatPage.tsx)
+**View update:** [`ConversationMessageStreamView.event_stream()`](src/backend/conversations/views.py:521)
 
-Full chat page for legal research (no `documentId` needed). Includes:
-- `ModeSelector` in the desktop header
-- `ConversationSidebar` without `documentId` prop
-- Responsive layout with mobile sidebar drawer
-- Routes: `/legal-research` and `/legal-research/:conversationId`
+**Before:** Global RAG branch called `run_global_rag_query()` (non-streaming), waited for the full response, then sent it as a single SSE token.
 
-**File:** [`src/frontend/src/App.tsx`](src/frontend/src/App.tsx)
+**After:** Global RAG branch calls `run_global_rag_query_stream()`, iterates over yielded tokens, sends each as an SSE `token` event, then persists the message and sends a `done` event.
 
-Added routes:
-- `/legal-research` → `GlobalRagChatPage` (outside AppShell)
-- `/legal-research/:conversationId` → `GlobalRagChatPage` (outside AppShell)
-
-**File:** [`src/frontend/src/components/layout/Sidebar.tsx`](src/frontend/src/components/layout/Sidebar.tsx)
-
-Added "Legal Research" nav item with `Search` icon, href `/legal-research`. Updated `isActive` logic to handle `/legal-research` prefix matching.
-
-**File:** [`src/frontend/src/pages/DashboardPage.tsx`](src/frontend/src/pages/DashboardPage.tsx)
-
-Added "Quick Actions" section with:
-- Legal Research card (Search icon, navigates to `/legal-research`)
-- Document Chat card (FileText icon, navigates to `/documents`)
-- Added "Overview" heading above stat cards
-
-### Step 5: Component Refactoring
-
-**File:** [`src/frontend/src/components/chat/ConversationSidebar.tsx`](src/frontend/src/components/chat/ConversationSidebar.tsx)
-
-Made `documentId` optional in `ConversationSidebarProps`. When `documentId` is undefined, `fetchConversations` is called without a document filter (returns all conversations).
-
-**File:** [`src/frontend/src/components/chat/ChatWindow.tsx`](src/frontend/src/components/chat/ChatWindow.tsx)
-
-Added `ragMode` from store. Passes `ragMode` to `sendMessageStream` and `sendMessage`. Dynamic placeholder text based on `ragMode` (Persian for global_rag, English for local_rag).
-
-**File:** [`src/frontend/src/components/chat/MessageBubble.tsx`](src/frontend/src/components/chat/MessageBubble.tsx)
-
-Added `HubStatusBadge` import. Replaced inline hub header rendering with `<HubStatusBadge hubType={hubType} />`. Removed unused `config` variable.
-
-### Step 6: Testing & Verification
-
-**Backend tests:** 200 passed, 2 failed (both pre-existing failures unrelated to Phase 3):
-- Embedding dimension mismatch (expects 1024, got 768) in integration tests
-- `top_k` default value changed from 5 to 15 in serializer tests
-
-**Frontend tests:** All 93 tests passed across 9 test files.
-
-### Step 7: Updated Reference Documentation
-
-- [`docs/active-task/wip-context.md`](docs/active-task/wip-context.md): This file — recorded Phase 3 completion
-- [`docs/references/database-schema.md`](docs/references/database-schema.md): Updated `conversations` table schema to show `document_id` as nullable
-- [`docs/references/api-registry.md`](docs/references/api-registry.md): Updated conversation API endpoint docs to reflect optional `document_id`, nullable response fields, and `mode` parameter
+**Token usage:** The streaming function uses `max_tokens=settings.CHAT_MAX_TOKENS * 2` (2000) for the synthesis step, consistent with Item 1.
 
 ---
 
 ## Files Modified
 
 | File | Description |
-|---|---|
-| [`src/backend/conversations/models.py`](src/backend/conversations/models.py) | Made `document` ForeignKey nullable, updated `__str__` for null document |
-| [`src/backend/conversations/serializers.py`](src/backend/conversations/serializers.py) | Made `document_id` optional in create serializer, added `allow_null` to list serializer |
-| [`src/backend/conversations/views.py`](src/backend/conversations/views.py) | Handle null document in create, add mode validation (local_rag requires document) |
-| [`src/backend/conversations/migrations/0003_make_document_nullable.py`](src/backend/conversations/migrations/0003_make_document_nullable.py) | Migration to make `document_id` nullable |
-| [`src/frontend/src/api/conversations.ts`](src/frontend/src/api/conversations.ts) | Added `RagMode` type, made `document_id`/`document_title` nullable, added `mode` param |
-| [`src/frontend/src/stores/conversationStore.ts`](src/frontend/src/stores/conversationStore.ts) | Added `ragMode` state/actions, made `documentId` optional, passes `mode` to API calls |
-| [`src/frontend/src/components/chat/ConversationSidebar.tsx`](src/frontend/src/components/chat/ConversationSidebar.tsx) | Made `documentId` optional in props |
-| [`src/frontend/src/components/chat/ChatWindow.tsx`](src/frontend/src/components/chat/ChatWindow.tsx) | Added `ragMode` from store, passes mode to send functions, dynamic placeholder |
-| [`src/frontend/src/components/chat/MessageBubble.tsx`](src/frontend/src/components/chat/MessageBubble.tsx) | Replaced inline hub header with `HubStatusBadge` component |
-| [`src/frontend/src/App.tsx`](src/frontend/src/App.tsx) | Added `/legal-research` and `/legal-research/:conversationId` routes |
-| [`src/frontend/src/components/layout/Sidebar.tsx`](src/frontend/src/components/layout/Sidebar.tsx) | Added "Legal Research" nav item with Search icon |
-| [`src/frontend/src/pages/DashboardPage.tsx`](src/frontend/src/pages/DashboardPage.tsx) | Added Quick Actions section with Legal Research and Document Chat cards |
-
-## Files Created
-
-| File | Description |
-|---|---|
-| [`src/frontend/src/components/rag/ModeSelector.tsx`](src/frontend/src/components/rag/ModeSelector.tsx) | Toggle between local_rag and global_rag modes |
-| [`src/frontend/src/components/rag/HubStatusBadge.tsx`](src/frontend/src/components/rag/HubStatusBadge.tsx) | Badge showing hub type with color coding and icons |
-| [`src/frontend/src/components/rag/GlobalRagEmptyState.tsx`](src/frontend/src/components/rag/GlobalRagEmptyState.tsx) | Empty state for Global RAG with hub cards and suggested questions |
-| [`src/frontend/src/pages/GlobalRagChatPage.tsx`](src/frontend/src/pages/GlobalRagChatPage.tsx) | Full chat page for legal research (no documentId needed) |
+|------|-------------|
+| [`src/backend/conversations/global_rag_service.py`](src/backend/conversations/global_rag_service.py) | Changed `_GLOBAL_TOP_K_PER_HUB` from 10 to 5; doubled synthesis `max_tokens`; added `Generator` import; added `run_global_rag_query_stream()` function |
+| [`src/backend/conversations/views.py`](src/backend/conversations/views.py) | Added `run_global_rag_query_stream` import; changed `top_k_per_hub=10` to `top_k_per_hub=5` in both non-streaming and streaming views; rewrote Global RAG streaming branch to use `run_global_rag_query_stream()` |
 
 ## Next Steps
 
-1. **End-to-end verification**: Navigate to `/legal-research`, create a Global RAG conversation, send a query, and verify the response includes `hub_metadata` with `partial_answer` fields
-2. **Streaming support for Global RAG**: The streaming endpoint (`POST /conversations/{id}/messages/stream/`) currently supports the `mode` parameter but Global RAG streaming is not yet implemented in the backend
-3. **Mobile responsiveness**: Verify the new pages and components work correctly on mobile viewports
-
----
-
-## Bug Fix: TypeScript Build Error (2026-05-12)
-
-**Problem:** `docker-compose exec frontend npm run build` failed with:
-```
-error TS6133: 'HUB_CONFIG' is declared but its value is never read.
-```
-
-**Root Cause:** During Phase 3 refactoring, the inline hub header rendering was replaced with the `<HubStatusBadge>` component, but the `HUB_CONFIG` constant (and its `HubConfig` interface) were left behind as dead code. The `tsconfig.json` has `"noUnusedLocals": true`, causing the build to fail.
-
-**Fix Applied:**
-1. Removed unused `HubConfig` interface and `HUB_CONFIG` constant from [`src/frontend/src/components/chat/MessageBubble.tsx`](src/frontend/src/components/chat/MessageBubble.tsx)
-2. Removed unused `Scale`, `Gavel`, `BookOpen` icon imports from the same file (they were only used by `HUB_CONFIG`)
-3. Rebuilt frontend: `docker-compose exec frontend npm run build` ✅ succeeded
-4. Restarted Nginx: `docker-compose restart nginx` ✅
-
-**Why changes weren't visible:** The TypeScript build error prevented `vite build` from completing, so the `dist/` directory contained stale files from the previous successful build. Nginx serves from `dist/`, so users saw the old frontend.
+1. **Rebuild and restart containers:** `docker-compose up --build -d` to apply changes
+2. **Manual verification:** Send a Persian legal query (e.g., "مسئولیت کیفری شخص حقوقی در قانون مجازات اسلامی چیست؟") via the streaming endpoint and verify:
+   - Tokens arrive incrementally (not all at once)
+   - Response is complete (not truncated)
+   - Token usage is reduced compared to previous 18K
+3. **Consider deferred items** (Items 3, 4, 6) if further optimization is needed

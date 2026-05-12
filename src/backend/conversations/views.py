@@ -27,6 +27,7 @@ from documents.models import Document
 from conversations.global_rag_service import (
     GlobalRAGServiceException,
     run_global_rag_query,
+    run_global_rag_query_stream,
 )
 from conversations.rag_service import RAGServiceException, run_rag_query, run_rag_query_stream
 from conversations.serializers import (
@@ -369,7 +370,7 @@ class ConversationMessageView(APIView):
                 result = run_global_rag_query(
                     question=question,
                     conversation_history=conversation_history,
-                    top_k_per_hub=10,
+                    top_k_per_hub=5,
                 )
             except GlobalRAGServiceException as e:
                 error_msg = str(e).lower()
@@ -518,28 +519,39 @@ class ConversationMessageStreamView(APIView):
         def event_stream():
             try:
                 if mode == "global_rag":
-                    # Global RAG (non-streaming for now — uses run_global_rag_query)
-                    result = run_global_rag_query(
+                    # Global RAG with streaming synthesis
+                    full_content: str = ""
+                    final_token_usage: dict | None = None
+                    final_sources: list = []
+                    final_hub_metadata: dict | None = None
+
+                    for event_type, data in run_global_rag_query_stream(
                         question=question,
                         conversation_history=conversation_history,
-                        top_k_per_hub=10,
-                    )
-                    # Persist the assistant message
+                        top_k_per_hub=5,
+                    ):
+                        if event_type == "token":
+                            full_content += data["content"]
+                            yield f"data: {json.dumps({'type': 'token', 'content': data['content']})}\n\n"
+                        elif event_type == "done":
+                            final_token_usage = data.get("token_usage")
+                            final_sources = data.get("sources", [])
+                            final_hub_metadata = data.get("hub_metadata")
+
+                    # Persist the assistant message after streaming completes
                     assistant_kwargs = {
                         "conversation": conversation,
                         "role": "assistant",
-                        "content": result["content"],
-                        "sources": result["sources"],
-                        "token_usage": result["token_usage"],
+                        "content": full_content,
+                        "sources": final_sources,
+                        "token_usage": final_token_usage,
                     }
-                    if "hub_metadata" in result:
-                        assistant_kwargs["hub_metadata"] = result["hub_metadata"]
+                    if final_hub_metadata:
+                        assistant_kwargs["hub_metadata"] = final_hub_metadata
                     assistant_message = Message.objects.create(**assistant_kwargs)
                     conversation.save()
 
-                    # Send the full content as a single token
-                    yield f"data: {json.dumps({'type': 'token', 'content': result['content']})}\n\n"
-                    yield f"data: {json.dumps({'type': 'done', 'message_id': str(assistant_message.id), 'sources': result['sources'], 'token_usage': result['token_usage'], 'hub_metadata': result.get('hub_metadata')})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'message_id': str(assistant_message.id), 'sources': final_sources, 'token_usage': final_token_usage, 'hub_metadata': final_hub_metadata})}\n\n"
                 else:
                     for event_type, data in run_rag_query_stream(
                         question=question,

@@ -42,7 +42,7 @@ Architecture::
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Generator
 
 from django.conf import settings
 
@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 _CHARS_PER_TOKEN: int = 4
 
 # Number of chunks to retrieve per hub
-_GLOBAL_TOP_K_PER_HUB: int = 10
+_GLOBAL_TOP_K_PER_HUB: int = 5
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -583,11 +583,12 @@ def synthesize_answers(
             },
         ]
 
-        # Call the chat provider
+        # Call the chat provider — use double the default max_tokens for synthesis
+        # to prevent truncation of comprehensive Persian legal answers
         provider = get_chat_provider()
         result = provider.chat(
             messages=messages,
-            max_tokens=settings.CHAT_MAX_TOKENS,
+            max_tokens=settings.CHAT_MAX_TOKENS * 2,
         )
 
         logger.info(
@@ -860,3 +861,242 @@ def run_global_rag_query(
             for hub_type, pa in partial_answers.items()
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Streaming Pipeline (Phase 2b — Full)
+# ---------------------------------------------------------------------------
+
+
+def run_global_rag_query_stream(
+    question: str,
+    conversation_history: list[dict[str, str]] | None = None,
+    top_k_per_hub: int = _GLOBAL_TOP_K_PER_HUB,
+) -> Generator[tuple[str, dict[str, Any]], None, None]:
+    """Execute the Global RAG pipeline with streaming synthesis.
+
+    Steps 1-3 (routing, search, partial answers) run identically to
+    :func:`run_global_rag_query`.  Step 4 (synthesis) uses the chat
+    provider's ``chat_stream()`` method so tokens are yielded as they
+    arrive, providing a responsive UX.
+
+    Yields:
+        ``(event_type, data)`` tuples:
+
+        - ``("token", {"content": str})`` — A content token from the
+          synthesis LLM call.
+        - ``("done", {...})`` — Final event with keys:
+          ``content``, ``sources``, ``token_usage``, ``hub_metadata``,
+          ``raw_chunks``, ``partial_answers``.
+
+    Raises:
+        GlobalRAGServiceException: If any step of the pipeline fails.
+    """
+    # ------------------------------------------------------------------
+    # Step 1: Route the question to relevant hubs
+    # ------------------------------------------------------------------
+    logger.info("run_global_rag_query_stream: Routing question to hubs")
+    try:
+        router_result = route_question(question)
+    except Exception as e:
+        raise GlobalRAGServiceException(f"Question routing failed: {e}") from e
+
+    active_hubs = [
+        hub for hub, sq in router_result.sub_queries.items()
+        if sq.fts_query or sq.vector_query
+    ]
+    logger.info(
+        "run_global_rag_query_stream: Router identified active hubs: %s",
+        active_hubs,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 2: Search each relevant hub
+    # ------------------------------------------------------------------
+    logger.info("run_global_rag_query_stream: Searching hubs")
+    try:
+        hub_results = multi_hub_search(
+            router_result=router_result,
+            top_k_per_hub=top_k_per_hub,
+        )
+    except Exception as e:
+        raise GlobalRAGServiceException(f"Multi-hub search failed: {e}") from e
+
+    # Collect all chunks and build hub_metadata
+    all_chunks: list[dict[str, Any]] = []
+    hub_metadata: dict[str, Any] = {}
+
+    for hub_type, hub_data in hub_results.items():
+        chunks = hub_data.get("chunks", [])
+        all_chunks.extend(chunks)
+
+        hub_metadata[hub_type] = {
+            "chunks_count": len(chunks),
+            "sub_query": {
+                "fts_query": hub_data.get("sub_query", SubQuery()).fts_query,
+                "vector_query": hub_data.get("sub_query", SubQuery()).vector_query,
+            },
+            "error": hub_data.get("error"),
+        }
+
+        logger.info(
+            "run_global_rag_query_stream: Hub '%s' — %d chunks retrieved",
+            hub_type,
+            len(chunks),
+        )
+
+    # ------------------------------------------------------------------
+    # Step 3: Generate per-hub partial answers
+    # ------------------------------------------------------------------
+    logger.info("run_global_rag_query_stream: Generating per-hub partial answers")
+    partial_answers: dict[str, dict[str, Any]] = {}
+    total_token_usage: dict[str, int] = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+
+    for hub_type in ["legislation", "judicial_precedent", "advisory_opinion"]:
+        hub_data = hub_results.get(hub_type)
+        chunks = hub_data.get("chunks", []) if hub_data else []
+
+        pa = generate_hub_partial_answer(
+            hub_type=hub_type,
+            question=question,
+            chunks=chunks,
+        )
+        partial_answers[hub_type] = pa
+
+        # Accumulate token usage
+        pa_tokens = pa.get("token_usage", {})
+        for key in total_token_usage:
+            total_token_usage[key] += pa_tokens.get(key, 0)
+
+        # Update hub_metadata with partial answer info
+        hub_metadata[hub_type]["partial_answer"] = pa.get("content", "")
+        hub_metadata[hub_type]["partial_answer_token_usage"] = pa_tokens
+        hub_metadata[hub_type]["partial_answer_error"] = pa.get("error")
+
+        logger.info(
+            "run_global_rag_query_stream: Hub '%s' partial answer generated (%d tokens)",
+            hub_type,
+            pa_tokens.get("total_tokens", 0),
+        )
+
+    # ------------------------------------------------------------------
+    # Step 4: Synthesize partial answers (STREAMING)
+    # ------------------------------------------------------------------
+    logger.info("run_global_rag_query_stream: Synthesizing partial answers (streaming)")
+
+    # Build synthesis context (same as synthesize_answers)
+    hub_order = ["legislation", "judicial_precedent", "advisory_opinion"]
+    synthesis_parts: list[str] = []
+
+    for hub_type in hub_order:
+        pa = partial_answers.get(hub_type)
+        if not pa:
+            continue
+
+        hub_label = HUB_LABELS.get(hub_type, hub_type)
+        content = pa.get("content", "")
+        error = pa.get("error")
+
+        if error:
+            section = (
+                f"=== [{hub_label}] ===\n"
+                f"[Note: This hub's partial answer encountered an error: {error}]\n"
+                f"{content}"
+            )
+        else:
+            section = f"=== [{hub_label}] ===\n{content}"
+
+        synthesis_parts.append(section)
+
+    synthesis_context = "\n\n".join(synthesis_parts)
+
+    logger.info(
+        "run_global_rag_query_stream: Building synthesis from %d partial answers "
+        "(%d chars)",
+        len(partial_answers),
+        len(synthesis_context),
+    )
+
+    try:
+        # Build messages
+        system_prompt = build_synthesis_system_prompt()
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"Partial Answers:\n{synthesis_context}\n\n"
+                    f"Original Question: {question}"
+                ),
+            },
+        ]
+
+        # Call the chat provider with streaming
+        provider = get_chat_provider()
+        response_content: str = ""
+        synthesis_token_usage: dict[str, int] | None = None
+
+        for token_text, is_last, metadata in provider.chat_stream(
+            messages=messages,
+            max_tokens=settings.CHAT_MAX_TOKENS * 2,
+        ):
+            if token_text:
+                response_content += token_text
+                yield ("token", {"content": token_text})
+
+            if is_last and metadata:
+                synthesis_token_usage = metadata.get("token_usage")
+
+        # If no metadata from stream, fall back to zeros
+        if synthesis_token_usage is None:
+            synthesis_token_usage = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            }
+
+        # Accumulate synthesis token usage
+        for key in total_token_usage:
+            total_token_usage[key] += synthesis_token_usage.get(key, 0)
+
+        logger.info(
+            "run_global_rag_query_stream: Synthesis complete (%d total tokens across all calls)",
+            total_token_usage.get("total_tokens", 0),
+        )
+
+    except Exception as e:
+        logger.exception(
+            "run_global_rag_query_stream: Synthesis streaming failed: %s",
+            e,
+        )
+        raise GlobalRAGServiceException(f"Answer synthesis failed: {e}") from e
+
+    # ------------------------------------------------------------------
+    # Step 5: Extract citations from the final answer
+    # ------------------------------------------------------------------
+    from conversations.rag_service import extract_citations
+
+    sources = extract_citations(response_content, all_chunks)
+
+    # ------------------------------------------------------------------
+    # Step 6: Yield done event with full result
+    # ------------------------------------------------------------------
+    yield ("done", {
+        "content": response_content,
+        "sources": sources,
+        "token_usage": total_token_usage,
+        "hub_metadata": hub_metadata,
+        "raw_chunks": all_chunks,
+        "partial_answers": {
+            hub_type: {
+                "content": pa.get("content", ""),
+                "token_usage": pa.get("token_usage", {}),
+                "error": pa.get("error"),
+            }
+            for hub_type, pa in partial_answers.items()
+        },
+    })
