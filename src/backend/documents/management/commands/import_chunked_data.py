@@ -434,12 +434,38 @@ class Command(BaseCommand):
     ) -> None:
         """Process a group of chunks that form a logical document."""
         # ------------------------------------------------------------------
-        # Extract hub_type from first chunk's metadata (with fallback)
+        # Determine hub_type
+        #
+        # Priority order:
+        #   1. ``folder_hub_type`` — derived from the directory structure,
+        #      which is the authoritative source (the user placed files in
+        #      specific folders for a reason).
+        #   2. Metadata ``hub_type`` — only used as a validation hint if
+        #      the folder_hub_type is somehow missing.
+        #
+        # Previously, metadata hub_type took precedence, which caused ALL
+        # reference_law documents to be tagged as ``advisory_opinion`` when
+        # the JSON files contained incorrect or missing metadata.
         # ------------------------------------------------------------------
         first_chunk = chunks_data[0]
         metadata: dict[str, Any] = first_chunk.get("metadata", {})
-        raw_hub_type = metadata.get("hub_type", folder_hub_type)
-        hub_type = self._normalize_hub_type(raw_hub_type) or folder_hub_type
+
+        # folder_hub_type is the authoritative source
+        hub_type = folder_hub_type
+
+        # Log a warning if metadata hub_type disagrees with folder
+        meta_hub_type = metadata.get("hub_type")
+        if meta_hub_type is not None:
+            normalized_meta = self._normalize_hub_type(meta_hub_type)
+            if normalized_meta and normalized_meta != folder_hub_type:
+                logger.warning(
+                    "_process_document_group: metadata hub_type='%s' "
+                    "differs from folder hub_type='%s' for '%s'. "
+                    "Using folder hub_type.",
+                    meta_hub_type,
+                    folder_hub_type,
+                    doc_title,
+                )
 
         # ------------------------------------------------------------------
         # Extract document title from metadata

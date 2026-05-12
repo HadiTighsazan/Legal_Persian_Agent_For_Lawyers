@@ -272,9 +272,17 @@ def _parse_formulation_response(raw_content: str) -> QueryFormulationResult:
     """Parse and validate the LLM JSON response.
 
     Handles the following failure modes:
-    - Invalid JSON (not parseable)
+    - Invalid JSON (not parseable) — with 3-tier fallback
     - Valid JSON but missing ``fts_query`` or ``vector_query`` keys
     - Valid JSON with fields exceeding max length (truncated with warning)
+
+    **3-Tier JSON Parsing Fallback:**
+    1. ``json.loads(cleaned)`` — standard strict parsing
+    2. ``json.loads(cleaned, strict=False)`` — allows unescaped control
+       characters (e.g. newlines) inside string values (common when LLM
+       returns Persian text with embedded line breaks)
+    3. Regex extraction of JSON object — catches cases where LLM wraps
+       JSON in markdown code blocks or adds extra text
 
     Args:
         raw_content: The raw string content returned by the chat provider.
@@ -298,12 +306,48 @@ def _parse_formulation_response(raw_content: str) -> QueryFormulationResult:
         elif "```" in cleaned:
             cleaned = cleaned[: cleaned.rfind("```")].strip()
 
+    # ------------------------------------------------------------------
+    # 3-Tier JSON Parsing Fallback
+    # ------------------------------------------------------------------
+    data: dict[str, Any] | None = None
+    parse_errors: list[str] = []
+
+    # Tier 1: Standard strict parsing
     try:
-        data: dict[str, Any] = json.loads(cleaned)
+        data = json.loads(cleaned)
     except json.JSONDecodeError as e:
+        parse_errors.append(f"strict: {e}")
+
+    # Tier 2: Non-strict parsing (allows unescaped control chars in strings)
+    if data is None:
+        try:
+            data = json.loads(cleaned, strict=False)
+            logger.info(
+                "_parse_formulation_response: recovered with strict=False "
+                "(unescaped control chars in string values)"
+            )
+        except json.JSONDecodeError as e:
+            parse_errors.append(f"non-strict: {e}")
+
+    # Tier 3: Regex extraction of JSON object from raw content
+    if data is None:
+        import re
+        json_match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if json_match:
+            extracted = json_match.group(0)
+            try:
+                data = json.loads(extracted, strict=False)
+                logger.info(
+                    "_parse_formulation_response: recovered via regex extraction"
+                )
+            except json.JSONDecodeError as e:
+                parse_errors.append(f"regex: {e}")
+
+    if data is None:
         logger.warning(
-            "_parse_formulation_response: invalid JSON (%s), raw_content=%.200s",
-            e,
+            "_parse_formulation_response: all 3 parsing tiers failed (%s), "
+            "raw_content=%.200s",
+            "; ".join(parse_errors),
             raw_content,
         )
         return QueryFormulationResult()
