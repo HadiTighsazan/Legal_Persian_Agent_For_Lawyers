@@ -30,8 +30,13 @@ else
     #   the default 30s timeout, especially for large Persian legal documents.
     # --max-requests 1000 / --max-requests-jitter 100: Periodically recycle
     #   workers to prevent memory leaks from accumulating.
+    # --worker-class gthread --threads 4: Use threaded workers so that
+    #   StreamingHttpResponse (SSE) can stream tokens incrementally instead
+    #   of buffering the entire response (sync workers buffer all output).
     exec gunicorn config.wsgi:application \
         --bind 0.0.0.0:8000 \
+        --worker-class gthread \
+        --threads 4 \
         --workers 3 \
         --timeout 120 \
         --max-requests 1000 \

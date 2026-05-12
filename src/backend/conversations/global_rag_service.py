@@ -583,12 +583,12 @@ def synthesize_answers(
             },
         ]
 
-        # Call the chat provider — use double the default max_tokens for synthesis
+        # Call the chat provider — use SYNTHESIS_MAX_TOKENS for synthesis
         # to prevent truncation of comprehensive Persian legal answers
         provider = get_chat_provider()
         result = provider.chat(
             messages=messages,
-            max_tokens=settings.CHAT_MAX_TOKENS * 2,
+            max_tokens=settings.SYNTHESIS_MAX_TOKENS,
         )
 
         logger.info(
@@ -1042,7 +1042,7 @@ def run_global_rag_query_stream(
 
         for token_text, is_last, metadata in provider.chat_stream(
             messages=messages,
-            max_tokens=settings.CHAT_MAX_TOKENS * 2,
+            max_tokens=settings.SYNTHESIS_MAX_TOKENS,
         ):
             if token_text:
                 response_content += token_text
