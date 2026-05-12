@@ -1,0 +1,5 @@
+Hub counts:
+legislation: 2 docs, 4612 chunks
+judicial_precedent: 1301 docs, 5865 chunks
+advisory_opinion: 1769 docs, 8450 chunks
+Total: 3072 docs, 18927 chunks

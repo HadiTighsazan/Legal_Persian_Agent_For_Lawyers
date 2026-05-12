@@ -351,3 +351,146 @@ CREATE EXTENSION IF NOT EXISTS "vector";
 - **Purpose:** Re-normalizes all existing chunk content with the updated `normalize_for_fts()` method, which now applies `unicodedata.normalize('NFKC', text)` as its first step. This converts Arabic Presentation Forms-B (U+FE70–U+FEFF) — positional glyph variants commonly produced by PDF extractors — to standard Unicode codepoints, fixing both Ctrl+F and FTS search failures for Persian text.
 - **Dependencies:** Depends on migration `0010_add_pg_trgm`.
 - **Applied:** Pending (run `docker-compose exec backend python manage.py migrate` to apply).
+
+---
+
+## Management Commands
+
+### `import_chunked_data` — Import Pre-Chunked Legal Datasets (Phase 2a)
+
+- **File:** [`src/backend/documents/management/commands/import_chunked_data.py`](src/backend/documents/management/commands/import_chunked_data.py)
+- **Created:** 2026-05-12
+- **Purpose:** Ingests pre-chunked JSON datasets (already split into chunks externally) into the 3 legal knowledge hubs (`legislation`, `judicial_precedent`, `advisory_opinion`). Designed for datasets that have been chunked by an external process (e.g., Persian legal NLP pipeline).
+- **Test file:** [`src/backend/documents/tests/test_import_chunked_data.py`](src/backend/documents/tests/test_import_chunked_data.py) (19 tests)
+
+#### Folder-to-Hub Mapping
+
+| Folder Name (Persian) | Hub Type | Description |
+|---|---|---|
+| `هاب قوانین مصوب` | `legislation` | Approved legislation (قوانین مصوب) |
+| `هاب رویه های قضایی` | `judicial_precedent` | Judicial precedents (رویه‌های قضایی) |
+| `هاب نظریات مشورتی و رویه عملی` | `advisory_opinion` | Advisory opinions (نظریات مشورتی) |
+
+#### Hub Type Normalization
+
+The command normalizes hub type aliases via `HUB_TYPE_ALIASES`:
+- `"precedent"` → `"judicial_precedent"`
+- `"advisory"` → `"advisory_opinion"`
+- `"legislation"` → `"legislation"`
+- `"judicial_precedent"` → `"judicial_precedent"`
+- `"advisory_opinion"` → `"advisory_opinion"`
+
+#### Supported Data Formats
+
+The command auto-detects 3 JSON formats:
+
+**Format A (Legislation Object):**
+```json
+{
+  "source_file": "قانون_مجازات_اسلامی",
+  "chunks": [
+    {
+      "chunk_id": "madde_1",
+      "text": "متن ماده ۱...",
+      "metadata": {
+        "chunk_index": 0,
+        "page_start": 1,
+        "page_end": 1,
+        "law_name": "قانون مجازات اسلامی",
+        "legal_type": "article",
+        "legal_number": "1"
+      }
+    }
+  ]
+}
+```
+- Root is a JSON object with a `"chunks"` key (array of chunk objects)
+- One document created per file; title from `source_file`
+
+**Format B (Precedent Flat Array):**
+```json
+[
+  {
+    "chunk_id": "chunk_001",
+    "text": "متن رأی...",
+    "metadata": {
+      "hub_type": "precedent",
+      "full_title": "رأی وحدت رویه شماره ۷۴۲",
+      "chunk_index": 0,
+      "page_start": 1,
+      "page_end": 1,
+      "law_name": "رأی وحدت رویه شماره ۷۴۲"
+    }
+  }
+]
+```
+- Root is a JSON array; hub_type detected from `metadata.hub_type` in first chunk
+- Documents grouped by `full_title` in metadata
+
+**Format C (Advisory Flat Array):**
+```json
+[
+  {
+    "chunk_id": "chunk_001",
+    "text": "متن نظریه...",
+    "metadata": {
+      "parent_title": "نظریه شماره ۷/۹۸/۱۲۳۴",
+      "chunk_index": 0,
+      "page_start": 1,
+      "page_end": 1,
+      "law_name": "نظریه شماره ۷/۹۸/۱۲۳۴"
+    }
+  }
+]
+```
+- Root is a JSON array; hub_type derived from parent folder name
+- Documents grouped by `parent_title` in metadata
+
+#### Idempotency
+
+- Uses `metadata__chunk_id` lookup on `DocumentChunk` to skip already-imported chunks
+- Safe to re-run; previously imported chunks are skipped
+
+#### Transactional Integrity
+
+- Each document group is processed within `transaction.atomic()`
+- If any chunk in a document group fails, the entire document is rolled back
+
+#### Embedding
+
+- Uses `batch_generate_embeddings()` from [`src/backend/documents/services/embedding_service.py`](src/backend/documents/services/embedding_service.py)
+- Default batch size: 16 (configurable via `--embedding-batch-size`)
+- Designed for bge-m3 (1024-dim) on 4GB VRAM
+
+#### Usage
+
+```bash
+# Dry-run (validate without writing)
+docker-compose exec backend python manage.py import_chunked_data \
+  /data/chunked_datasets --dry-run
+
+# Actual import
+docker-compose exec backend python manage.py import_chunked_data \
+  /data/chunked_datasets
+
+# Custom embedding batch size
+docker-compose exec backend python manage.py import_chunked_data \
+  /data/chunked_datasets --embedding-batch-size 32
+
+# Assign documents to a specific user
+docker-compose exec backend python manage.py import_chunked_data \
+  /data/chunked_datasets --user-id <user-uuid>
+```
+
+#### Data Injected (2026-05-12)
+
+| Hub Type | Documents | Chunks | All Embedded |
+|---|---|---|---|
+| `legislation` | 2 | 4,612 | ✅ |
+| `judicial_precedent` | 1,301 | 5,865 | ✅ |
+| `advisory_opinion` | 1,769 | 8,450 | ✅ |
+| **Total** | **3,072** | **18,927** | ✅ |
+
+- 2 chunks skipped (empty `text` field)
+- All 18,927 chunks embedded via `batch_generate_embeddings()` with batch size 16
+- Superuser `admin@docuchat.local` used as default owner
