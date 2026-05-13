@@ -176,9 +176,9 @@ class AnchorChunkingService:
         """Main chunking method using text anchors.
 
         Pipeline:
-        1. Parse page markers for page tracking
-        2. Normalize Persian text for regex matching
-        3. Extract metadata from original text
+        1. Extract metadata AND remove metadata lines from text
+        2. Parse page markers from cleaned text
+        3. Normalize Persian text for regex matching
         4. Find anchor positions in normalized text
         5. Split text at anchor boundaries
         6. For long segments, apply token-based overlap split
@@ -200,14 +200,19 @@ class AnchorChunkingService:
         if not text or not text.strip():
             return []
 
-        # Step 1: Parse page markers for page tracking
-        page_map = self._parse_page_markers(text)
+        # Step 1: Extract metadata AND remove metadata lines from text.
+        # Metadata removal is critical — without it, metadata values
+        # (case_number, date, etc.) appear in BOTH metadata dict AND
+        # chunk content, polluting embeddings.
+        metadata, cleaned_text = self._extract_metadata_and_clean(text)
 
-        # Step 2: Normalize for matching (keep original for content)
-        normalized = self._normalize_persian(text)
+        # Step 2: Parse page markers from CLEANED text.
+        # Removing metadata lines shifts text positions, so the page_map
+        # must be computed from the cleaned text, not the original.
+        page_map = self._parse_page_markers(cleaned_text)
 
-        # Step 3: Extract metadata from original text
-        metadata = self._extract_metadata(text)
+        # Step 3: Normalize for matching (keep cleaned text for content)
+        normalized = self._normalize_persian(cleaned_text)
 
         # Step 4: Find anchor positions in normalized text
         matches = list(self._anchor_pattern.finditer(normalized))
@@ -218,10 +223,10 @@ class AnchorChunkingService:
             # No anchors found — fall back to token-based overlap split
             # across the entire document.
             for chunk_text in self._token_overlap_split(
-                text, chunk_tokens, overlap_tokens
+                cleaned_text, chunk_tokens, overlap_tokens
             ):
-                # Find position in original text for page resolution
-                orig_pos = text.find(chunk_text)
+                # Find position in cleaned text for page resolution
+                orig_pos = cleaned_text.find(chunk_text)
                 if orig_pos == -1:
                     orig_pos = 0
                 pages = self._resolve_pages(
@@ -242,14 +247,17 @@ class AnchorChunkingService:
             return final_chunks
 
         # Step 5: Split at anchor boundaries.
-        # We work with the original text but use normalized positions
-        # to find anchors. Map anchor positions back to original text.
+        # We work with the cleaned text but use normalized positions
+        # to find anchors. Map anchor positions back to cleaned text.
 
         # Section before first anchor
         if matches[0].start() > 0:
             intro_end = matches[0].start()
-            intro = text[:intro_end].strip()
-            if intro:
+            intro = cleaned_text[:intro_end].strip()
+            # Skip page markers — they're not real content.
+            # If only page markers remain, don't create an intro chunk.
+            intro_without_markers = _PAGE_MARKER_RE.sub("", intro).strip()
+            if intro_without_markers:
                 pages = self._resolve_pages(0, intro_end, page_map)
                 for ct in self._token_overlap_split(
                     intro, chunk_tokens, overlap_tokens
@@ -274,9 +282,9 @@ class AnchorChunkingService:
             end = (
                 matches[i + 1].start()
                 if i + 1 < len(matches)
-                else len(text)
+                else len(cleaned_text)
             )
-            content = text[start:end].strip()
+            content = cleaned_text[start:end].strip()
 
             if not content:
                 continue
@@ -346,7 +354,7 @@ class AnchorChunkingService:
         return text.strip()
 
     # ------------------------------------------------------------------
-    # Metadata extraction
+    # Metadata extraction & removal
     # ------------------------------------------------------------------
 
     def _extract_metadata(self, text: str) -> dict:
@@ -359,12 +367,45 @@ class AnchorChunkingService:
             Dict with keys like ``case_number``, ``date``, ``plaintiff``,
             ``defendant``, ``branch``. Only present keys are included.
         """
-        metadata: dict = {}
-        for key, pattern in self._METADATA_PATTERNS.items():
-            match = pattern.search(text)
-            if match:
-                metadata[key] = match.group(1).strip()
+        metadata, _ = self._extract_metadata_and_clean(text)
         return metadata
+
+    def _extract_metadata_and_clean(self, text: str) -> tuple[dict, str]:
+        """Extract metadata AND remove metadata lines from text.
+
+        Uses ``str.splitlines`` to check each line independently against
+        all metadata patterns. This is simpler and more robust than regex
+        composition with ``re.MULTILINE``, avoiding greedy matching issues.
+
+        After extraction, metadata lines are removed from the text so that
+        metadata values do NOT appear in chunk content (preventing embedding
+        pollution). The ``page_map`` must be recomputed from the returned
+        cleaned text since positions have shifted.
+
+        Args:
+            text: Raw document text with potential metadata lines.
+
+        Returns:
+            Tuple of ``(metadata_dict, cleaned_text_without_metadata_lines)``.
+        """
+        metadata: dict = {}
+        cleaned_lines: list[str] = []
+
+        for line in text.splitlines(keepends=True):
+            matched = False
+            for key, pattern in self._METADATA_PATTERNS.items():
+                match = pattern.search(line)
+                if match:
+                    metadata[key] = match.group(1).strip()
+                    matched = True
+                    break  # A line can match at most one metadata pattern
+            if not matched:
+                cleaned_lines.append(line)
+
+        cleaned = "".join(cleaned_lines).strip()
+        # Clean up resulting double newlines
+        cleaned = re.sub(r"\n\s*\n", "\n", cleaned)
+        return metadata, cleaned
 
     # ------------------------------------------------------------------
     # Page tracking
@@ -391,6 +432,11 @@ class AnchorChunkingService:
     ) -> List[int]:
         """Determine which pages a text range spans.
 
+        Always includes the ``active_page`` (the page containing the start
+        position), even when no page marker falls within the range. This
+        handles ranges that start *after* a page marker but before the next
+        one — without this, the containing page would be omitted.
+
         Args:
             start: Start character position in original text.
             end: End character position in original text.
@@ -409,9 +455,10 @@ class AnchorChunkingService:
             if start <= pos < end:
                 pages.add(page_num)
 
-        # If no page markers in range, use the active page
-        if not pages:
-            pages.add(active_page)
+        # Always add active_page — this handles ranges that start
+        # after a page marker but before the next one, ensuring the
+        # containing page is always included.
+        pages.add(active_page)
 
         # Also check if end position crosses a page boundary
         for pos, page_num in page_map:

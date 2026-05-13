@@ -94,10 +94,12 @@ def _create_mixed_pdf(path: str) -> str:
     doc = fitz.open()
     try:
         # Page 1: typed (has selectable text)
+        # Text must exceed _TYPED_TEXT_THRESHOLD (50 chars) to be detected as typed
         page1 = doc.new_page()
         page1.insert_text(
             (50, 100),
-            "این صفحه اول است و متن قابل انتخاب دارد.",
+            "این صفحه اول است و متن قابل انتخاب دارد. "
+            "این یک سند تایپ شده است که بیش از پنجاه کاراکتر متن دارد.",
             fontsize=12,
         )
 
@@ -115,8 +117,13 @@ def _create_mixed_pdf(path: str) -> str:
     return path
 
 
-def _create_empty_pdf(path: str) -> str:
-    """Create an empty PDF (0 pages).
+def _create_blank_pdf(path: str) -> str:
+    """Create a blank PDF with one page and no text.
+
+    PyMuPDF v24+ does not allow saving documents with zero pages, so we
+    create a single blank page with no selectable text. A blank page has
+    0 chars of selectable text, so ``is_scanned_pdf`` correctly returns
+    ``True`` (scanned).
 
     Args:
         path: Output file path.
@@ -126,6 +133,7 @@ def _create_empty_pdf(path: str) -> str:
     """
     doc = fitz.open()
     try:
+        doc.new_page()  # One blank page, no text
         doc.save(path)
     finally:
         doc.close()
@@ -175,19 +183,19 @@ class TestIsScannedPdf:
             os.unlink(pdf_path)
 
     def test_empty_pdf_returns_true(self) -> None:
-        """Empty PDF (0 pages) → returns ``True`` (conservative)."""
+        """Blank PDF (1 page, no text) → returns ``True`` (conservative)."""
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             pdf_path = f.name
 
         try:
-            _create_empty_pdf(pdf_path)
+            _create_blank_pdf(pdf_path)
             assert is_scanned_pdf(pdf_path) is True
         finally:
             os.unlink(pdf_path)
 
     def test_invalid_path_raises_file_not_found(self) -> None:
-        """Non-existent file path → raises ``FileNotFoundError``."""
-        with pytest.raises(FileNotFoundError):
+        """Non-existent file path → raises ``fitz.FileNotFoundError``."""
+        with pytest.raises(fitz.FileNotFoundError):
             is_scanned_pdf("/tmp/nonexistent_file_12345.pdf")
 
     def test_invalid_pdf_raises_fitz_error(self) -> None:

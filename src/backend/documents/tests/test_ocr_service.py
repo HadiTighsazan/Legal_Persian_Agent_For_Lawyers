@@ -304,9 +304,9 @@ class TestTesseractFallback:
         }
 
         with patch(
-            "documents.services.ocr_service.pytesseract"
+            "pytesseract.image_to_data"
         ) as mock_pytesseract:
-            mock_pytesseract.image_to_data.return_value = mock_data
+            mock_pytesseract.return_value = mock_data
 
             segments = ocr_service._extract_with_tesseract(
                 "mock_img", page_num=2
@@ -322,7 +322,7 @@ class TestTesseractFallback:
     def test_tesseract_not_available(self) -> None:
         """When Tesseract is not available, _tesseract_available is False."""
         with patch(
-            "documents.services.ocr_service.pytesseract.get_tesseract_version"
+            "pytesseract.get_tesseract_version"
         ) as mock_version:
             mock_version.side_effect = Exception("Not found")
 
@@ -338,7 +338,7 @@ class TestTesseractFallback:
 class TestExtractText:
     """Tests for the full ``extract_text`` pipeline."""
 
-    @patch("documents.services.ocr_service.convert_from_bytes")
+    @patch("pdf2image.convert_from_bytes")
     def test_extract_text_empty_pdf(
         self, mock_convert: MagicMock, ocr_service: OcrService
     ) -> None:
@@ -349,7 +349,7 @@ class TestExtractText:
         assert flat_text == ""
         assert segments == []
 
-    @patch("documents.services.ocr_service.convert_from_bytes")
+    @patch("pdf2image.convert_from_bytes")
     def test_extract_text_single_page(
         self, mock_convert: MagicMock, ocr_service: OcrService
     ) -> None:
@@ -381,7 +381,7 @@ class TestExtractText:
         assert "متن تست" in flat_text
         assert len(segments) == 1
 
-    @patch("documents.services.ocr_service.convert_from_bytes")
+    @patch("pdf2image.convert_from_bytes")
     def test_extract_text_multi_page(
         self, mock_convert: MagicMock, ocr_service: OcrService
     ) -> None:
@@ -424,7 +424,7 @@ class TestExtractText:
         assert "صفحه دوم" in flat_text
         assert len(segments) == 2
 
-    @patch("documents.services.ocr_service.convert_from_bytes")
+    @patch("pdf2image.convert_from_bytes")
     def test_tesseract_fallback_triggered(
         self, mock_convert: MagicMock, ocr_service: OcrService
     ) -> None:
@@ -434,32 +434,39 @@ class TestExtractText:
         img = Image.new("RGB", (100, 100), color="white")
         mock_convert.return_value = [img]
 
-        # EasyOCR returns very little content (below min_chars_for_easyocr)
+        # Mock _check_tesseract to return True (Tesseract available)
+        # and force _tesseract_available so the fallback path is exercised.
         with patch.object(
-            ocr_service, "_extract_with_easyocr"
-        ) as mock_easyocr, patch.object(
-            ocr_service, "_extract_with_tesseract"
-        ) as mock_tesseract:
-            mock_easyocr.return_value = [
-                TextSegment(
-                    text="کوتاه",
-                    page=1,
-                    bbox=(10.0, 20.0, 100.0, 40.0),
-                    confidence=0.95,
-                )
-            ]
-            mock_tesseract.return_value = [
-                TextSegment(
-                    text="متن طولانی‌تر از Tesseract",
-                    page=1,
-                    bbox=(10.0, 20.0, 200.0, 40.0),
-                    confidence=0.85,
-                )
-            ]
+            ocr_service, "_check_tesseract", return_value=True
+        ):
+            ocr_service._tesseract_available = True
 
-            flat_text, segments = ocr_service.extract_text(
-                b"fake_pdf_bytes"
-            )
+            # EasyOCR returns very little content (below min_chars_for_easyocr)
+            with patch.object(
+                ocr_service, "_extract_with_easyocr"
+            ) as mock_easyocr, patch.object(
+                ocr_service, "_extract_with_tesseract"
+            ) as mock_tesseract:
+                mock_easyocr.return_value = [
+                    TextSegment(
+                        text="کوتاه",
+                        page=1,
+                        bbox=(10.0, 20.0, 100.0, 40.0),
+                        confidence=0.95,
+                    )
+                ]
+                mock_tesseract.return_value = [
+                    TextSegment(
+                        text="متن طولانی‌تر از Tesseract",
+                        page=1,
+                        bbox=(10.0, 20.0, 200.0, 40.0),
+                        confidence=0.85,
+                    )
+                ]
+
+                flat_text, segments = ocr_service.extract_text(
+                    b"fake_pdf_bytes"
+                )
 
         # Should have used Tesseract output (longer text)
         assert "Tesseract" in flat_text

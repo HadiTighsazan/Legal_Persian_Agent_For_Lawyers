@@ -1,6 +1,43 @@
 # WIP Context — Chunking Pipeline Refactor (OCR-Aware Hybrid)
 
-## Status: ✅ COMPLETED — All 8 Phases Implemented
+## Status: ✅ COMPLETED — All 8 Phases + Post-Refactor Test Fixes
+
+## Latest: Debug Plan — 14 Test Failures Fixed (2026-05-13)
+
+All 14 post-refactor test failures have been resolved. See [`plans/plan-debug-test-failures.md`](plans/plan-debug-test-failures.md) for the full root cause analysis.
+
+### Changes Made
+
+#### Phase 1: Test File Fixes (11 changes)
+
+**`test_scanned_pdf_detector.py`** (3 fixes):
+1. [`_create_mixed_pdf`](src/backend/documents/tests/test_scanned_pdf_detector.py:85) — Increased page 1 text to exceed the 50-char `_TYPED_TEXT_THRESHOLD` (was 38 chars, now ~100 chars)
+2. [`_create_empty_pdf` → `_create_blank_pdf`](src/backend/documents/tests/test_scanned_pdf_detector.py:118) — PyMuPDF v24+ rejects 0-page saves; replaced with 1-page blank PDF (no text). Test expectation `is_scanned_pdf(pdf_path) is True` remains correct.
+3. [`test_invalid_path_raises_file_not_found`](src/backend/documents/tests/test_scanned_pdf_detector.py:188) — Changed expected exception from Python `FileNotFoundError` to `fitz.FileNotFoundError`
+
+**`test_ocr_service.py`** (7 fixes):
+4. [`test_tesseract_extraction`](src/backend/documents/tests/test_ocr_service.py:295) — Changed patch target from `"documents.services.ocr_service.pytesseract"` to `"pytesseract.image_to_data"`
+5. [`test_tesseract_not_available`](src/backend/documents/tests/test_ocr_service.py:322) — Changed patch target from `"documents.services.ocr_service.pytesseract.get_tesseract_version"` to `"pytesseract.get_tesseract_version"`
+6-9. [`test_extract_text_*` (4 tests)](src/backend/documents/tests/test_ocr_service.py:341-427) — Changed `@patch("documents.services.ocr_service.convert_from_bytes")` to `@patch("pdf2image.convert_from_bytes")`
+10. [`test_tesseract_fallback_triggered`](src/backend/documents/tests/test_ocr_service.py:427) — Added `_check_tesseract` mock + `_tesseract_available = True` since Tesseract is not installed in the container
+
+**`test_anchor_chunking_service.py`** (2 fixes):
+11. [`test_single_anchor`](src/backend/documents/tests/test_anchor_chunking_service.py:243) — Changed assertion from `"رأی دادگاه"` to `"رای دادگاه"` (normalized form)
+12. [`test_anchor_content_preserved`](src/backend/documents/tests/test_anchor_chunking_service.py:273) — Same normalized form fix
+
+#### Phase 2: Source Code Fixes (3 changes in `anchor_chunking_service.py`)
+
+13. [`_resolve_pages`](src/backend/documents/services/anchor_chunking_service.py:429) — Removed `if not pages:` guard; now **always adds `active_page`** to the pages set. This ensures ranges that start *after* a page marker but before the next one correctly include the containing page.
+
+14. [`_extract_metadata_and_clean`](src/backend/documents/services/anchor_chunking_service.py:373) — New method that extracts metadata AND **removes metadata lines from text** using `str.splitlines` line-by-line checking. The old `_extract_metadata` only copied metadata to a dict but never removed it from text, causing metadata values to appear in BOTH `chunk.metadata` AND `chunk.content`. The `page_map` is now recomputed from the cleaned text since positions shift after metadata removal.
+
+15. [`chunk_text` intro detection](src/backend/documents/services/anchor_chunking_service.py:253) — Before creating an intro chunk with `section_title = "مقدمه"`, the code now strips `[PAGE N]` markers from the intro text. If only page markers remain (no real content), no intro chunk is created. This prevents false intro sections when an anchor starts immediately after a page marker.
+
+### Test Results
+```
+68 passed in 1.76s
+```
+All 68 tests across the 3 test files pass.
 
 ## Summary
 

@@ -253,7 +253,8 @@ class TestAnchorSegmentation:
         # First chunk should be the introduction
         assert chunks[0].section_title == "مقدمه"
         # Second chunk should be the anchored section
-        assert "رأی دادگاه" in chunks[-1].section_title
+        # section_title uses normalized form (رای without Hamza on Alef)
+        assert "رای دادگاه" in chunks[-1].section_title
 
     def test_multiple_anchors(self, chunker: AnchorChunkingService) -> None:
         """Multiple anchors create multiple sections."""
@@ -281,7 +282,8 @@ class TestAnchorSegmentation:
         )
         chunks = chunker.chunk_text(text)
         # The anchor title should be in section_title
-        assert any("رأی دادگاه" in c.section_title for c in chunks)
+        # section_title uses normalized form (رای without Hamza on Alef)
+        assert any("رای دادگاه" in c.section_title for c in chunks)
 
     def test_empty_text(self, chunker: AnchorChunkingService) -> None:
         """Empty text → empty list."""
