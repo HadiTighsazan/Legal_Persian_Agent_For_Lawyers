@@ -4,10 +4,11 @@ Celery tasks for the document processing pipeline.
 Provides two Celery tasks:
 - ``extract_text_from_pdf`` — opens a PDF with PyMuPDF (RTL-aware), extracts text
   page-by-page with ``[PAGE N]`` markers, with automatic fallback to pdfplumber
-  and Tesseract OCR for garbled Persian text.
+  and Tesseract OCR for garbled Persian text. For scanned PDFs (no selectable
+  text), routes to the EasyOCR pipeline with layout-aware assembly.
 - ``chunk_document`` — receives the extracted text, delegates to
-  :class:`~documents.services.chunking_service.ChunkingService`, and persists the
-  resulting chunks via bulk create.
+  :class:`~documents.services.anchor_chunking_service.AnchorChunkingService`,
+  and persists the resulting chunks via bulk create.
 
 The orchestration function ``process_document`` has been moved to
 :mod:`documents.services.processing_service` — it is a **regular Python function**
@@ -24,6 +25,8 @@ from __future__ import annotations
 
 import io
 import logging
+import os
+import tempfile
 import traceback
 from typing import Any, Optional
 
@@ -35,7 +38,9 @@ from django.utils import timezone
 import fitz  # PyMuPDF
 
 from documents.models import Document, DocumentChunk
-from documents.services.chunking_service import ChunkingService
+from documents.services.anchor_chunking_service import (
+    AnchorChunkingService,
+)
 from documents.services.error_handler import (
     classify_pdf_error,
     fail_processing_task,
@@ -44,6 +49,7 @@ from documents.services.error_handler import (
 from documents.services.non_text_filter import NonTextChunkFilter
 from documents.services.persian_normalizer import PersianNormalizer
 from documents.storage import get_storage_backend
+from documents.utils.scanned_pdf_detector import is_scanned_pdf
 from tasks.models import ProcessingTask
 
 logger = logging.getLogger(__name__)
@@ -423,20 +429,130 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         return ""
 
     # ------------------------------------------------------------------
-    # Extraction strategy with auto-fallback
+    # Scanned PDF detection — route to EasyOCR pipeline
     # ------------------------------------------------------------------
-    pdf_bytes = pdf_content.read() if hasattr(pdf_content, "read") else pdf_content
-    pdf_document_for_extraction = fitz.open(stream=pdf_bytes, filetype="pdf")
+    # Before attempting PyMuPDF extraction, check if the PDF is scanned
+    # (image-based with no selectable text). If so, skip directly to the
+    # EasyOCR pipeline with layout-aware assembly.
+    easyocr_enabled = getattr(settings, "OCR_EASYOCR_ENABLED", True)
 
-    # Stage 1: Primary extraction with PyMuPDF + RTL flags
-    extracted_text = _extract_with_pymupdf_rtl(pdf_document_for_extraction)
-    pdf_document_for_extraction.close()
-    pdf_document.close()
+    if easyocr_enabled:
+        try:
+            # Save PDF bytes to a temp file for is_scanned_pdf check
+            import tempfile
 
-    auto_fallback = getattr(settings, "EXTRACTION_AUTO_FALLBACK", True)
+            pdf_bytes_for_check = (
+                pdf_content.read()
+                if hasattr(pdf_content, "read")
+                else pdf_content
+            )
+            pdf_content.seek(0) if hasattr(pdf_content, "seek") else None
 
-    # Track which extraction method succeeded
-    extraction_method = "pymupdf"
+            with tempfile.NamedTemporaryFile(
+                suffix=".pdf", delete=False
+            ) as tmp:
+                tmp.write(pdf_bytes_for_check)
+                tmp_path = tmp.name
+
+            try:
+                scanned = is_scanned_pdf(tmp_path)
+            finally:
+                os.unlink(tmp_path)
+
+            if scanned:
+                logger.info(
+                    "Document %s is scanned — using EasyOCR pipeline",
+                    document_id,
+                )
+                try:
+                    from documents.services.ocr_service import (
+                        OcrService,
+                    )
+
+                    ocr = OcrService()
+                    extracted_text, _ = ocr.extract_text(
+                        pdf_bytes_for_check
+                    )
+                    extraction_method = "easyocr"
+
+                    # Close the PyMuPDF document (opened earlier) since
+                    # we're not using it
+                    pdf_document.close()
+
+                    # Skip directly to normalization (skip PyMuPDF chain)
+                    pdf_bytes = pdf_bytes_for_check
+                    auto_fallback = False  # No need for fallback chain
+
+                    logger.info(
+                        "EasyOCR extraction complete for document %s "
+                        "(%d chars)",
+                        document_id,
+                        len(extracted_text),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "EasyOCR failed for document %s: %s — "
+                        "falling back to standard extraction chain",
+                        document_id,
+                        e,
+                    )
+                    # Fall through to standard extraction chain
+                    pdf_document_for_extraction = fitz.open(
+                        stream=pdf_bytes_for_check, filetype="pdf"
+                    )
+                    extracted_text = _extract_with_pymupdf_rtl(
+                        pdf_document_for_extraction
+                    )
+                    pdf_document_for_extraction.close()
+                    extraction_method = "pymupdf"
+                    pdf_bytes = pdf_bytes_for_check
+        except Exception as e:
+            logger.warning(
+                "Scanned PDF detection failed for document %s: %s — "
+                "falling back to standard extraction",
+                document_id,
+                e,
+            )
+            # Fall through to standard extraction
+            pdf_bytes = (
+                pdf_content.read()
+                if hasattr(pdf_content, "read")
+                else pdf_content
+            )
+            pdf_document_for_extraction = fitz.open(
+                stream=pdf_bytes, filetype="pdf"
+            )
+            extracted_text = _extract_with_pymupdf_rtl(
+                pdf_document_for_extraction
+            )
+            pdf_document_for_extraction.close()
+            extraction_method = "pymupdf"
+    else:
+        # EasyOCR disabled — use standard extraction chain
+        pdf_bytes = (
+            pdf_content.read()
+            if hasattr(pdf_content, "read")
+            else pdf_content
+        )
+        pdf_document_for_extraction = fitz.open(
+            stream=pdf_bytes, filetype="pdf"
+        )
+
+        # Stage 1: Primary extraction with PyMuPDF + RTL flags
+        extracted_text = _extract_with_pymupdf_rtl(
+            pdf_document_for_extraction
+        )
+        pdf_document_for_extraction.close()
+        pdf_document.close()
+
+        auto_fallback = getattr(settings, "EXTRACTION_AUTO_FALLBACK", True)
+        extraction_method = "pymupdf"
+
+    # ------------------------------------------------------------------
+    # Extraction strategy with auto-fallback (for typed PDFs)
+    # ------------------------------------------------------------------
+    if auto_fallback is None:
+        auto_fallback = getattr(settings, "EXTRACTION_AUTO_FALLBACK", True)
 
     # Helper: check both garbled-text heuristics (isolated chars + shattered words)
     def _is_garbled(t: str) -> bool:
@@ -544,9 +660,10 @@ def extract_text_from_pdf(self, document_id: str) -> str:
 def chunk_document(self, extracted_text: str, document_id: str) -> None:
     """Split ``extracted_text`` into chunks and persist them to the database.
 
-    Uses the refactored :class:`ChunkingService` which automatically detects
-    Persian legal structure and applies structural chunking with clause-boundary-
-    aware overlap. Falls back to sentence-boundary chunking for non-legal text.
+    Uses the :class:`~documents.services.anchor_chunking_service.AnchorChunkingService`
+    which applies text anchor (لنگر متنی) segmentation for Persian legal documents,
+    with token-based overlap splitting for long segments. Metadata is stored
+    separately from chunk content to avoid embedding pollution.
 
     This task is designed to be the second link in a Celery chain, receiving
     ``extracted_text`` from :func:`extract_text_from_pdf`.
@@ -600,29 +717,21 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         return
 
     try:
-        chunking_service = ChunkingService()
-
-        # Use settings for legal chunking configuration
-        legal_chunking_enabled = getattr(settings, "LEGAL_CHUNKING_ENABLED", True)
-        legal_max_chunk_size = getattr(settings, "LEGAL_MAX_CHUNK_SIZE", 2000)
-        legal_overlap_clauses = getattr(
-            settings, "LEGAL_CHUNK_OVERLAP_CLAUSES", 1
+        # Use AnchorChunkingService with settings-based configuration
+        anchor_chunking_enabled = getattr(
+            settings, "ANCHOR_CHUNKING_ENABLED", True
         )
-        legal_overlap_chars = getattr(
-            settings, "LEGAL_CHUNK_OVERLAP_CHARS", 150
-        )
+        chunk_tokens = getattr(settings, "ANCHOR_CHUNK_TOKENS", 400)
+        overlap_tokens = getattr(settings, "ANCHOR_OVERLAP_TOKENS", 50)
 
-        chunk_results = chunking_service.chunk_text(
+        chunker = AnchorChunkingService()
+        chunk_results = chunker.chunk_text(
             extracted_text,
-            chunk_size=1000,
-            overlap=300,
-            legal_chunking_enabled=legal_chunking_enabled,
-            legal_max_chunk_size=legal_max_chunk_size,
-            legal_overlap_clauses=legal_overlap_clauses,
-            legal_overlap_chars=legal_overlap_chars,
+            chunk_tokens=chunk_tokens,
+            overlap_tokens=overlap_tokens,
         )
 
-        # NEW: Filter out non-text chunks (e.g., table of contents) before
+        # Filter out non-text chunks (e.g., table of contents) before
         # persisting to the database. This prevents structural artifacts from
         # polluting the vector store.
         if getattr(settings, "NON_TEXT_CHUNK_FILTERING_ENABLED", True):
@@ -639,22 +748,28 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
                     document_id,
                 )
 
-        # Build DocumentChunk instances with legal metadata.
-        # Denormalized fields (law_name, legal_status, approval_date, legal_type)
-        # are populated from chunk.metadata for efficient SQL-level filtering.
+        # Build DocumentChunk instances with metadata.
+        # The AnchorChunk stores metadata SEPARATELY from content (no
+        # embedding pollution). Denormalized fields (law_name, legal_status,
+        # approval_date, legal_type) are populated from chunk.metadata for
+        # efficient SQL-level filtering.
         #
-        # IMPORTANT: Normalize chunk content for FTS before saving. The DB trigger
-        # ``trg_chunk_search_vector`` builds the ``search_vector`` using
-        # ``to_tsvector('simple', ...)``, which does NOT convert Persian digits
-        # (۰۱۲۳۴۵۶۷۸۹) to English digits (0123456789). By normalizing here, we
-        # ensure the stored content (and thus the ``search_vector``) uses English
-        # digits, so FTS queries with English digits match correctly.
+        # IMPORTANT: Normalize chunk content for FTS before saving. The DB
+        # trigger ``trg_chunk_search_vector`` builds the ``search_vector``
+        # using ``to_tsvector('simple', ...)``, which does NOT convert Persian
+        # digits (۰۱۲۳۴۵۶۷۸۹) to English digits (0123456789). By normalizing
+        # here, we ensure the stored content (and thus the ``search_vector``)
+        # uses English digits, so FTS queries with English digits match correctly.
+        #
+        # AnchorChunk uses ``pages: List[int]`` — we map min(pages) to
+        # page_start and max(pages) to page_end for backward compatibility
+        # with the DocumentChunk model.
         chunks_to_create = [
             DocumentChunk(
                 document=document,
                 chunk_index=i,
-                page_start=chunk.page_start,
-                page_end=chunk.page_end,
+                page_start=min(chunk.pages) if chunk.pages else 1,
+                page_end=max(chunk.pages) if chunk.pages else 1,
                 content=PersianNormalizer.normalize_for_fts(chunk.content),
                 token_count=chunk.token_count,
                 metadata=chunk.metadata,

@@ -377,3 +377,21 @@ SWAGGER_SETTINGS = {
     'DEFAULT_MODEL_RENDERING': 'model',
     'VALIDATOR_URL': None,
 }
+
+# ---------------------------------------------------------------------------
+# Anchor chunking settings
+# ---------------------------------------------------------------------------
+# Controls the new AnchorChunkingService which replaces the old
+# ChunkingService and LegalStructureDetector.
+ANCHOR_CHUNKING_ENABLED = True
+ANCHOR_CHUNK_TOKENS = 400
+ANCHOR_OVERLAP_TOKENS = 50
+
+# ---------------------------------------------------------------------------
+# OCR settings (EasyOCR + Tesseract)
+# ---------------------------------------------------------------------------
+OCR_EASYOCR_ENABLED = True
+OCR_EASYOCR_USE_GPU = False
+OCR_CONFIDENCE_THRESHOLD = 0.5
+OCR_CONTRAST_ENABLED = True
+OCR_DESKEW_ENABLED = True

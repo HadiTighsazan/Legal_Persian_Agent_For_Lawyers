@@ -1,7 +1,7 @@
 # Django Backend Dockerfile
 # Using Iranian PyPI mirror for compliance
 
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -9,22 +9,30 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_DEFAULT_TIMEOUT=100
 ENV PIP_NO_CACHE_DIR=1
 
+# Install system dependencies for EasyOCR, OpenCV, and pdf2image
+# Using Iranian Debian mirrors for reliable access
+RUN sed -i 's|deb.debian.org/debian|mirror.arvancloud.ir/debian|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org/debian|mirror.arvancloud.ir/debian|g' /etc/apt/sources.list && \
+    sed -i 's|deb.debian.org/debian-security|mirror.arvancloud.ir/debian-security|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org/debian-security|mirror.arvancloud.ir/debian-security|g' /etc/apt/sources.list && \
+    apt-get update -o Acquire::Check-Valid-Until=false && \
+    apt-get install -y --no-install-recommends \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set working directory
 WORKDIR /app
 
-# Build arguments for pip mirrors (overridable via --build-arg)
-ARG PIP_INDEX_URL=https://package-mirror.liara.ir/repository/pypi/simple
-ARG PIP_EXTRA_INDEX_URL=https://pypi.org/simple
-
-# Configure Iranian PyPI mirror with official PyPI as fallback
-# (django-pgvector is not available on the Liara mirror)
-RUN pip config set global.index-url ${PIP_INDEX_URL} && \
-    pip config set global.extra-index-url ${PIP_EXTRA_INDEX_URL} && \
-    pip config set global.trusted-host package-mirror.liara.ir && \
-    pip config set global.trusted-host pypi.org && \
-    pip config set global.trusted-host files.pythonhosted.org && \
-    pip config set global.timeout 60 && \
-    pip config set global.retries 5
+# Configure Runflare PyPI mirror with official PyPI as fallback
+RUN pip config set global.index-url https://mirror-pypi.runflare.com/simple && \
+    pip config set global.extra-index-url https://pypi.org/simple && \
+    pip config set global.trusted-host mirror-pypi.runflare.com
 
 # Copy requirements file
 COPY src/backend/requirements.txt /app/requirements.txt

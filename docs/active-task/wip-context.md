@@ -1,142 +1,171 @@
-# WIP Context — Purge & Re-import Legislation Hub (هاب قوانین مصوب)
+# WIP Context — Chunking Pipeline Refactor (OCR-Aware Hybrid)
 
-## Status: ✅ COMPLETED — Implementation & Tests Verified
+## Status: ✅ COMPLETED — All 8 Phases Implemented
 
 ## Summary
 
-A new management command [`reimport_legislation_hub`](src/backend/documents/management/commands/reimport_legislation_hub.py) has been implemented to:
-1. **Purge** all existing data in the legislation hub (`hub_type='legislation'`)
-2. **Re-import** pre-chunked JSON data from `C:\Users\starlap\Desktop\chunked_datasets\هاب قوانین مصوب\laws\` (~98-99 JSON files, one per law)
+Replaced the legacy dual-algorithm chunking system (`ChunkingService` + `LegalStructureDetector`) with a hybrid OCR-aware pipeline. The new system detects whether a PDF is scanned (image-based) or typed (selectable text), routes accordingly, and uses text anchor segmentation (لنگرهای متنی) for Persian legal document structure.
 
-The JSON files are **Format B** (flat array of chunk objects) where each chunk has `chunk_id`, `text`, and `metadata.source` fields. Chunks are grouped by `metadata.source` (the law name) — one Document per unique law name.
+### Architecture Overview
+
+```
+PDF Upload
+    │
+    ▼
+extract_text_from_pdf()
+    │
+    ├── is_scanned_pdf() == True ──► OcrService (EasyOCR → Tesseract fallback)
+    │                                   │
+    │                                   ▼
+    │                              Layout-aware assembly
+    │                              (CLAHE contrast + deskew + column detection)
+    │                                   │
+    │                                   ▼
+    │                              Text with [PAGE N] markers
+    │
+    └── is_scanned_pdf() == False ──► PyMuPDF extraction (existing)
+                                        │
+                                        ▼
+                                   Text with [PAGE N] markers
+                                        │
+                                        ▼
+                              chunk_document()
+                                   │
+                                   ▼
+                           AnchorChunkingService
+                           (text anchor segmentation)
+                                   │
+                                   ▼
+                           AnchorChunk[]
+                           (content, pages, metadata, section_title)
+                                   │
+                                   ▼
+                           DocumentChunk model
+                           (page_start, page_end, metadata)
+```
 
 ### Key Design Decisions
 
 | Decision | Rationale |
 |----------|-----------|
-| New command (not modifying existing) | Existing `import_chunked_data` groups by `full_title`/`parent_title`, but legislation files lack these fields |
-| Group by `metadata.source` | Each JSON file represents one law; `metadata.source` contains the law name |
-| Volume mount approach | Docker containers need access to host path; mapped to `/data/chunked_datasets` |
-| CASCADE purge | Deleting legislation Documents cascades to chunks, conversations, tasks |
-| `transaction.atomic()` per document | Ensures per-document transactional integrity |
-| `bulk_create`/`bulk_update` | Efficient batch operations for chunks and embeddings |
-
-### 5-Phase Architecture
-
-| Phase | Description |
-|-------|-------------|
-| **Phase 1: Purge** | Delete all `hub_type='legislation'` documents (CASCADE handles chunks) |
-| **Phase 2: Load** | Read and validate JSON files (Format B flat array, non-empty `text` field) |
-| **Phase 3: Group** | Group chunks by `metadata.source` (law name) |
-| **Phase 4: Create** | Create one Document per law + bulk create DocumentChunks with denormalized fields |
-| **Phase 5: Embed** | Batch generate embeddings via `batch_generate_embeddings()` |
-
-### Denormalized Fields on Chunks
-
-| Field | Source |
-|-------|--------|
-| `law_name` | `metadata.source` |
-| `legal_status` | `metadata.status` |
-| `approval_date` | Parsed from `metadata.approval_date` (YYYY/MM/DD format) |
-| `legal_type` | Defaults to `"article"` |
-| `hub_type` | Always `"legislation"` |
-
-### Metadata Preserved in Chunk Metadata
-
-- `chunk_id` — Original chunk identifier
-- `madde_number` — Article number
-- `madde_suffix` — Article suffix
-- `madde_raw` — Raw article text
-- All original metadata fields (source, hub_type, approval_date, status, summary, kitab, bakhsh, fasl, etc.)
+| **EasyOCR over PaddleOCR** | Better Persian/Farsi accuracy; native Persian support |
+| **Tesseract fallback** | `--psm 6 --oem 3` config for robust OCR when EasyOCR fails |
+| **CLAHE contrast + deskew** | OpenCV preprocessing significantly improves OCR quality on scanned legal docs |
+| **Layout-aware assembly** | Column detection (x-span > 40% page width) + adaptive paragraph grouping (median line height × 1.5) |
+| **Conservative scanned PDF detection** | If ANY page has >50 chars selectable text, treat as typed (avoid false positives) |
+| **Text anchor segmentation** | Regex-based structural splitting using Persian legal markers (رأی دادگاه, گردشکار, ختم دادرسی, etc.) |
+| **Token-based overlap splitting** | tiktoken (cl100k_base) instead of character-based splitting for accurate token budgets |
+| **Metadata separation** | Metadata stored in `metadata` dict, NOT injected into `content` — prevents embedding pollution |
+| **Page-aware chunks** | `pages: List[int]` tracks which pages each chunk spans for accurate citation |
 
 ---
 
 ## Changes Made
 
-### Files Modified
+### Files Created (6 new files)
 
-1. [`docker-compose.yml`](docker-compose.yml) — Added volume mount:
-   ```yaml
-   - C:/Users/starlap/Desktop/chunked_datasets:/data/chunked_datasets
+1. [`src/backend/documents/utils/scanned_pdf_detector.py`](src/backend/documents/utils/scanned_pdf_detector.py) — Utility to detect if PDF is scanned (image-based) or typed (selectable text). Uses PyMuPDF to sample each page; if ANY page has >50 chars selectable text, returns `False` (typed). Conservative approach: empty PDFs return `True` (scanned).
+
+2. [`src/backend/documents/tests/test_scanned_pdf_detector.py`](src/backend/documents/tests/test_scanned_pdf_detector.py) — 8 test cases: typed PDF, scanned PDF, mixed PDF, empty PDF, invalid path, invalid PDF, single-page typed, single-page scanned.
+
+3. [`src/backend/documents/services/ocr_service.py`](src/backend/documents/services/ocr_service.py) — `OcrService` class with EasyOCR primary + Tesseract fallback. Features:
+   - `TextSegment` dataclass: text, page, bbox, confidence
+   - OpenCV preprocessing: CLAHE contrast enhancement + deskew correction
+   - Layout-aware assembly: column detection, adaptive paragraph grouping
+   - Confidence filtering: skip results with confidence < 0.5
+   - Page marker injection: `[PAGE N]` markers for downstream chunking
+
+4. [`src/backend/documents/tests/test_ocr_service.py`](src/backend/documents/tests/test_ocr_service.py) — Tests for `TextSegment` dataclass, `OcrService` init, layout assembly, preprocessing, EasyOCR extraction (mocked), Tesseract fallback (mocked), full extraction pipeline (mocked).
+
+5. [`src/backend/documents/services/anchor_chunking_service.py`](src/backend/documents/services/anchor_chunking_service.py) — `AnchorChunkingService` class replacing both `ChunkingService` and `LegalStructureDetector`. Features:
+   - `AnchorChunk` dataclass: content, pages, char_count, token_count, metadata, section_title
+   - Persian normalization: Arabic Yeh→Persian Yeh, Kaf→Kaf, Alef variants→Alef, diacritic removal, whitespace collapse
+   - Metadata extraction patterns: case_number, date, plaintiff, defendant, branch
+   - Text anchors: رأی دادگاه, رای دادگاه, در خصوص دعوی, گردشکار, ختم دادرسی, نظریه مشورتی, بسمه تعالی, ماده \d+, فصل \d+
+   - Token-based overlap splitting via tiktoken (cl100k_base)
+   - Page-aware chunking via `[PAGE N]` marker parsing
+
+6. [`src/backend/documents/tests/test_anchor_chunking_service.py`](src/backend/documents/tests/test_anchor_chunking_service.py) — 20+ test methods across 7 test classes covering: Persian normalization, metadata extraction, page tracking, token overlap split, anchor segmentation, metadata separation, page-aware chunking, edge cases.
+
+### Files Modified (3 existing files)
+
+7. [`src/backend/documents/tasks/document_processing.py`](src/backend/documents/tasks/document_processing.py) — Major modifications:
+   - **Imports**: Replaced `ChunkingService` with `AnchorChunkingService`; added `is_scanned_pdf` import; added `import os` and `import tempfile`
+   - **`extract_text_from_pdf()`**: Added scanned PDF detection at the beginning of extraction strategy. If `OCR_EASYOCR_ENABLED` is True and PDF is scanned, routes to EasyOCR pipeline with layout-aware assembly. Falls back to standard PyMuPDF chain if EasyOCR fails.
+   - **`chunk_document()`**: Replaced `ChunkingService` with `AnchorChunkingService`. Uses `ANCHOR_CHUNK_TOKENS` and `ANCHOR_OVERLAP_TOKENS` settings. Maps `AnchorChunk.pages` (List[int]) to `page_start` (min) and `page_end` (max) for `DocumentChunk` model compatibility.
+
+8. [`src/backend/config/settings.py`](src/backend/config/settings.py) — Added at end of file:
+   ```python
+   # Anchor chunking settings
+   ANCHOR_CHUNKING_ENABLED = True
+   ANCHOR_CHUNK_TOKENS = 400
+   ANCHOR_OVERLAP_TOKENS = 50
+
+   # OCR settings (EasyOCR + Tesseract)
+   OCR_EASYOCR_ENABLED = True
+   OCR_EASYOCR_USE_GPU = False
+   OCR_CONFIDENCE_THRESHOLD = 0.5
+   OCR_CONTRAST_ENABLED = True
+   OCR_DESKEW_ENABLED = True
    ```
-   Applied to both `backend` and `celery_worker` services.
 
-### Files Created
+9. [`src/backend/requirements.txt`](src/backend/requirements.txt) — Added:
+   - `easyocr>=1.7.0`
+   - `opencv-python-headless>=4.8.0`
+   - `pdf2image>=1.16.0`
 
-2. [`src/backend/documents/management/commands/reimport_legislation_hub.py`](src/backend/documents/management/commands/reimport_legislation_hub.py) — Full management command (678 lines) with:
-   - `ReimportStats` dataclass tracking all phases
-   - `Command` class with arguments: `--data-dir`, `--dry-run`, `--user-id`, `--embedding-batch-size`, `--skip-embedding`
-   - 5-phase orchestration in `handle()`
-   - Error handling with `CommandError` on early return paths
+10. [`docker/backend/Dockerfile`](docker/backend/Dockerfile) — Added system dependencies for EasyOCR/OpenCV:
+    - `libgl1-mesa-glx`, `libglib2.0-0`, `libsm6`, `libxext6`, `libxrender-dev`, `libgomp1`, `poppler-utils`
 
-3. [`src/backend/documents/tests/test_reimport_legislation_hub.py`](src/backend/documents/tests/test_reimport_legislation_hub.py) — 20 test cases (948 lines):
-   - Purge phase tests (2): existing data deletion, other hub isolation
-   - Import phase tests (3): single file, multiple files, grouping by source
-   - Denormalized fields tests (2): field population, hub_type correctness
-   - Embedding tests (3): generation, skip flag, batch size
-   - Dry-run test (1): no DB modifications
-   - Error handling tests (4): missing text, invalid JSON, empty dir, non-existent dir, wrong format
-   - Idempotency test (1): safe re-run
-   - Metadata preservation test (1): all fields preserved
-   - User assignment test (1): custom --user-id
-   - No existing data test (1): works with empty DB
+### Files Deleted (4 old files)
 
-### Test Results
-
-```
-20 passed in 10.26s
-```
+11. `src/backend/documents/services/chunking_service.py` — Replaced by `AnchorChunkingService`
+12. `src/backend/documents/services/legal_structure_detector.py` — Replaced by `AnchorChunkingService`
+13. `src/backend/documents/tests/test_chunking_service.py` — Replaced by `test_anchor_chunking_service.py`
+14. `src/backend/documents/tests/test_legal_structure_detector.py` — Replaced by `test_anchor_chunking_service.py`
 
 ---
 
-## How to Use
+## Reference Documentation Updates Required
 
-### 1. Restart Docker containers (to pick up volume mount)
+### [`docs/references/database-schema.md`](docs/references/database-schema.md)
+- No schema changes — `DocumentChunk` model unchanged (still uses `page_start`, `page_end`, `metadata` JSONB)
+- The new `AnchorChunk.pages: List[int]` is mapped to `page_start=min(pages)` and `page_end=max(pages)` at the task layer
+
+### [`docs/references/api-registry.md`](docs/references/api-registry.md)
+- No API endpoint changes — all changes are internal to Celery tasks and services
+
+---
+
+## How to Rebuild & Test
+
+### 1. Rebuild Docker images (to install new dependencies)
 
 ```bash
 docker-compose down
+docker-compose build --no-cache backend
 docker-compose up -d
 ```
 
-### 2. Dry-run (validate without writing)
+### 2. Run the new tests
 
 ```bash
-docker-compose exec backend python manage.py reimport_legislation_hub \
-    --data-dir /data/chunked_datasets/هاب قوانین مصوب/laws \
-    --dry-run
+docker-compose exec backend pytest documents/tests/test_scanned_pdf_detector.py -v
+docker-compose exec backend pytest documents/tests/test_ocr_service.py -v
+docker-compose exec backend pytest documents/tests/test_anchor_chunking_service.py -v
 ```
 
-### 3. Actual import
+### 3. Run full test suite to verify no regressions
 
 ```bash
-docker-compose exec backend python manage.py reimport_legislation_hub \
-    --data-dir /data/chunked_datasets/هاب قوانین مصوب/laws
-```
-
-### 4. Custom options
-
-```bash
-# Skip embedding (for testing)
-docker-compose exec backend python manage.py reimport_legislation_hub \
-    --data-dir /data/chunked_datasets/هاب قوانین مصوب/laws \
-    --skip-embedding
-
-# Custom embedding batch size
-docker-compose exec backend python manage.py reimport_legislation_hub \
-    --data-dir /data/chunked_datasets/هاب قوانین مصوب/laws \
-    --embedding-batch-size 32
-
-# Specify owner user
-docker-compose exec backend python manage.py reimport_legislation_hub \
-    --data-dir /data/chunked_datasets/هاب قوانین مصوب/laws \
-    --user-id <UUID>
+docker-compose exec backend pytest
 ```
 
 ---
 
-## Next Steps
+## Next Steps (Future Work)
 
-1. Restart Docker containers to pick up the volume mount change
-2. Run the dry-run command to validate
-3. Run the actual import command
-4. Verify the data in the database
+- [ ] Tune `ANCHOR_CHUNK_TOKENS` (currently 400) based on retrieval quality metrics
+- [ ] Tune `OCR_CONFIDENCE_THRESHOLD` (currently 0.5) based on real scanned PDF samples
+- [ ] Add GPU support for EasyOCR (`OCR_EASYOCR_USE_GPU = True`) if running on CUDA-capable hardware
+- [ ] Consider adding `--psm` config option for Tesseract fallback in settings
