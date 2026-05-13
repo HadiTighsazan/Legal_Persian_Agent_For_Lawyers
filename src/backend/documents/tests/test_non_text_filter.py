@@ -27,7 +27,7 @@ from documents.services.non_text_filter import (
 
 @dataclass
 class FakeChunkResult:
-    """Minimal stand-in for :class:`~documents.services.chunking_service.ChunkResult`.
+    """Minimal stand-in for :class:`~documents.services.anchor_chunking_service.AnchorChunk`.
 
     Only exposes the ``content`` attribute needed by the filter.
     """

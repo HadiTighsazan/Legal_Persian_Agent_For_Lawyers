@@ -23,7 +23,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from documents.models import Document, DocumentChunk
-from documents.services.chunking_service import ChunkingService
+from documents.services.anchor_chunking_service import AnchorChunkingService
 from documents.tasks import process_document  # re-exported from services module
 from documents.tasks.document_processing import (
     _handle_chain_error,
@@ -452,7 +452,7 @@ class ChunkDocumentTests(TestCase):
     def test_exception_sets_failed_status(self) -> None:
         """If chunking raises, both Document and ProcessingTask should be failed."""
         with patch.object(
-            ChunkingService, "chunk_text", side_effect=ValueError("Simulated failure")
+            AnchorChunkingService, "chunk_text", side_effect=ValueError("Simulated failure")
         ):
             self._run_task("[PAGE 1]\nSome text.")
 
@@ -523,9 +523,9 @@ class ChunkDocumentTests(TestCase):
         self.document.total_chunks = 0
         self.document.save(update_fields=["processing_status", "total_chunks"])
 
-        # Now run chunk_document with a mocked ChunkingService that raises.
+        # Now run chunk_document with a mocked AnchorChunkingService that raises.
         with patch.object(
-            ChunkingService, "chunk_text", side_effect=ValueError("Chunking failed")
+            AnchorChunkingService, "chunk_text", side_effect=ValueError("Chunking failed")
         ):
             self._run_task("[PAGE 1]\nSome text to chunk.")
 

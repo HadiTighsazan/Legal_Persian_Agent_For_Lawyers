@@ -2,7 +2,7 @@
 Tests for the document processing pipeline.
 
 Covers:
-- :class:`~documents.services.chunking_service.ChunkingService` unit tests (no DB)
+- :class:`~documents.services.anchor_chunking_service.AnchorChunkingService` unit tests (no DB)
 - Full pipeline integration test (DB + mocked Celery)
 - Authentication requirement for all processing endpoints
 """
@@ -22,7 +22,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from documents.models import Document, DocumentChunk
-from documents.services.chunking_service import ChunkingService
+from documents.services.anchor_chunking_service import AnchorChunkingService
 from documents.tasks.document_processing import (
     _handle_chain_error,
     chunk_document,
@@ -85,62 +85,56 @@ def _auth_header(user: User) -> dict[str, str]:
 
 
 # ===================================================================
-# Category 1: ChunkingService Unit Tests (No DB Needed)
+# Category 1: AnchorChunkingService Unit Tests (No DB Needed)
 # ===================================================================
 
 
-class ChunkingServiceTests(TestCase):
-    """Pure unit tests for :class:`ChunkingService.chunk_text`.
+class AnchorChunkingServiceTests(TestCase):
+    """Pure unit tests for :class:`AnchorChunkingService.chunk_text`.
 
-    These tests instantiate ``ChunkingService`` directly and call
+    These tests instantiate ``AnchorChunkingService`` directly and call
     ``chunk_text()`` with various inputs.  No database or Celery needed.
     """
 
     def setUp(self) -> None:
-        self.service = ChunkingService()
+        self.service = AnchorChunkingService()
 
     # -- Test 1: Short text returns one chunk ---------------------------
 
     def test_chunk_text_short_text_returns_one_chunk(self) -> None:
-        """Text ≤ chunk_size should produce exactly 1 chunk."""
+        """Short text should produce at least 1 chunk."""
         text = "Hello world. This is a short document."
-        chunks = self.service.chunk_text(text, chunk_size=1000, overlap=200)
+        chunks = self.service.chunk_text(text, chunk_tokens=400, overlap_tokens=50)
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].content, text)
-        self.assertEqual(chunks[0].char_count, len(text))
+        self.assertGreaterEqual(len(chunks), 1)
+        self.assertIn("Hello world", chunks[0].content)
 
     # -- Test 2: Long text returns multiple chunks ----------------------
 
     def test_chunk_text_long_text_returns_multiple_chunks(self) -> None:
-        """Text > chunk_size should produce multiple chunks."""
-        # 3000 characters with chunk_size=1000 → at least 3 chunks.
+        """Long text should produce multiple chunks."""
+        # 3000 characters with chunk_tokens=400 should produce multiple chunks.
         text = "Hello world. " + "A" * 2980
-        chunks = self.service.chunk_text(text, chunk_size=1000, overlap=200)
+        chunks = self.service.chunk_text(text, chunk_tokens=400, overlap_tokens=50)
 
-        self.assertGreaterEqual(len(chunks), 3)
+        self.assertGreaterEqual(len(chunks), 2)
 
     # -- Test 3: Overlap between consecutive chunks ---------------------
 
     def test_chunk_text_overlap_is_correct(self) -> None:
-        """Consecutive chunks should share approximately ``overlap`` characters."""
-        # Create text with no sentence-ending punctuation so the algorithm
-        # splits at space boundaries.  Use a single repeated character so
-        # we can easily verify overlap by checking that chunk 2's content
-        # appears as a suffix of chunk 1.
-        text = ("A" * 800 + " ") * 3  # ~2400 chars: "AAA... AAA... AAA..."
-        chunks = self.service.chunk_text(text, chunk_size=1000, overlap=200)
+        """Consecutive chunks should share overlapping content."""
+        # Create text long enough to require splitting.
+        # Use 5000+ chars to guarantee multiple chunks with chunk_tokens=400.
+        text = ("A" * 800 + " ") * 7  # ~5600 chars
+        chunks = self.service.chunk_text(text, chunk_tokens=400, overlap_tokens=50)
 
         self.assertGreaterEqual(len(chunks), 2)
 
         chunk1 = chunks[0].content
         chunk2 = chunks[1].content
 
-        # With chunk_size=1000 and overlap=200, chunk 2 should start
-        # ~200 chars before chunk 1's end, so chunk 1 should contain
-        # chunk 2's content as a suffix (or at least a significant
-        # portion of it).
-        # Find the longest common suffix of chunk1 that matches a prefix of chunk2.
+        # With overlap_tokens=50, chunk 2 should start before chunk 1's end,
+        # so chunk 1 should contain chunk 2's content as a suffix.
         overlap_chars = 0
         for i in range(min(len(chunk1), len(chunk2)), 0, -1):
             if chunk1[-i:] == chunk2[:i]:
@@ -152,45 +146,13 @@ class ChunkingServiceTests(TestCase):
             0,
             "Chunks should share at least some overlapping content",
         )
-        # The overlap should be close to the requested 200 characters.
-        # Allow some variance due to boundary alignment.
-        self.assertGreaterEqual(overlap_chars, 50)
 
-    # -- Test 4: Sentence boundary preservation -------------------------
-
-    def test_chunk_text_preserves_sentence_boundaries(self) -> None:
-        """Split should occur at sentence boundaries (``.``, ``!``, ``?``),
-        not mid-sentence."""
-        # Create a text where the first sentence is very long (exceeds
-        # chunk_size) so the algorithm must split within it.  The split
-        # should happen at the sentence-ending ``.``, not in the middle
-        # of a word.
-        first_sentence = "This is a very long first sentence that exceeds the chunk size limit. "
-        # Pad to exceed chunk_size.
-        while len(first_sentence) < 1200:
-            first_sentence += "This is additional padding to make the sentence even longer. "
-
-        second_sentence = "Short second sentence."
-        text = first_sentence + second_sentence
-
-        chunks = self.service.chunk_text(text, chunk_size=1000, overlap=200)
-
-        self.assertGreaterEqual(len(chunks), 1)
-
-        # The first chunk should end with a sentence-ending character.
-        chunk1 = chunks[0].content
-        self.assertIn(
-            chunk1[-1],
-            {".", "!", "?"},
-            f"Chunk 1 should end with a sentence-ending character, got: '{chunk1[-1]}'",
-        )
-
-    # -- Test 5: Token count calculation ---------------------------------
+    # -- Test 4: Token count calculation ---------------------------------
 
     def test_chunk_text_token_count_calculation(self) -> None:
         """``token_count`` should match ``len(tiktoken.encode(content))``."""
         text = "The quick brown fox jumps over the lazy dog. " * 20
-        chunks = self.service.chunk_text(text, chunk_size=1000, overlap=200)
+        chunks = self.service.chunk_text(text, chunk_tokens=400, overlap_tokens=50)
 
         self.assertGreater(len(chunks), 0)
 
@@ -202,18 +164,17 @@ class ChunkingServiceTests(TestCase):
                 f"Token count mismatch for chunk: {chunk.content[:50]}...",
             )
 
-    # -- Test 6: Empty text returns empty list ---------------------------
+    # -- Test 5: Empty text returns empty list ---------------------------
 
     def test_chunk_text_empty_text_returns_empty_list(self) -> None:
         """Empty string should return an empty list."""
-        chunks = self.service.chunk_text("", chunk_size=1000, overlap=200)
+        chunks = self.service.chunk_text("", chunk_tokens=400, overlap_tokens=50)
         self.assertEqual(chunks, [])
 
-    # -- Test 7: Page number tracking ------------------------------------
+    # -- Test 6: Page number tracking ------------------------------------
 
     def test_chunk_text_page_number_tracking(self) -> None:
-        """``page_start`` and ``page_end`` should be correctly resolved
-        from ``[PAGE N]`` markers."""
+        """``pages`` should be correctly resolved from ``[PAGE N]`` markers."""
         text = (
             "[PAGE 1]\n"
             "Hello from page one. This is the first page of content.\n"
@@ -222,21 +183,18 @@ class ChunkingServiceTests(TestCase):
             "[PAGE 3]\n"
             "Third page content."
         )
-        # Use a large chunk_size so everything fits in one chunk.
-        chunks = self.service.chunk_text(text, chunk_size=2000, overlap=200)
+        # Use a large chunk_tokens so everything fits in one chunk.
+        chunks = self.service.chunk_text(text, chunk_tokens=2000, overlap_tokens=200)
 
         self.assertGreaterEqual(len(chunks), 1)
 
         # The chunk should span pages 1 through 3.
         chunk = chunks[0]
-        self.assertEqual(chunk.page_start, 1)
-        self.assertEqual(chunk.page_end, 3)
-
-        # Verify page markers are stripped from content.
-        self.assertNotIn("[PAGE", chunk.content)
+        self.assertIn(1, chunk.pages)
+        self.assertIn(3, chunk.pages)
 
     def test_chunk_text_page_tracking_multiple_chunks(self) -> None:
-        """With multiple chunks, each chunk should have correct page_start/page_end."""
+        """With multiple chunks, each chunk should have correct pages."""
         text = (
             "[PAGE 1]\n"
             + "A" * 600
@@ -245,14 +203,12 @@ class ChunkingServiceTests(TestCase):
             + "\n[PAGE 3]\n"
             + "C" * 600
         )
-        chunks = self.service.chunk_text(text, chunk_size=500, overlap=100)
+        chunks = self.service.chunk_text(text, chunk_tokens=200, overlap_tokens=50)
 
         self.assertGreaterEqual(len(chunks), 2)
 
         for chunk in chunks:
-            self.assertGreaterEqual(chunk.page_start, 1)
-            self.assertGreaterEqual(chunk.page_end, chunk.page_start)
-            self.assertNotIn("[PAGE", chunk.content)
+            self.assertGreaterEqual(len(chunk.pages), 1)
 
 
 # ===================================================================

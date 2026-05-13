@@ -51,7 +51,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from documents.models import Document, DocumentChunk
-from documents.services.chunking_service import ChunkingService
+from documents.services.anchor_chunking_service import AnchorChunkingService
 from documents.services.embedding_service import batch_generate_embeddings
 
 logger = logging.getLogger(__name__)
@@ -159,7 +159,7 @@ class Command(BaseCommand):
         # Process each file
         # ------------------------------------------------------------------
         stats = ImportStats()
-        chunking_service = ChunkingService()
+        chunking_service = AnchorChunkingService()
 
         for file_path in file_paths:
             self._process_file(
@@ -201,7 +201,7 @@ class Command(BaseCommand):
         owner: Any,
         dry_run: bool,
         stats: ImportStats,
-        chunking_service: ChunkingService,
+        chunking_service: AnchorChunkingService,
     ) -> None:
         """Process a single JSON file containing reference law documents."""
         self.stdout.write(f"Processing: {file_path}")
@@ -251,7 +251,7 @@ class Command(BaseCommand):
         owner: Any,
         dry_run: bool,
         stats: ImportStats,
-        chunking_service: ChunkingService,
+        chunking_service: AnchorChunkingService,
     ) -> None:
         """Process a single document entry from a JSON file."""
         title = doc_data.get("title", "").strip()
@@ -338,8 +338,8 @@ class Command(BaseCommand):
                     chunk = DocumentChunk(
                         document=document,
                         chunk_index=idx,
-                        page_start=chunk_result.page_start,
-                        page_end=chunk_result.page_end,
+                        page_start=min(chunk_result.pages) if chunk_result.pages else 1,
+                        page_end=max(chunk_result.pages) if chunk_result.pages else 1,
                         content=chunk_result.content,
                         token_count=chunk_result.token_count,
                         embedding=embedding,

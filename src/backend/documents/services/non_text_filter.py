@@ -32,6 +32,8 @@ import re
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
+from documents.services.anchor_chunking_service import AnchorChunk
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -215,13 +217,13 @@ class NonTextChunkFilter:
         self.detectors = detectors or [TableOfContentsDetector()]
 
     def filter_chunks(
-        self, chunks: List["ChunkResult"]
-    ) -> List["ChunkResult"]:
+        self, chunks: List[AnchorChunk]
+    ) -> List[AnchorChunk]:
         """Remove chunks detected as non-text content.
 
         Args:
-            chunks: List of ``ChunkResult`` objects from
-                :class:`~documents.services.chunking_service.ChunkingService`.
+            chunks: List of :class:`~documents.services.anchor_chunking_service.AnchorChunk`
+                objects from :class:`~documents.services.anchor_chunking_service.AnchorChunkingService`.
 
         Returns:
             Filtered list with non-text chunks removed.

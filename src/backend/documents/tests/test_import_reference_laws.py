@@ -8,7 +8,7 @@ Tests cover:
 - Error handling (invalid files, missing fields, chunking failures)
 - Embedding generation integration
 
-All external dependencies (``ChunkingService``, ``batch_generate_embeddings``)
+All external dependencies (``AnchorChunkingService``, ``batch_generate_embeddings``)
 are mocked using ``unittest.mock.patch``.
 """
 
@@ -115,7 +115,7 @@ class ImportCommandTests(TestCase):
     # -- 1. Valid JSON with hub_type -----------------------------------------
 
     @patch(
-        "documents.management.commands.import_reference_laws.ChunkingService.chunk_text"
+        "documents.management.commands.import_reference_laws.AnchorChunkingService.chunk_text"
     )
     @patch(
         "documents.management.commands.import_reference_laws.batch_generate_embeddings"
@@ -129,8 +129,7 @@ class ImportCommandTests(TestCase):
         mock_chunk_text.return_value = [
             MagicMock(
                 content="متن کامل قانون مجازات اسلامی برای تست.",
-                page_start=1,
-                page_end=1,
+                pages=[1],
                 token_count=10,
                 metadata={"law_name": "قانون مجازات اسلامی"},
             ),
@@ -229,7 +228,7 @@ class ImportCommandTests(TestCase):
     # -- 5. Document with empty title ----------------------------------------
 
     @patch(
-        "documents.management.commands.import_reference_laws.ChunkingService.chunk_text"
+        "documents.management.commands.import_reference_laws.AnchorChunkingService.chunk_text"
     )
     def test_empty_title_skipped(
         self,
@@ -239,8 +238,7 @@ class ImportCommandTests(TestCase):
         mock_chunk_text.return_value = [
             MagicMock(
                 content="Some content.",
-                page_start=1,
-                page_end=1,
+                pages=[1],
                 token_count=5,
                 metadata={},
             ),
@@ -271,7 +269,7 @@ class ImportCommandTests(TestCase):
     # -- 6. Document with empty content --------------------------------------
 
     @patch(
-        "documents.management.commands.import_reference_laws.ChunkingService.chunk_text"
+        "documents.management.commands.import_reference_laws.AnchorChunkingService.chunk_text"
     )
     def test_empty_content_skipped(
         self,
@@ -281,8 +279,7 @@ class ImportCommandTests(TestCase):
         mock_chunk_text.return_value = [
             MagicMock(
                 content="",
-                page_start=1,
-                page_end=1,
+                pages=[1],
                 token_count=0,
                 metadata={},
             ),
@@ -313,7 +310,7 @@ class ImportCommandTests(TestCase):
     # -- 7. Dry-run mode -----------------------------------------------------
 
     @patch(
-        "documents.management.commands.import_reference_laws.ChunkingService.chunk_text"
+        "documents.management.commands.import_reference_laws.AnchorChunkingService.chunk_text"
     )
     def test_dry_run_does_not_write_to_db(
         self,
@@ -323,8 +320,7 @@ class ImportCommandTests(TestCase):
         mock_chunk_text.return_value = [
             MagicMock(
                 content="Test content for dry run.",
-                page_start=1,
-                page_end=2,
+                pages=[1, 2],
                 token_count=8,
                 metadata={},
             ),
@@ -354,7 +350,7 @@ class ImportCommandTests(TestCase):
     # -- 8. Multiple documents in one file -----------------------------------
 
     @patch(
-        "documents.management.commands.import_reference_laws.ChunkingService.chunk_text"
+        "documents.management.commands.import_reference_laws.AnchorChunkingService.chunk_text"
     )
     @patch(
         "documents.management.commands.import_reference_laws.batch_generate_embeddings"
@@ -368,8 +364,7 @@ class ImportCommandTests(TestCase):
         mock_chunk_text.return_value = [
             MagicMock(
                 content="Document content.",
-                page_start=1,
-                page_end=1,
+                pages=[1],
                 token_count=5,
                 metadata={},
             ),
@@ -405,7 +400,7 @@ class ImportCommandTests(TestCase):
     # -- 9. All valid hub types ----------------------------------------------
 
     @patch(
-        "documents.management.commands.import_reference_laws.ChunkingService.chunk_text"
+        "documents.management.commands.import_reference_laws.AnchorChunkingService.chunk_text"
     )
     @patch(
         "documents.management.commands.import_reference_laws.batch_generate_embeddings"
@@ -419,8 +414,7 @@ class ImportCommandTests(TestCase):
         mock_chunk_text.return_value = [
             MagicMock(
                 content="Hub test content.",
-                page_start=1,
-                page_end=1,
+                pages=[1],
                 token_count=5,
                 metadata={},
             ),
@@ -457,7 +451,7 @@ class ImportCommandTests(TestCase):
     # -- 11. Chunking failure -------------------------------------------------
 
     @patch(
-        "documents.management.commands.import_reference_laws.ChunkingService.chunk_text"
+        "documents.management.commands.import_reference_laws.AnchorChunkingService.chunk_text"
     )
     def test_chunking_failure_reported(
         self,
@@ -484,7 +478,7 @@ class ImportCommandTests(TestCase):
     # -- 12. Embedding failure -------------------------------------------------
 
     @patch(
-        "documents.management.commands.import_reference_laws.ChunkingService.chunk_text"
+        "documents.management.commands.import_reference_laws.AnchorChunkingService.chunk_text"
     )
     @patch(
         "documents.management.commands.import_reference_laws.batch_generate_embeddings"
@@ -498,8 +492,7 @@ class ImportCommandTests(TestCase):
         mock_chunk_text.return_value = [
             MagicMock(
                 content="Test content.",
-                page_start=1,
-                page_end=1,
+                pages=[1],
                 token_count=5,
                 metadata={},
             ),
@@ -524,7 +517,7 @@ class ImportCommandTests(TestCase):
     # -- 13. Hub_type stored in chunk metadata --------------------------------
 
     @patch(
-        "documents.management.commands.import_reference_laws.ChunkingService.chunk_text"
+        "documents.management.commands.import_reference_laws.AnchorChunkingService.chunk_text"
     )
     @patch(
         "documents.management.commands.import_reference_laws.batch_generate_embeddings"
@@ -538,8 +531,7 @@ class ImportCommandTests(TestCase):
         mock_chunk_text.return_value = [
             MagicMock(
                 content="Test content.",
-                page_start=1,
-                page_end=1,
+                pages=[1],
                 token_count=5,
                 metadata={"section": "intro"},
             ),
@@ -567,7 +559,7 @@ class ImportCommandTests(TestCase):
     # -- 14. User-id parameter ------------------------------------------------
 
     @patch(
-        "documents.management.commands.import_reference_laws.ChunkingService.chunk_text"
+        "documents.management.commands.import_reference_laws.AnchorChunkingService.chunk_text"
     )
     @patch(
         "documents.management.commands.import_reference_laws.batch_generate_embeddings"
@@ -581,8 +573,7 @@ class ImportCommandTests(TestCase):
         mock_chunk_text.return_value = [
             MagicMock(
                 content="Test content.",
-                page_start=1,
-                page_end=1,
+                pages=[1],
                 token_count=5,
                 metadata={},
             ),

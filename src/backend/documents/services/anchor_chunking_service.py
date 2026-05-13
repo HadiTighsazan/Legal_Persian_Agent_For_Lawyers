@@ -460,11 +460,6 @@ class AnchorChunkingService:
         # containing page is always included.
         pages.add(active_page)
 
-        # Also check if end position crosses a page boundary
-        for pos, page_num in page_map:
-            if start < pos < end:
-                pages.add(page_num)
-
         return sorted(pages)
 
     # ------------------------------------------------------------------

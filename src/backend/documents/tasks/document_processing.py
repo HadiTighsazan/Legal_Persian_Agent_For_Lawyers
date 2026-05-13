@@ -378,6 +378,10 @@ def extract_text_from_pdf(self, document_id: str) -> str:
     document.status = "processing"
     document.save(update_fields=["processing_status", "status"])
 
+    # Initialize auto_fallback before any conditional branches to prevent
+    # NameError in exception fallback paths.
+    auto_fallback = True
+
     try:
         # Resolve the PDF content using the storage backend.
         storage = get_storage_backend()
@@ -414,234 +418,237 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         fail_processing_task(processing_task, document, error_msg, logger)
         return ""
 
-    num_pages = pdf_document.page_count
-    if num_pages == 0:
-        logger.info(
-            "extract_text_from_pdf: Document %s has 0 pages — returning empty string",
-            document_id,
-        )
-        pdf_document.close()
-        document.extracted_text_length = 0
-        document.save(update_fields=["extracted_text_length"])
-        processing_task.status = "completed"
-        processing_task.completed_at = timezone.now()
-        processing_task.save(update_fields=["status", "completed_at"])
-        return ""
-
-    # ------------------------------------------------------------------
-    # Scanned PDF detection — route to EasyOCR pipeline
-    # ------------------------------------------------------------------
-    # Before attempting PyMuPDF extraction, check if the PDF is scanned
-    # (image-based with no selectable text). If so, skip directly to the
-    # EasyOCR pipeline with layout-aware assembly.
-    easyocr_enabled = getattr(settings, "OCR_EASYOCR_ENABLED", True)
-
-    if easyocr_enabled:
-        try:
-            # Save PDF bytes to a temp file for is_scanned_pdf check
-            import tempfile
-
-            pdf_bytes_for_check = (
-                pdf_content.read()
-                if hasattr(pdf_content, "read")
-                else pdf_content
+    try:
+        num_pages = pdf_document.page_count
+        if num_pages == 0:
+            logger.info(
+                "extract_text_from_pdf: Document %s has 0 pages — returning empty string",
+                document_id,
             )
-            pdf_content.seek(0) if hasattr(pdf_content, "seek") else None
+            document.extracted_text_length = 0
+            document.save(update_fields=["extracted_text_length"])
+            processing_task.status = "completed"
+            processing_task.completed_at = timezone.now()
+            processing_task.save(update_fields=["status", "completed_at"])
+            return ""
 
-            with tempfile.NamedTemporaryFile(
-                suffix=".pdf", delete=False
-            ) as tmp:
-                tmp.write(pdf_bytes_for_check)
-                tmp_path = tmp.name
+        # ------------------------------------------------------------------
+        # Read PDF bytes early — before any conditional branches — to prevent
+        # stream consumption issues. Once read, use the saved bytes consistently
+        # throughout the function instead of calling pdf_content.read() again.
+        # ------------------------------------------------------------------
+        pdf_bytes = (
+            pdf_content.read()
+            if hasattr(pdf_content, "read")
+            else pdf_content
+        )
 
+        # ------------------------------------------------------------------
+        # Scanned PDF detection — route to EasyOCR pipeline
+        # ------------------------------------------------------------------
+        # Before attempting PyMuPDF extraction, check if the PDF is scanned
+        # (image-based with no selectable text). If so, skip directly to the
+        # EasyOCR pipeline with layout-aware assembly.
+        easyocr_enabled = getattr(settings, "OCR_EASYOCR_ENABLED", True)
+
+        if easyocr_enabled:
             try:
-                scanned = is_scanned_pdf(tmp_path)
-            finally:
-                os.unlink(tmp_path)
+                with tempfile.NamedTemporaryFile(
+                    suffix=".pdf", delete=False
+                ) as tmp:
+                    tmp.write(pdf_bytes)
+                    tmp_path = tmp.name
 
-            if scanned:
-                logger.info(
-                    "Document %s is scanned — using EasyOCR pipeline",
-                    document_id,
-                )
                 try:
-                    from documents.services.ocr_service import (
-                        OcrService,
-                    )
+                    scanned = is_scanned_pdf(tmp_path)
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        logger.warning(
+                            "Failed to clean up temp file %s", tmp_path,
+                        )
 
-                    ocr = OcrService()
-                    extracted_text, _ = ocr.extract_text(
-                        pdf_bytes_for_check
-                    )
-                    extraction_method = "easyocr"
-
-                    # Close the PyMuPDF document (opened earlier) since
-                    # we're not using it
-                    pdf_document.close()
-
-                    # Skip directly to normalization (skip PyMuPDF chain)
-                    pdf_bytes = pdf_bytes_for_check
-                    auto_fallback = False  # No need for fallback chain
-
+                if scanned:
                     logger.info(
-                        "EasyOCR extraction complete for document %s "
-                        "(%d chars)",
+                        "Document %s is scanned — using EasyOCR pipeline",
                         document_id,
-                        len(extracted_text),
                     )
-                except Exception as e:
-                    logger.error(
-                        "EasyOCR failed for document %s: %s — "
-                        "falling back to standard extraction chain",
-                        document_id,
-                        e,
-                    )
-                    # Fall through to standard extraction chain
+                    try:
+                        from documents.services.ocr_service import (
+                            OcrService,
+                        )
+
+                        ocr = OcrService()
+                        extracted_text, _ = ocr.extract_text(
+                            pdf_bytes
+                        )
+                        extraction_method = "easyocr"
+
+                        # Skip directly to normalization (skip PyMuPDF chain)
+                        auto_fallback = False  # No need for fallback chain
+
+                        logger.info(
+                            "EasyOCR extraction complete for document %s "
+                            "(%d chars)",
+                            document_id,
+                            len(extracted_text),
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "EasyOCR failed for document %s: %s — "
+                            "falling back to standard extraction chain",
+                            document_id,
+                            e,
+                        )
+                        # Fall through to standard extraction chain
+                        pdf_document_for_extraction = fitz.open(
+                            stream=pdf_bytes, filetype="pdf"
+                        )
+                        extracted_text = _extract_with_pymupdf_rtl(
+                            pdf_document_for_extraction
+                        )
+                        pdf_document_for_extraction.close()
+                        extraction_method = "pymupdf"
+                else:
+                    # Not scanned — use standard PyMuPDF extraction
                     pdf_document_for_extraction = fitz.open(
-                        stream=pdf_bytes_for_check, filetype="pdf"
+                        stream=pdf_bytes, filetype="pdf"
                     )
                     extracted_text = _extract_with_pymupdf_rtl(
                         pdf_document_for_extraction
                     )
                     pdf_document_for_extraction.close()
                     extraction_method = "pymupdf"
-                    pdf_bytes = pdf_bytes_for_check
-        except Exception as e:
-            logger.warning(
-                "Scanned PDF detection failed for document %s: %s — "
-                "falling back to standard extraction",
-                document_id,
-                e,
-            )
-            # Fall through to standard extraction
-            pdf_bytes = (
-                pdf_content.read()
-                if hasattr(pdf_content, "read")
-                else pdf_content
-            )
+            except Exception as e:
+                logger.warning(
+                    "Scanned PDF detection failed for document %s: %s — "
+                    "falling back to standard extraction",
+                    document_id,
+                    e,
+                )
+                # Fall through to standard extraction
+                pdf_document_for_extraction = fitz.open(
+                    stream=pdf_bytes, filetype="pdf"
+                )
+                extracted_text = _extract_with_pymupdf_rtl(
+                    pdf_document_for_extraction
+                )
+                pdf_document_for_extraction.close()
+                extraction_method = "pymupdf"
+        else:
+            # EasyOCR disabled — use standard extraction chain
             pdf_document_for_extraction = fitz.open(
                 stream=pdf_bytes, filetype="pdf"
             )
+
+            # Stage 1: Primary extraction with PyMuPDF + RTL flags
             extracted_text = _extract_with_pymupdf_rtl(
                 pdf_document_for_extraction
             )
             pdf_document_for_extraction.close()
+
+            auto_fallback = getattr(settings, "EXTRACTION_AUTO_FALLBACK", True)
             extraction_method = "pymupdf"
-    else:
-        # EasyOCR disabled — use standard extraction chain
-        pdf_bytes = (
-            pdf_content.read()
-            if hasattr(pdf_content, "read")
-            else pdf_content
-        )
-        pdf_document_for_extraction = fitz.open(
-            stream=pdf_bytes, filetype="pdf"
-        )
 
-        # Stage 1: Primary extraction with PyMuPDF + RTL flags
-        extracted_text = _extract_with_pymupdf_rtl(
-            pdf_document_for_extraction
-        )
-        pdf_document_for_extraction.close()
-        pdf_document.close()
+        # ------------------------------------------------------------------
+        # Extraction strategy with auto-fallback (for typed PDFs)
+        # ------------------------------------------------------------------
+        # auto_fallback is already initialized at function start, so it's
+        # always defined even in exception fallback paths.
 
-        auto_fallback = getattr(settings, "EXTRACTION_AUTO_FALLBACK", True)
-        extraction_method = "pymupdf"
+        # Helper: check both garbled-text heuristics (isolated chars + shattered words)
+        def _is_garbled(t: str) -> bool:
+            return _is_persian_text_garbled(t) or _has_shattered_persian_words(t)
 
-    # ------------------------------------------------------------------
-    # Extraction strategy with auto-fallback (for typed PDFs)
-    # ------------------------------------------------------------------
-    if auto_fallback is None:
-        auto_fallback = getattr(settings, "EXTRACTION_AUTO_FALLBACK", True)
-
-    # Helper: check both garbled-text heuristics (isolated chars + shattered words)
-    def _is_garbled(t: str) -> bool:
-        return _is_persian_text_garbled(t) or _has_shattered_persian_words(t)
-
-    # Stage 2: Check quality and fall back to pdfplumber if garbled
-    if auto_fallback and _is_garbled(extracted_text):
-        logger.warning(
-            "extract_text_from_pdf: PyMuPDF output garbled for Persian text "
-            "(document %s) — trying pdfplumber...",
-            document_id,
-        )
-        try:
-            extracted_text = _extract_with_pdfplumber(pdf_bytes)
-            extraction_method = "pdfplumber"
-        except Exception as e:
+        # Stage 2: Check quality and fall back to pdfplumber if garbled
+        if auto_fallback and _is_garbled(extracted_text):
             logger.warning(
-                "extract_text_from_pdf: pdfplumber extraction failed for "
-                "document %s: %s",
-                document_id,
-                e,
-            )
-
-        # Stage 3: Check again and fall back to Tesseract OCR
-        if _is_garbled(extracted_text):
-            logger.warning(
-                "extract_text_from_pdf: pdfplumber also garbled for document "
-                "%s — falling back to Tesseract OCR...",
+                "extract_text_from_pdf: PyMuPDF output garbled for Persian text "
+                "(document %s) — trying pdfplumber...",
                 document_id,
             )
             try:
-                extracted_text = _extract_with_tesseract(pdf_bytes)
-                extraction_method = "tesseract"
+                extracted_text = _extract_with_pdfplumber(pdf_bytes)
+                extraction_method = "pdfplumber"
             except Exception as e:
                 logger.warning(
-                    "extract_text_from_pdf: Tesseract OCR also failed for "
+                    "extract_text_from_pdf: pdfplumber extraction failed for "
                     "document %s: %s",
                     document_id,
                     e,
                 )
 
-    # ------------------------------------------------------------------
-    # Apply Persian normalization
-    # ------------------------------------------------------------------
-    persian_normalization_enabled = getattr(
-        settings, "PERSIAN_NORMALIZATION_ENABLED", True
-    )
-    if persian_normalization_enabled:
-        try:
-            normalizer = PersianNormalizer()
-            extracted_text = normalizer.normalize(extracted_text)
-        except Exception as e:
-            logger.warning(
-                "extract_text_from_pdf: Persian normalization failed for "
-                "document %s: %s — continuing with unnormalized text",
-                document_id,
-                e,
-            )
+            # Stage 3: Check again and fall back to Tesseract OCR
+            if _is_garbled(extracted_text):
+                logger.warning(
+                    "extract_text_from_pdf: pdfplumber also garbled for document "
+                    "%s — falling back to Tesseract OCR...",
+                    document_id,
+                )
+                try:
+                    extracted_text = _extract_with_tesseract(pdf_bytes)
+                    extraction_method = "tesseract"
+                except Exception as e:
+                    logger.warning(
+                        "extract_text_from_pdf: Tesseract OCR also failed for "
+                        "document %s: %s",
+                        document_id,
+                        e,
+                    )
 
-    # Compute garbled score on the final extracted text.
-    garbled_score = _compute_garbled_ratio(extracted_text)
+        # ------------------------------------------------------------------
+        # Apply Persian normalization
+        # ------------------------------------------------------------------
+        persian_normalization_enabled = getattr(
+            settings, "PERSIAN_NORMALIZATION_ENABLED", True
+        )
+        if persian_normalization_enabled:
+            try:
+                normalizer = PersianNormalizer()
+                extracted_text = normalizer.normalize(extracted_text)
+            except Exception as e:
+                logger.warning(
+                    "extract_text_from_pdf: Persian normalization failed for "
+                    "document %s: %s — continuing with unnormalized text",
+                    document_id,
+                    e,
+                )
 
-    # Update document metadata including extraction monitoring fields.
-    document.extracted_text = extracted_text
-    document.extraction_method = extraction_method
-    document.garbled_score = garbled_score
-    document.extracted_text_length = len(extracted_text)
-    document.total_pages = num_pages
-    document.save(
-        update_fields=[
-            "extracted_text",
-            "extraction_method",
-            "garbled_score",
-            "extracted_text_length",
-            "total_pages",
-        ]
-    )
+        # Compute garbled score on the final extracted text.
+        garbled_score = _compute_garbled_ratio(extracted_text)
 
-    # Mark the ProcessingTask as completed.
-    processing_task.status = "completed"
-    processing_task.completed_at = timezone.now()
-    processing_task.save(update_fields=["status", "completed_at"])
+        # Update document metadata including extraction monitoring fields.
+        document.extracted_text = extracted_text
+        document.extraction_method = extraction_method
+        document.garbled_score = garbled_score
+        document.extracted_text_length = len(extracted_text)
+        document.total_pages = num_pages
+        document.save(
+            update_fields=[
+                "extracted_text",
+                "extraction_method",
+                "garbled_score",
+                "extracted_text_length",
+                "total_pages",
+            ]
+        )
 
-    log_milestone(
-        logger, document_id, "Extraction complete",
-        pages=num_pages, chars=len(extracted_text),
-    )
+        # Mark the ProcessingTask as completed.
+        processing_task.status = "completed"
+        processing_task.completed_at = timezone.now()
+        processing_task.save(update_fields=["status", "completed_at"])
 
-    return extracted_text
+        log_milestone(
+            logger, document_id, "Extraction complete",
+            pages=num_pages, chars=len(extracted_text),
+        )
+
+        return extracted_text
+    finally:
+        # Ensure pdf_document is always closed, even if an exception occurs
+        # in any of the extraction branches above. This prevents resource leaks.
+        pdf_document.close()
 
 
 # ---------------------------------------------------------------------------
@@ -742,7 +749,7 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
             if filtered_count > 0:
                 logger.info(
                     "Non-text chunk filter removed %d chunk(s) "
-                    "(kept %d) for document %d",
+                    "(kept %d) for document %s",
                     filtered_count,
                     len(chunk_results),
                     document_id,
