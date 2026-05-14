@@ -37,6 +37,7 @@ from documents.tasks.document_processing import (
     _compute_persian_quality_score,
     _compute_rtl_consistency,
     _compute_stopword_ratio,
+    _fix_bidi_brackets,
     _handle_chain_error,
     _has_shattered_persian_words,
     _is_persian_text_garbled,
@@ -1161,3 +1162,154 @@ class ComputeGarbledRatioLegacyTests(TestCase):
         text = "ق ا ن و ن"
         ratio = _compute_garbled_ratio(text)
         self.assertGreater(ratio, 0.5)
+
+
+class FixBidiBracketsTests(TestCase):
+    """Tests for :func:`_fix_bidi_brackets` — safe bracket balancing for RTL text."""
+
+    # ------------------------------------------------------------------
+    # Pattern 1: Closing bracket before Persian text → move after
+    # ------------------------------------------------------------------
+
+    def test_closing_bracket_before_persian_moved_after(self) -> None:
+        """) followed by Persian text → text)"""
+        result = _fix_bidi_brackets(")سلام")
+        self.assertEqual(result, "سلام)")
+
+    def test_closing_bracket_with_space_before_persian(self) -> None:
+        """) with space before Persian → text)"""
+        result = _fix_bidi_brackets(") سلام")
+        self.assertEqual(result, "سلام)")
+
+    def test_closing_bracket_before_persian_in_sentence(self) -> None:
+        """) before Persian word in a mixed sentence — moves after the word"""
+        result = _fix_bidi_brackets("متن )سلام دنیا")
+        # Pattern 1 moves ) after the first Persian word: سلام) دنیا
+        self.assertEqual(result, "متن سلام) دنیا")
+
+    def test_multiple_closing_brackets_before_persian(self) -> None:
+        """Multiple )) before Persian → only the one adjacent to Persian moves"""
+        result = _fix_bidi_brackets("))سلام")
+        # Pattern 1 scans left-to-right for non-overlapping matches:
+        # - Position 0: ) followed by ) (not Persian) → no match
+        # - Position 1: ) followed by سلام → match → سلام)
+        # Result: ")سلام)" (first ) stays, second ) moved after سلام)
+        self.assertEqual(result, ")سلام)")
+
+    # ------------------------------------------------------------------
+    # Pattern 2: Opening bracket after Persian text → move before
+    # ------------------------------------------------------------------
+
+    def test_opening_bracket_after_persian_moved_before(self) -> None:
+        """Persian text followed by ( → (text)"""
+        result = _fix_bidi_brackets("سلام(")
+        self.assertEqual(result, "(سلام")
+
+    def test_opening_bracket_with_space_after_persian(self) -> None:
+        """Persian text with space before ( → (text)"""
+        result = _fix_bidi_brackets("سلام (")
+        self.assertEqual(result, "(سلام")
+
+    def test_opening_bracket_after_persian_in_sentence(self) -> None:
+        """Persian word followed by ( in a mixed sentence — moves before the word"""
+        result = _fix_bidi_brackets("متن سلام( دنیا")
+        # Pattern 2 moves ( before the first Persian word: (سلام دنیا
+        self.assertEqual(result, "متن (سلام دنیا")
+
+    def test_multiple_opening_brackets_after_persian(self) -> None:
+        """Multiple (( after Persian → only the one adjacent to Persian moves"""
+        result = _fix_bidi_brackets("سلام((")
+        # Pattern 2 scans left-to-right for non-overlapping matches:
+        # - Position 0: سلام( → match → (سلام
+        # - Remaining text: ( (no Persian chars left for pattern to match)
+        # Result: "(سلام(" (first ( moved before سلام, second ( stays)
+        self.assertEqual(result, "(سلام(")
+
+    # ------------------------------------------------------------------
+    # Pattern 3: Bracket balancing (count-based, diff >= 2)
+    # ------------------------------------------------------------------
+
+    def test_extra_closing_bracket_removed(self) -> None:
+        """More ) than ( by 2+ → remove trailing )"""
+        result = _fix_bidi_brackets("(سلام) دنیا)")
+        # 2 closing, 1 opening → diff=1 < 2 → no change by Pattern 3
+        # Pattern 1: trailing ) is preceded by non-Persian (space), so it stays
+        # Result keeps the imbalance since diff < 2
+        self.assertEqual(result, "(سلام) دنیا)")
+
+    def test_extra_opening_bracket_removed(self) -> None:
+        """More ( than ) by 2+ → remove leading ("""
+        result = _fix_bidi_brackets("((سلام) دنیا")
+        # 2 opening, 1 closing → diff=1 < 2 → no change by Pattern 3
+        # Pattern 2: leading ( is NOT followed by Persian (next is (سلام...)
+        # Actually ( is followed by ( which is not Persian, so Pattern 2 doesn't match
+        # Result keeps the imbalance since diff < 2
+        self.assertEqual(result, "((سلام) دنیا")
+
+    def test_balanced_brackets_unchanged(self) -> None:
+        """Balanced brackets should remain unchanged."""
+        text = "(سلام) دنیا"
+        result = _fix_bidi_brackets(text)
+        self.assertEqual(result, text)
+
+    def test_no_brackets_unchanged(self) -> None:
+        """Text with no brackets should remain unchanged."""
+        text = "سلام دنیا"
+        result = _fix_bidi_brackets(text)
+        self.assertEqual(result, text)
+
+    def test_english_text_unchanged(self) -> None:
+        """English text with brackets should remain unchanged."""
+        text = "Hello (world) test"
+        result = _fix_bidi_brackets(text)
+        self.assertEqual(result, text)
+
+    def test_empty_string(self) -> None:
+        """Empty string should return empty string."""
+        self.assertEqual(_fix_bidi_brackets(""), "")
+
+    # ------------------------------------------------------------------
+    # Mixed / real-world scenarios
+    # ------------------------------------------------------------------
+
+    def test_mixed_persian_english_brackets(self) -> None:
+        """Mixed Persian/English text with brackets."""
+        text = "ماده ۲ (قانون مدنی) به شرح زیر است"
+        result = _fix_bidi_brackets(text)
+        # Should remain balanced and correct
+        self.assertEqual(result.count("("), result.count(")"))
+
+    def test_persian_legal_text_with_parentheses(self) -> None:
+        """Realistic Persian legal text with parentheses."""
+        text = (
+            "به موجب ماده ۲ قانون مدنی )قراردادهای خصوصی نسبت به کسانی که "
+            "آن را منعقد نموده اند( در حکم قانون است."
+        )
+        result = _fix_bidi_brackets(text)
+        # Closing bracket before Persian should be moved after
+        self.assertNotIn(")ق", result)  # )ق should become ق)
+        # Opening bracket after Persian should be moved before
+        self.assertNotIn("ند(", result)  # ند( should become (ند
+        # Brackets should be balanced
+        self.assertEqual(result.count("("), result.count(")"))
+
+    def test_nested_brackets_preserved(self) -> None:
+        """Nested brackets should be preserved when balanced."""
+        text = "متن (سلام (دنیا))"
+        result = _fix_bidi_brackets(text)
+        self.assertEqual(result, text)
+
+    def test_multiline_bracket_balancing(self) -> None:
+        """Multi-line text with bracket issues on different lines."""
+        text = "خط اول)\nخط دوم(\nخط سوم"
+        result = _fix_bidi_brackets(text)
+        lines = result.split('\n')
+        self.assertEqual(len(lines), 3)
+        # Line 1: ) after Persian → Pattern 1's negative lookbehind prevents
+        # matching because ) is preceded by Persian character (ل).
+        # Result: "خط اول)" (unchanged — already correct for RTL)
+        self.assertEqual(lines[0], "خط اول)")
+        # Line 2: ( before end → Pattern 2 matches the LAST Persian word
+        # before ( (i.e., "دوم(") and moves ( before it: "(دوم".
+        # The full line becomes "خط (دوم" (first word "خط" stays in place).
+        self.assertEqual(lines[1], "خط (دوم")

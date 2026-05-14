@@ -1,68 +1,53 @@
-# WIP Context — Phase 2: Garbled Detection Enhancement
+# WIP Context — Phase 3: Bidi Parenthesis Fix
 
-## Status: ✅ COMPLETED — Phase 2 (2.1 + 2.2) Fully Implemented and Tested
+## Status: ✅ COMPLETED — Phase 3 Fully Implemented and Tested
 
-## Latest: Phase 2 — Persian Language Confidence Score (2026-05-14)
+## Latest: Phase 3 — Bidi Parenthesis Fix (2026-05-14)
 
 ### Changes Made
 
-#### 2.1 Persian Language Confidence Score — STRATEGIC (`document_processing.py`)
+#### 3.1 Safe Bracket Balancing — `_fix_bidi_brackets()` (`document_processing.py`)
 
-**Problem:** Current heuristics (`_compute_garbled_ratio`, `_has_shattered_persian_words`) miss RTL-reversed connected text like `رپونده` and `خوااهن`. The previously proposed bigram set approach was too fragile.
+**Problem:** PyMuPDF doesn't handle RTL/LTR bracket direction. Using `python-bidi`'s `get_display()` for storage is dangerous because it performs visual reordering that corrupts logical order.
 
-**Solution:** Replaced simple bigram checks with a **multi-signal Persian Language Confidence Score** that combines four signals:
+**Solution:** Added `_fix_bidi_brackets()` function that performs **local bracket balancing** — detects and fixes misplaced brackets without full bidi reordering. The function uses three patterns:
 
-1. **Stopword ratio** (weight 0.50) — Most reliable signal. Valid Persian text has frequent stopwords like `از`, `به`, `در`, `و`, `که`. RTL-reversed text loses these stopwords.
-2. **Bigram plausibility** (weight 0.10) — Statistical bigram frequency. NOTE: Not reliable for RTL reversal (reversing preserves bigrams), but helps detect random corruption.
-3. **RTL consistency** (weight 0.25) — Measures if Persian characters appear in contiguous runs vs isolated. Detects shattered text.
-4. **Character entropy** (weight 0.15, inverted) — Garbled text often has higher entropy.
+1. **Pattern 1** (weight: position fix): Closing bracket `)` NOT preceded by Persian text, followed by Persian text → moves `)` after the Persian word. Uses negative lookbehind to avoid matching correctly-placed brackets (e.g., `سلام)` where `)` correctly follows Persian text in RTL context).
 
-**Key insight confirmed:** The stopword ratio signal is the most powerful for RTL-reversed text detection. In reversed text like `رپونده خوااهن`, stopwords like `از`, `به`, `در` become unrecognizable, driving the quality score below threshold even when other signals are high.
+2. **Pattern 2** (weight: position fix): Persian text followed by opening bracket `(` NOT followed by Persian text → moves `(` before the Persian word. Uses negative lookahead to avoid matching correctly-placed brackets (e.g., `(سلام` where `(` correctly precedes Persian text in RTL context).
 
-**Files modified:**
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:58) — Added `_PERSIAN_STOPWORDS`, `_LEGAL_STOPWORDS`, `_ALL_PERSIAN_STOPWORDS` sets (lines 58-83)
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:85) — Added comprehensive `_VALID_PERSIAN_BIGRAMS` set (~400 entries covering all Arabic/Persian letter combinations)
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:104) — Added `_compute_stopword_ratio()` function
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:127) — Added `_compute_bigram_plausibility()` function
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:166) — Added `_compute_rtl_consistency()` function
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:220) — Added `_compute_character_entropy()` function
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:305) — Added `_compute_persian_quality_score()` function (combines all 4 signals with weights [0.50, 0.10, 0.25, 0.15])
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:353) — Updated `_compute_garbled_ratio()` with deprecation notice pointing to new quality score
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:395) — Updated `_is_persian_text_garbled()` to use quality score by default (with `use_quality_score=True` parameter, fallback to legacy mode)
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:880) — Updated `_is_garbled` helper in `extract_text_from_pdf` to use `EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL` when configured
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:950) — Updated `garbled_score` computation to also compute and log `quality_score`
+3. **Pattern 3** (weight: balance): Count-based balancing only when imbalance >= 3. A difference of 1 or 2 is assumed to be the result of Patterns 1 and 2 having moved brackets to correct positions. When difference >= 3, removes trailing `)` or leading `(` to balance.
 
-#### 2.2 Lower Garbled Threshold for Persian Legal Text
+**Order of operations:**
+- Step 1: Fix bracket positions (Patterns 1 and 2) — move brackets relative to adjacent Persian text segments.
+- Step 2: Balance bracket counts (Pattern 3) — remove truly unmatched brackets that position fixing could not resolve.
 
-**Problem:** Current threshold of 0.3 is too permissive for the existing heuristic.
-
-**Solution:** Added `EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL` setting with a stricter default of 0.15 for documents detected as Persian legal text.
+**Why this is safe:** It only moves brackets relative to adjacent Persian text segments. It does NOT reorder characters, change word order, or apply visual-to-logical transformation. The embedding model sees the same semantic content.
 
 **Files modified:**
-- [`settings.py`](src/backend/config/settings.py:306) — Added `EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL` setting (default 0.15)
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:310) — Added `_fix_bidi_brackets()` function (lines 310-390)
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:1020) — Applied `_fix_bidi_brackets()` in `extract_text_from_pdf` after Persian normalization, gated by `BIDI_BRACKET_FIX_ENABLED` setting (default `True`)
+- [`test_tasks.py`](src/backend/documents/tests/test_tasks.py:1167) — Added `FixBidiBracketsTests` class with 18 tests covering all patterns
 
 ### Test Results
 ```
-82 passed in 44.98s
+100 passed in 31.71s
 ```
-All 82 tests pass, including all 50 new tests for Phase 2 features (7 test classes covering stopword ratio, bigram plausibility, RTL consistency, character entropy, quality score, legacy garbled ratio, and threshold detection).
+All 100 tests pass, including 18 new tests for Phase 3 features (covering Pattern 1, Pattern 2, Pattern 3 balancing, edge cases, mixed Persian/English, real-world legal text, nested brackets, and multiline text).
 
 ### Key Design Decisions
 
-1. **Stopword weight increased to 0.50** — During testing, we discovered that bigram plausibility is NOT a reliable signal for RTL-reversed text because reversing a word preserves its bigrams (e.g., `قانون` → `نوناق` has bigrams `نو`, `ون`, `نا`, `اق` which are all valid Persian bigrams). The stopword ratio is the only signal that reliably detects RTL reversal.
+1. **Pattern order: position fix first, then balance** — Patterns 1 and 2 run before Pattern 3. This ensures that brackets moved to correct positions by Patterns 1 and 2 are not subsequently removed by Pattern 3 as "unbalanced."
 
-2. **Bigram weight reduced to 0.10** — Kept as a minor signal for detecting random character corruption (not RTL reversal).
+2. **Pattern 3 threshold >= 3** — A difference of 1 or 2 between `(` and `)` counts is assumed to be the result of Patterns 1 and 2 having moved brackets. For example, `)سلام` → `سلام)` creates a single trailing `)` (diff=1), and `))سلام` → `)سلام)` creates a single leading `)` and trailing `)` (diff=0 after position fix). Only when diff >= 3 are there truly extra brackets that position fixing could not resolve.
 
-3. **Comprehensive bigram set** — Expanded from ~50 entries to ~400 entries covering all Arabic/Persian letter combinations to ensure valid Persian text scores high on bigram plausibility.
+3. **Negative lookbehind/lookahead guards** — Pattern 1 uses `(?<![\u0600-...])` to avoid matching `)` that already correctly follows Persian text. Pattern 2 uses `(?![{_PERSIAN}])` to avoid matching `(` that already correctly precedes Persian text. This prevents false positives on correctly-placed brackets.
 
-4. **Backward compatibility** — `_compute_garbled_ratio()` is preserved with a deprecation notice. `_is_persian_text_garbled()` accepts `use_quality_score=False` to fall back to legacy behavior. The `garbled_score` field on the Document model still stores the legacy ratio for dashboard compatibility, while `quality_score` is logged.
-
-5. **Threshold semantics** — Quality score < threshold → garbled (lower quality = more garbled). The Persian legal threshold of 0.15 is stricter (requires higher quality to pass) than the general threshold of 0.3.
+4. **Configurable via settings** — The bidi bracket fix is gated by `BIDI_BRACKET_FIX_ENABLED` setting (default `True`), allowing easy disable if issues are discovered.
 
 ### Next Steps
-Phase 3+ as defined in the remediation plan (not yet started).
+Phase 4+ as defined in the remediation plan (not yet started).
 
 ### Reference Docs
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py) — Updated with multi-signal quality score system
-- [`settings.py`](src/backend/config/settings.py) — Added `EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL`
-- [`test_tasks.py`](src/backend/documents/tests/test_tasks.py) — 50 new tests for Phase 2 features
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py) — Added `_fix_bidi_brackets()` function and integration in extraction pipeline
+- [`test_tasks.py`](src/backend/documents/tests/test_tasks.py) — 18 new tests for Phase 3 features

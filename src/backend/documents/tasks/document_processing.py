@@ -302,6 +302,94 @@ def _compute_character_entropy(text: str) -> float:
     return entropy
 
 
+# ---------------------------------------------------------------------------
+# Bidi Parenthesis Fix — safe bracket balancing (NOT get_display())
+# ---------------------------------------------------------------------------
+
+
+def _fix_bidi_brackets(text: str) -> str:
+    """Fix misplaced brackets in RTL text without changing logical order.
+
+    Only performs LOCAL repairs:
+    1. Closing bracket before Persian text → move after
+    2. Opening bracket after Persian text → move before
+    3. Does NOT attempt full bidi reordering (safe for storage)
+
+    The order of operations is:
+    a) Fix bracket positions (Patterns 1 and 2) — move brackets relative
+       to adjacent Persian text segments.
+    b) Balance bracket counts (Pattern 3) — remove truly unmatched
+       brackets that Patterns 1 and 2 could not fix (difference >= 3).
+
+    Args:
+        text: The extracted text to repair.
+
+    Returns:
+        Text with brackets moved to correct positions relative to
+        adjacent Persian text segments.
+    """
+    import re  # noqa: PLC0415
+
+    _PERSIAN = '\\u0600-\\u06FF\\uFB8A\\uFE8D\\uFEE3\\uFEFB\\uFEFC'
+
+    # ------------------------------------------------------------------
+    # Step 1: Fix bracket positions (Patterns 1 and 2)
+    # ------------------------------------------------------------------
+
+    # Pattern 1: ) NOT preceded by Persian text, followed by Persian → text)
+    # Uses negative lookbehind to avoid matching correctly-placed brackets
+    # (e.g., سلام) where ) correctly follows Persian text in RTL context).
+    text = re.sub(
+        rf'(?<![{_PERSIAN}])\s*\)\s*([{_PERSIAN}]+)',
+        r'\1)',
+        text,
+    )
+
+    # Pattern 2: Persian text followed by ( NOT followed by Persian → (text)
+    # Uses negative lookahead to avoid matching correctly-placed brackets
+    # (e.g., (سلام where ( correctly precedes Persian text in RTL context).
+    text = re.sub(
+        rf'([{_PERSIAN}]+)\s*\(\s*(?![{_PERSIAN}])',
+        r'(\1',
+        text,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 2: Balance bracket counts (Pattern 3)
+    # ------------------------------------------------------------------
+    # Only removes brackets when the imbalance is >= 3. A difference of
+    # 1 or 2 is assumed to be the result of Patterns 1 and 2 having moved
+    # brackets to correct positions (e.g., )سلام → سلام) creates a single
+    # trailing ), or ))سلام → سلام)) creates two trailing )).
+    # When difference >= 3, there are truly extra brackets that position
+    # fixing could not resolve.
+    #
+    # If ) count > ( count by 3+, remove trailing ) from end of line.
+    # If ( count > ) count by 3+, remove leading ( from start of line.
+    lines = text.split('\n')
+    balanced: list[str] = []
+    for line in lines:
+        open_count = line.count('(')
+        close_count = line.count(')')
+        diff = abs(close_count - open_count)
+        if diff >= 3:
+            if close_count > open_count:
+                # Remove extra closing brackets from the END (trailing)
+                for _ in range(close_count - open_count):
+                    idx = line.rfind(')')
+                    if idx != -1:
+                        line = line[:idx] + line[idx + 1:]
+            elif open_count > close_count:
+                # Remove extra opening brackets from the START (leading)
+                for _ in range(open_count - close_count):
+                    idx = line.find('(')
+                    if idx != -1:
+                        line = line[:idx] + line[idx + 1:]
+        balanced.append(line)
+
+    return '\n'.join(balanced)
+
+
 def _compute_persian_quality_score(text: str) -> float:
     """Compute a quality score (0.0 = garbage, 1.0 = perfect) for Persian text.
 
@@ -954,6 +1042,23 @@ def extract_text_from_pdf(self, document_id: str) -> str:
                 logger.warning(
                     "extract_text_from_pdf: Persian normalization failed for "
                     "document %s: %s — continuing with unnormalized text",
+                    document_id,
+                    e,
+                )
+
+        # ------------------------------------------------------------------
+        # Apply bidi bracket fix (safe local repairs, NOT get_display())
+        # ------------------------------------------------------------------
+        bidi_bracket_fix_enabled = getattr(
+            settings, "BIDI_BRACKET_FIX_ENABLED", True
+        )
+        if bidi_bracket_fix_enabled:
+            try:
+                extracted_text = _fix_bidi_brackets(extracted_text)
+            except Exception as e:
+                logger.warning(
+                    "extract_text_from_pdf: Bidi bracket fix failed for "
+                    "document %s: %s — continuing with unfixed text",
                     document_id,
                     e,
                 )
