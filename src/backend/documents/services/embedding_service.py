@@ -10,6 +10,8 @@ Functions
 - :func:`generate_embedding` — Embed a single text string.
 - :func:`embed_query` — Embed a search query string.
 - :func:`batch_generate_embeddings` — Embed a list of texts, handling sub-batching.
+- :func:`_prepare_embedding_content` — Prepare chunk content for embedding,
+  appending table semantic text if present.
 - :func:`_process_chunk_batch` — Shared helper for batch-processing chunks.
 - :func:`batch_embed_chunks` — Embed a specific set of chunks by ID.
 - :func:`reembed_chunk` — Replace the embedding on a single chunk.
@@ -35,6 +37,46 @@ logger = logging.getLogger(__name__)
 class EmbeddingError(Exception):
     """Raised when embedding generation fails."""
     pass
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _prepare_embedding_content(chunk: DocumentChunk) -> str:
+    """Prepare chunk content for embedding, appending table semantic text.
+
+    When a chunk has table metadata (stored in ``chunk.metadata["tables"]``),
+    the semantic text representation of those tables is appended to the content
+    **only for embedding**. The original ``chunk.content`` remains clean for
+    storage and display.
+
+    This ensures:
+    - **Storage:** ``chunk.content`` stays clean (no Markdown table noise).
+    - **Embedding:** Semantic table content is included in the vector
+      representation.
+    - **LLM context:** Markdown table is available in
+      ``chunk.metadata["tables"][i]["markdown"]`` for display.
+
+    Args:
+        chunk: A ``DocumentChunk`` instance with optional table metadata.
+
+    Returns:
+        The content string prepared for embedding, with table semantic text
+        appended if tables are present.
+    """
+    content = chunk.content
+    tables = chunk.metadata.get("tables", []) if chunk.metadata else []
+    if tables:
+        table_texts: list[str] = []
+        for t in tables:
+            semantic = t.get("semantic_text", "")
+            if semantic:
+                table_texts.append(semantic)
+        if table_texts:
+            content = content + "\n\n" + "\n".join(table_texts)
+    return content
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +151,9 @@ def _process_chunk_batch(
 ) -> int:
     """Shared helper: generate embeddings for a list of chunks and save them.
 
+    Uses :func:`_prepare_embedding_content` to include table semantic text
+    in the embedding input while keeping ``chunk.content`` clean.
+
     Args:
         chunks: List of DocumentChunk instances (must have content).
         progress_callback: Optional callback receiving processed_count after
@@ -122,7 +167,8 @@ def _process_chunk_batch(
 
     for batch_start in range(0, total, SUB_BATCH_SIZE):
         batch = chunks[batch_start:batch_start + SUB_BATCH_SIZE]
-        texts = [chunk.content for chunk in batch]
+        # Prepare embedding content with table semantic text appended
+        texts = [_prepare_embedding_content(chunk) for chunk in batch]
         embeddings = batch_generate_embeddings(texts)
 
         updated_chunks = []
@@ -167,7 +213,8 @@ def batch_embed_chunks(chunk_ids: list[str]) -> dict[str, Any]:
     if not needs_embedding:
         return {"processed": 0, "skipped": skipped, "failed": 0}
 
-    texts = [chunk.content for chunk in needs_embedding]
+    # Prepare embedding content with table semantic text appended
+    texts = [_prepare_embedding_content(chunk) for chunk in needs_embedding]
     embeddings = batch_generate_embeddings(texts)
 
     processed = 0

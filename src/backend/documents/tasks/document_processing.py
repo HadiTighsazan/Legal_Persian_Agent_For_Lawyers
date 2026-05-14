@@ -1029,6 +1029,53 @@ def extract_text_from_pdf(self, document_id: str) -> str:
                     )
 
         # ------------------------------------------------------------------
+        # Table extraction — detect tables using pdfplumber
+        # ------------------------------------------------------------------
+        # Tables are extracted from the PDF and stored as metadata on the
+        # Document model. During chunking, they are attached to the relevant
+        # chunks as metadata (not injected into content).
+        #
+        # Table extraction is only performed when pdfplumber is available
+        # (it is already imported for text fallback extraction). We use the
+        # pdf_bytes that were already read earlier.
+        # ------------------------------------------------------------------
+        table_extraction_enabled = getattr(
+            settings, "TABLE_EXTRACTION_ENABLED", True
+        )
+        extracted_tables: list[dict] = []
+        if table_extraction_enabled:
+            try:
+                from documents.utils.table_extractor import (  # noqa: PLC0415
+                    TableExtractor,
+                )
+
+                extractor = TableExtractor()
+                tables = extractor.extract_tables(pdf_bytes)
+                for t in tables:
+                    extracted_tables.append(
+                        {
+                            "page": t.page,
+                            "bbox": list(t.bbox),
+                            "markdown": t.markdown,
+                            "semantic_text": t.semantic_text,
+                        }
+                    )
+                if extracted_tables:
+                    logger.info(
+                        "extract_text_from_pdf: Extracted %d table(s) "
+                        "for document %s",
+                        len(extracted_tables),
+                        document_id,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "extract_text_from_pdf: Table extraction failed for "
+                    "document %s: %s — continuing without tables",
+                    document_id,
+                    e,
+                )
+
+        # ------------------------------------------------------------------
         # Apply Persian normalization
         # ------------------------------------------------------------------
         persian_normalization_enabled = getattr(
@@ -1079,6 +1126,7 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         document.garbled_score = garbled_score
         document.extracted_text_length = len(extracted_text)
         document.total_pages = num_pages
+        document.tables_data = extracted_tables
         document.save(
             update_fields=[
                 "extracted_text",
@@ -1086,6 +1134,7 @@ def extract_text_from_pdf(self, document_id: str) -> str:
                 "garbled_score",
                 "extracted_text_length",
                 "total_pages",
+                "tables_data",
             ]
         )
 
@@ -1237,6 +1286,33 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         # AnchorChunk uses ``pages: List[int]`` — we map min(pages) to
         # page_start and max(pages) to page_end for backward compatibility
         # with the DocumentChunk model.
+        #
+        # Table metadata: Tables extracted during the extract step are stored
+        # on ``document.tables_data``. For each chunk, we attach tables that
+        # fall within the chunk's page range. Tables are stored as metadata
+        # (not injected into content) to prevent embedding pollution.
+        # The semantic_text representation is used for embedding, while the
+        # markdown representation is available for LLM context.
+        document_tables: list[dict] = document.tables_data or []
+
+        def _get_tables_for_chunk(
+            chunk_pages: list[int],
+        ) -> list[dict]:
+            """Get tables whose page overlaps with the chunk's page range."""
+            if not document_tables or not chunk_pages:
+                return []
+            page_min = min(chunk_pages)
+            page_max = max(chunk_pages)
+            return [
+                {
+                    "page": t["page"],
+                    "markdown": t["markdown"],
+                    "semantic_text": t["semantic_text"],
+                }
+                for t in document_tables
+                if page_min <= t["page"] <= page_max
+            ]
+
         chunks_to_create = [
             DocumentChunk(
                 document=document,
@@ -1245,7 +1321,10 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
                 page_end=max(chunk.pages) if chunk.pages else 1,
                 content=PersianNormalizer.normalize_for_fts(chunk.content),
                 token_count=chunk.token_count,
-                metadata=chunk.metadata,
+                metadata={
+                    **chunk.metadata,
+                    "tables": _get_tables_for_chunk(chunk.pages),
+                },
                 law_name=chunk.metadata.get("law_name"),
                 legal_status=chunk.metadata.get("legal_status"),
                 approval_date=chunk.metadata.get("approval_date"),

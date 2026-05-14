@@ -97,6 +97,15 @@ class Document(models.Model):
     extracted_text = models.TextField(blank=True, default="")
     extraction_method = models.CharField(max_length=20, null=True, blank=True)
     garbled_score = models.FloatField(null=True, blank=True)
+
+    # Table extraction data (populated during extract step, consumed during chunking)
+    tables_data = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Extracted table data as a list of dicts with keys: "
+                  "'page', 'bbox', 'markdown', 'semantic_text'. "
+                  "Populated during text extraction and consumed during chunking.",
+    )
     
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)

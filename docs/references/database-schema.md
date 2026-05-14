@@ -43,6 +43,7 @@
 | **extracted_text** | **TEXT** | **BLANK, DEFAULT ''** | **Full extracted PDF text for monitoring/debug (added in migration 0012)** |
 | **extraction_method** | **VARCHAR(20)** | **NULL** | **Which extractor succeeded: pymupdf, pdfplumber, tesseract (added in migration 0012)** |
 | **garbled_score** | **FLOAT** | **NULL** | **Garbled detection ratio (0.0–1.0) from `_compute_garbled_ratio()` (added in migration 0012)** |
+| **tables_data** | **JSONB** | **DEFAULT '[]', BLANK** | **Extracted table data as a list of dicts with keys: 'page', 'bbox', 'markdown', 'semantic_text'. Populated during `extract_text_from_pdf` when `TABLE_EXTRACTION_ENABLED=True`. Used by `chunk_document` to attach tables as metadata on chunks. (added in migration 0016)** |
 | created_at | TIMESTAMP | DEFAULT NOW() | Upload timestamp |
 | updated_at | TIMESTAMP | DEFAULT NOW() | Last update timestamp |
 
@@ -334,6 +335,14 @@ CREATE EXTENSION IF NOT EXISTS "vector";
   - **Purpose:** Enables per-hub filtering in Global RAG cross-document hybrid search without JOINs
   - **Note:** The GIN index `chunk_search_vector_gin` was NOT re-added (it already exists from migration 0014)
   - **Applied:** Yes (via `docker-compose exec backend python manage migrate documents 0015`)
+
+### Migration 0016 — Add tables_data to documents (Phase 4 — Table Extraction)
+- **File:** `src/backend/documents/migrations/0016_add_tables_data_field.py`
+- **Changes:**
+  - Added `tables_data` column to `documents` table: `JSONB`, default `[]`, blank
+  - **Purpose:** Stores extracted table data (page, bbox, markdown, semantic_text) for PDF tables. Populated during `extract_text_from_pdf` when `TABLE_EXTRACTION_ENABLED=True`. Used by `chunk_document` to attach tables as metadata on chunks for dual-representation embedding.
+  - **No GIN index:** `tables_data` is metadata-only and not queried directly; it is read during chunking and embedding.
+  - **Applied:** Pending (run `docker-compose exec backend python manage.py migrate` to apply).
 
 ### Migration 0002 (conversations) — Add hub_metadata to messages (Phase 2a — Global RAG)
 - **File:** `src/backend/conversations/migrations/0002_message_hub_metadata.py`
