@@ -1,113 +1,60 @@
-# WIP Context — Chunking Pipeline Refactor (OCR-Aware Hybrid)
+# WIP Context — Phase 1: Persian Normalizer Enhancement
 
-## Status: ✅ COMPLETED — All 8 Phases + Post-Refactor Test Fixes + Debug Plan Fixes
+## Status: ✅ COMPLETED — Phase 1 (1.1 + 1.2) Fully Implemented and Tested
 
-## Latest: Debug Plan — All 10 Issues Fixed + Remaining Test Failures Resolved (2026-05-13)
+## Latest: Phase 1 — Persian Normalizer Enhancement (2026-05-14)
 
-All 10 issues from [`plans/plan-debug-chunking-refactor.md`](plans/plan-debug-chunking-refactor.md) have been fixed. Full test suite: **801 passed, 29 failed** (all 29 failures are pre-existing dimension mismatch 768 vs 1024 and top_k default 15 vs 5 — unrelated to chunking refactor).
+### Changes Made
 
-### Changes Made (Debug Plan Fixes)
+#### 1.1 Ligature-Reversal Dictionary — TACTICAL (`persian_normalizer.py`)
 
-#### Issue 1: `import_reference_laws.py` — Broken Import
-- [`import_reference_laws.py`](src/backend/documents/management/commands/import_reference_laws.py:150) — Changed import from `ChunkingService` to `AnchorChunkingService`
-- Updated instantiation, type annotations, and `page_start`/`page_end` access to use `chunk_result.pages`
+**Problem:** No post-NFKC correction for common `لا` reversal errors in Persian PDF extraction.
 
-#### Issue 2: `test_tasks.py` — Broken Import
-- [`test_tasks.py`](src/backend/documents/tests/test_tasks.py) — Changed import and mock targets from `ChunkingService` to `AnchorChunkingService`
+**Solution:** Added `_LIGATURE_FIXES` dictionary (19 entries) mapping known garbled patterns to correct forms, and a new `fix_ligature_reversals()` method.
 
-#### Issue 3: `non_text_filter.py` — Broken Type Annotations
-- [`non_text_filter.py`](src/backend/documents/services/non_text_filter.py) — Added import of `AnchorChunk`, changed type annotations from `List["ChunkResult"]` to `List[AnchorChunk]`
+**Files modified:**
+- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:99) — Added `_LIGATURE_FIXES` dict (lines 99-132)
+- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:265) — Added `fix_ligature_reversals()` method (lines 265-280)
+- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:200) — Updated `normalize()` pipeline to call `fix_ligature_reversals()` as Stage 1 (after NFKC, before Tatweel)
 
-#### Issue 4: `test_non_text_filter.py` — Broken Docstring
-- [`test_non_text_filter.py`](src/backend/documents/tests/test_non_text_filter.py) — Updated docstring from `ChunkResult` to `AnchorChunk`
+**Pipeline position:** Stage 1 — after NFKC normalization, before Tatweel stripping. This catches reversal patterns after NFKC decomposes ligatures but before further processing.
 
-#### Issues 5-8: `document_processing.py` — Stream Consumption, auto_fallback, Double-Close, Temp File Cleanup
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:383) — Initialized `auto_fallback = True` at function start to prevent `NameError`
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:440-444) — Read `pdf_bytes` early before any conditional branches, used consistently throughout
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:638-641) — Wrapped main extraction in `try/finally` to ensure `pdf_document.close()` is always called
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:465-470) — Added `try/except OSError` around `os.unlink(tmp_path)` for Windows safety
+#### 1.2 Date Repair Logic — EXPANDED (`persian_normalizer.py`)
 
-#### Issue 9: `document_processing.py` — %d → %s in Log Format
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py) — Changed `%d` to `%s` in log format string for UUID `document_id`
+**Problem:** Dates like `1376/01/15` split across lines during PDF extraction.
 
-#### Issue 10: `anchor_chunking_service.py` — Redundant Loop
-- [`anchor_chunking_service.py`](src/backend/documents/services/anchor_chunking_service.py:463-466) — Removed redundant second loop in `_resolve_pages`
+**Solution:** Added `_DATE_BROKEN_RE` comprehensive regex and `repair_broken_dates()` method.
 
-#### Additional Fixes (Discovered During Full Test Suite Run)
+**Files modified:**
+- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:134) — Added `_DATE_BROKEN_RE` regex (lines 134-152)
+- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:282) — Added `repair_broken_dates()` method (lines 282-317)
+- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:228) — Updated `normalize()` pipeline to call `repair_broken_dates()` as Stage 6 (after Hazm, before final cleanup)
 
-**`test_import_reference_laws.py`** — Updated all 12 `@patch` decorators from `ChunkingService.chunk_text` to `AnchorChunkingService.chunk_text`, and changed mock return values from `page_start`/`page_end` attributes to `pages` list attribute.
+**Pipeline position:** Stage 6 — after `fix_half_spaces` (Hazm), before `_final_cleanup`. This is critical because Hazm adds spaces around `/` punctuation, which would break the regex if it ran earlier. The regex allows optional whitespace (`\s*`) around all separators to handle Hazm's space insertion.
 
-**`test_processing.py::AnchorChunkingServiceTests`** — Removed `assertNotIn("[PAGE", ...)` assertions since `AnchorChunkingService` does not strip page markers from content (unlike the old `ChunkingService`). Increased overlap test text size to guarantee multiple chunks.
+**Bug fix during implementation:** The regex was initially placed between NFKC and Tatweel (as specified in the plan), but Hazm's normalization adds spaces around `/` (e.g., `1376/01/15` → `1376 / 01 / 15`), which broke the date after repair. Moved to after Hazm and made the regex whitespace-tolerant.
 
-**`document_processing.py`** — Added `else` branch for non-scanned PDF path when `easyocr_enabled=True` but `is_scanned_pdf()` returns `False`. Previously `extracted_text` was never assigned in this path, causing `UnboundLocalError`.
+#### Test Files Modified
+- [`test_persian_normalizer.py`](src/backend/documents/tests/test_persian_normalizer.py:425) — Added `TestFixLigatureReversals` class (20 tests)
+- [`test_persian_normalizer.py`](src/backend/documents/tests/test_persian_normalizer.py:537) — Added `TestRepairBrokenDates` class (14 tests)
 
 ### Test Results
 ```
-801 passed, 29 failed in 338.52s
+87 passed in 83.57s
 ```
-All 29 failures are **pre-existing** and unrelated to the chunking refactor:
-- 20 failures: Dimension mismatch (test expects 768, model produces 1024)
-- 2 failures: `top_k` default value mismatch (test expects 15, code uses 5)
-- 7 failures: `TransactionManagementError` cascading from dimension mismatch
+All 87 tests pass, including all 34 new tests for ligature fixes and date repair.
 
-## Summary
+### Key Design Decisions
 
-Replaced the legacy dual-algorithm chunking system (`ChunkingService` + `LegalStructureDetector`) with a hybrid OCR-aware pipeline. The new system detects whether a PDF is scanned (image-based) or typed (selectable text), routes accordingly, and uses text anchor segmentation (لنگرهای متنی) for Persian legal document structure.
+1. **Ligature fixes use simple `str.replace()`** — No regex needed since these are exact word-level mappings. Applied as a single pass over the text.
 
-### Architecture Overview
+2. **Date regex captures each component separately** — Instead of `(\d{1,2}/\d{1,2})` as a single group, we use `(\d{1,2})\s*/\s*(\d{1,2})` as two groups to allow whitespace around the inner separator (needed because Hazm adds spaces).
 
-```
-PDF Upload
-    │
-    ▼
-extract_text_from_pdf (Celery task)
-    │
-    ├── is_scanned_pdf() ──True──► EasyOCR pipeline
-    │                                   │
-    │                              layout-aware assembly
-    │                                   │
-    │                              [PAGE N] markers
-    │
-    └── False ──► PyMuPDF (RTL flags)
-                      │
-                 garbled? ──Yes──► pdfplumber
-                      │               │
-                      │          garbled? ──Yes──► Tesseract OCR
-                      │               │
-                      ▼               ▼
-              PersianNormalizer
-                      │
-                      ▼
-              extracted_text (with [PAGE N] markers)
-                      │
-                      ▼
-chunk_document (Celery task)
-    │
-    ▼
-AnchorChunkingService.chunk_text()
-    │
-    ├── _extract_metadata_and_clean()
-    ├── _parse_page_markers()
-    ├── _normalize_persian()
-    ├── Find anchor positions (لنگرهای متنی)
-    ├── Split at anchor boundaries
-    ├── _token_overlap_split() for long segments
-    └── _resolve_pages() for each chunk
-    │
-    ▼
-NonTextChunkFilter (TOC detection)
-    │
-    ▼
-DocumentChunk persistence
-    │
-    ▼
-embed_document (Celery task)
-```
+3. **Date repair runs after Hazm** — Hazm's `normalize()` adds spaces around punctuation. Running date repair after Hazm ensures the regex sees the final text with all Hazm-induced whitespace, and the `\s*` patterns in the regex handle it correctly.
 
-### Key Files
-- [`anchor_chunking_service.py`](src/backend/documents/services/anchor_chunking_service.py) — Core chunking logic with text anchors
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py) — Celery task pipeline (extract → chunk → embed)
-- [`non_text_filter.py`](src/backend/documents/services/non_text_filter.py) — TOC/non-text chunk filtering
-- [`ocr_service.py`](src/backend/documents/services/ocr_service.py) — EasyOCR + Tesseract OCR pipeline
-- [`scanned_pdf_detector.py`](src/backend/documents/utils/scanned_pdf_detector.py) — Scanned vs typed PDF detection
-- [`import_reference_laws.py`](src/backend/documents/management/commands/import_reference_laws.py) — Bulk import command (updated to use `AnchorChunkingService`)
+### Next Steps
+Phase 2+ as defined in the remediation plan (not yet started).
+
+### Reference Docs
+- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py) — Updated with ligature fixes and date repair
+- [`test_persian_normalizer.py`](src/backend/documents/tests/test_persian_normalizer.py) — 34 new tests for Phase 1 features

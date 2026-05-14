@@ -420,3 +420,219 @@ class TestRtlReversalLimitation:
         result = normalizer.normalize(reversed_text)
         # Hazm should NOT magically fix the reversal
         assert result == "نوناق"  # Still reversed
+
+
+# ---------------------------------------------------------------------------
+# Ligature-reversal fixes (Phase 1.1)
+# ---------------------------------------------------------------------------
+
+
+class TestFixLigatureReversals:
+    """Tests for :meth:`PersianNormalizer.fix_ligature_reversals`."""
+
+    def test_ligature_fix_وکالی_to_وکلای(self, normalizer: PersianNormalizer) -> None:
+        """وکالی → وکلای"""
+        result = normalizer.fix_ligature_reversals("وکالی")
+        assert result == "وکلای"
+
+    def test_ligature_fix_دالیل_to_دلایل(self, normalizer: PersianNormalizer) -> None:
+        """دالیل → دلایل"""
+        result = normalizer.fix_ligature_reversals("دالیل")
+        assert result == "دلایل"
+
+    def test_ligature_fix_سالم_to_سلام(self, normalizer: PersianNormalizer) -> None:
+        """سالم → سلام"""
+        result = normalizer.fix_ligature_reversals("سالم")
+        assert result == "سلام"
+
+    def test_ligature_fix_عالوه_to_علاوه(self, normalizer: PersianNormalizer) -> None:
+        """عالوه → علاوه"""
+        result = normalizer.fix_ligature_reversals("عالوه")
+        assert result == "علاوه"
+
+    def test_ligature_fix_مثالم_to_مثال(self, normalizer: PersianNormalizer) -> None:
+        """مثالم → مثال"""
+        result = normalizer.fix_ligature_reversals("مثالم")
+        assert result == "مثال"
+
+    def test_ligature_fix_اعالم_to_اعلام(self, normalizer: PersianNormalizer) -> None:
+        """اعالم → اعلام"""
+        result = normalizer.fix_ligature_reversals("اعالم")
+        assert result == "اعلام"
+
+    def test_ligature_fix_اقالم_to_اقلام(self, normalizer: PersianNormalizer) -> None:
+        """اقالم → اقلام"""
+        result = normalizer.fix_ligature_reversals("اقالم")
+        assert result == "اقلام"
+
+    def test_ligature_fix_قبال_to_قبل(self, normalizer: PersianNormalizer) -> None:
+        """قبال → قبل"""
+        result = normalizer.fix_ligature_reversals("قبال")
+        assert result == "قبل"
+
+    def test_ligature_fix_حاالت_to_حالت(self, normalizer: PersianNormalizer) -> None:
+        """حاالت → حالت"""
+        result = normalizer.fix_ligature_reversals("حاالت")
+        assert result == "حالت"
+
+    def test_ligature_fix_معامالت_to_معاملات(self, normalizer: PersianNormalizer) -> None:
+        """معامالت → معاملات"""
+        result = normalizer.fix_ligature_reversals("معامالت")
+        assert result == "معاملات"
+
+    def test_ligature_fix_مطالبات_unchanged(self, normalizer: PersianNormalizer) -> None:
+        """مطالبات is already correct and unchanged"""
+        result = normalizer.fix_ligature_reversals("مطالبات")
+        assert result == "مطالبات"
+
+    def test_ligature_fix_اصالح_to_اصلاح(self, normalizer: PersianNormalizer) -> None:
+        """اصالح → اصلاح"""
+        result = normalizer.fix_ligature_reversals("اصالح")
+        assert result == "اصلاح"
+
+    def test_ligature_fix_تفاصیل_to_تفصیل(self, normalizer: PersianNormalizer) -> None:
+        """تفاصیل → تفصیل"""
+        result = normalizer.fix_ligature_reversals("تفاصیل")
+        assert result == "تفصیل"
+
+    def test_ligature_fix_مقاالت_to_مقالات(self, normalizer: PersianNormalizer) -> None:
+        """مقاالت → مقالات"""
+        result = normalizer.fix_ligature_reversals("مقاالت")
+        assert result == "مقالات"
+
+    def test_ligature_fix_رساالت_to_رسالات(self, normalizer: PersianNormalizer) -> None:
+        """رساالت → رسالات"""
+        result = normalizer.fix_ligature_reversals("رساالت")
+        assert result == "رسالات"
+
+    def test_ligature_fix_مسیول_to_مسئول(self, normalizer: PersianNormalizer) -> None:
+        """مسیول → مسئول"""
+        result = normalizer.fix_ligature_reversals("مسیول")
+        assert result == "مسئول"
+
+    def test_ligature_fix_هیأت_to_هیئت(self, normalizer: PersianNormalizer) -> None:
+        """هیأت → هیئت"""
+        result = normalizer.fix_ligature_reversals("هیأت")
+        assert result == "هیئت"
+
+    def test_ligature_fix_اطلاعت_to_اطلاعات(self, normalizer: PersianNormalizer) -> None:
+        """اطلاعت → اطلاعات"""
+        result = normalizer.fix_ligature_reversals("اطلاعت")
+        assert result == "اطلاعات"
+
+    def test_ligature_fix_علالخصوص_to_علیالخصوص(self, normalizer: PersianNormalizer) -> None:
+        """علالخصوص → علی‌الخصوص"""
+        result = normalizer.fix_ligature_reversals("علالخصوص")
+        assert result == "علی‌الخصوص"
+
+    def test_ligature_fix_no_garbled_words(self, normalizer: PersianNormalizer) -> None:
+        """Clean Persian text without garbled words is unchanged"""
+        text = "ماده ۱ قانون مجازات اسلامی"
+        result = normalizer.fix_ligature_reversals(text)
+        assert result == text
+
+    def test_ligature_fix_english_unchanged(self, normalizer: PersianNormalizer) -> None:
+        """English text is not affected"""
+        text = "Hello World! Test 123."
+        result = normalizer.fix_ligature_reversals(text)
+        assert result == text
+
+    def test_ligature_fix_empty_string(self, normalizer: PersianNormalizer) -> None:
+        """Empty string returns empty string"""
+        assert normalizer.fix_ligature_reversals("") == ""
+
+    def test_ligature_fix_in_full_pipeline(self, normalizer: PersianNormalizer) -> None:
+        """Ligature fixes are applied during full normalization pipeline"""
+        dirty = "وکالی دادگاه عالوه بر آن"
+        clean = normalizer.normalize(dirty)
+        assert "وکلای" in clean
+        assert "علاوه" in clean
+        assert "وکالی" not in clean
+        assert "عالوه" not in clean
+
+
+# ---------------------------------------------------------------------------
+# Broken date repair (Phase 1.2)
+# ---------------------------------------------------------------------------
+
+
+class TestRepairBrokenDates:
+    """Tests for :meth:`PersianNormalizer.repair_broken_dates`."""
+
+    def test_repair_english_date_with_slash(self, normalizer: PersianNormalizer) -> None:
+        """1376/\n01/15 → 1376/01/15"""
+        result = normalizer.repair_broken_dates("1376/\n01/15")
+        assert result == "1376/01/15"
+
+    def test_repair_english_date_with_dash(self, normalizer: PersianNormalizer) -> None:
+        """1376-\n01-15 → 1376-01-15"""
+        result = normalizer.repair_broken_dates("1376-\n01-15")
+        assert result == "1376-01-15"
+
+    def test_repair_gregorian_date(self, normalizer: PersianNormalizer) -> None:
+        """2025/\n05/14 → 2025/05/14"""
+        result = normalizer.repair_broken_dates("2025/\n05/14")
+        assert result == "2025/05/14"
+
+    def test_repair_two_digit_year(self, normalizer: PersianNormalizer) -> None:
+        """76/\n01/15 → 76/01/15"""
+        result = normalizer.repair_broken_dates("76/\n01/15")
+        assert result == "76/01/15"
+
+    def test_repair_persian_digits_with_slash(self, normalizer: PersianNormalizer) -> None:
+        """۱۳۷۶/\n۰۱/۱۵ → ۱۳۷۶/۰۱/۱۵"""
+        result = normalizer.repair_broken_dates("۱۳۷۶/\n۰۱/۱۵")
+        assert result == "۱۳۷۶/۰۱/۱۵"
+
+    def test_repair_persian_digits_with_dash(self, normalizer: PersianNormalizer) -> None:
+        """۱۳۷۶-\n۰۱-۱۵ → ۱۳۷۶-۰۱-۱۵"""
+        result = normalizer.repair_broken_dates("۱۳۷۶-\n۰۱-۱۵")
+        assert result == "۱۳۷۶-۰۱-۱۵"
+
+    def test_repair_date_with_extra_whitespace(self, normalizer: PersianNormalizer) -> None:
+        """1376/   \n   01/15 → 1376/01/15 (extra whitespace around newline)"""
+        result = normalizer.repair_broken_dates("1376/   \n   01/15")
+        assert result == "1376/01/15"
+
+    def test_repair_date_in_sentence(self, normalizer: PersianNormalizer) -> None:
+        """Date broken across line in a sentence context"""
+        text = "مورخ 1376/\n01/15 صادر گردیده است"
+        result = normalizer.repair_broken_dates(text)
+        assert "1376/01/15" in result
+
+    def test_no_broken_date_unchanged(self, normalizer: PersianNormalizer) -> None:
+        """Text without broken dates is unchanged"""
+        text = "ماده ۱ قانون مجازات اسلامی"
+        result = normalizer.repair_broken_dates(text)
+        assert result == text
+
+    def test_english_text_unchanged(self, normalizer: PersianNormalizer) -> None:
+        """English text without dates is unchanged"""
+        text = "Hello World! Test 123."
+        result = normalizer.repair_broken_dates(text)
+        assert result == text
+
+    def test_empty_string(self, normalizer: PersianNormalizer) -> None:
+        """Empty string returns empty string"""
+        assert normalizer.repair_broken_dates("") == ""
+
+    def test_repair_date_in_full_pipeline(self, normalizer: PersianNormalizer) -> None:
+        """Broken dates are repaired during full normalization pipeline"""
+        dirty = "مورخ 1376/\n01/15 صادر گردیده است"
+        clean = normalizer.normalize(dirty)
+        assert "1376/01/15" in clean
+        assert "1376/\n01/15" not in clean
+
+    def test_repair_multiple_broken_dates(self, normalizer: PersianNormalizer) -> None:
+        """Multiple broken dates in the same text are all repaired"""
+        text = "از 1376/\n01/15 تا 1376/\n12/30"
+        result = normalizer.repair_broken_dates(text)
+        assert "1376/01/15" in result
+        assert "1376/12/30" in result
+
+    def test_repair_mixed_date_formats(self, normalizer: PersianNormalizer) -> None:
+        """Mixed slash and dash date formats are both repaired"""
+        text = "تاریخ شمسی: 1376/\n01/15 - تاریخ میلادی: 2025-\n05-14"
+        result = normalizer.repair_broken_dates(text)
+        assert "1376/01/15" in result
+        assert "2025-05-14" in result

@@ -11,11 +11,17 @@ RTL reversal must be prevented at the extraction layer using PyMuPDF RTL flags
 or fallback extractors (pdfplumber, Tesseract OCR).
 
 Processing order (CRITICAL):
-1. :meth:`strip_tatweel` — MUST be first, before any regex
-2. :meth:`clean_control_chars` — remove PDF artifacts
-3. :meth:`normalize_arabic_chars` — character normalization
-4. :meth:`fix_half_spaces` — ZWNJ fixes via hazm + custom regex
-5. Final cleanup pass
+1. :meth:`_nfkc_normalize` — NFKC normalization (converts Arabic Presentation
+   Forms to standard Unicode codepoints)
+2. :meth:`fix_ligature_reversals` — post-NFKC correction for common ``لا``
+   reversal errors
+3. :meth:`strip_tatweel` — remove Kashida characters
+4. :meth:`clean_control_chars` — remove PDF artifacts
+5. :meth:`normalize_arabic_chars` — character normalization
+6. :meth:`fix_half_spaces` — ZWNJ fixes via hazm + custom regex
+7. :meth:`repair_broken_dates` — fix dates split across lines
+   (applied after Hazm to avoid Hazm adding spaces around ``/``)
+8. Final cleanup pass
 """
 
 from __future__ import annotations
@@ -97,6 +103,59 @@ _PERSIAN_HALF_SPACE_WORDS: list[tuple[str, str]] = [
 ]
 
 # ---------------------------------------------------------------------------
+# Ligature-reversal fixes (tactical post-NFKC correction)
+# ---------------------------------------------------------------------------
+# After NFKC normalization, some common Persian words still appear garbled
+# due to ligature-reversal errors introduced during PDF extraction. This
+# dictionary maps known garbled patterns to their correct forms.
+#
+# **Limitation:** This is a tactical fix — it handles known patterns but
+# does not scale to unseen errors. See Phase 8 for the strategic approach.
+_LIGATURE_FIXES: dict[str, str] = {
+    "وکالی": "وکلای",
+    "دالیل": "دلایل",
+    "سالم": "سلام",
+    "عالوه": "علاوه",
+    "مثالم": "مثال",
+    "اعالم": "اعلام",
+    "اقالم": "اقلام",
+    "قبال": "قبل",
+    "حاالت": "حالت",
+    "معامالت": "معاملات",
+    "مطالبات": "مطالبات",
+    "اصالح": "اصلاح",
+    "تفاصیل": "تفصیل",
+    "مقاالت": "مقالات",
+    "رساالت": "رسالات",
+    "مسیول": "مسئول",
+    "هیأت": "هیئت",
+    "اطلاعت": "اطلاعات",
+    "علالخصوص": "علی‌الخصوص",
+}
+
+# ---------------------------------------------------------------------------
+# Broken date repair regex
+# ---------------------------------------------------------------------------
+# Persian dates often split across lines during PDF extraction (e.g.,
+# "1376/\n01/15"). This regex handles:
+# - 4-digit Persian dates: 1376/\n01/15
+# - 2-digit dates: 76/\n01/15
+# - Dash-separated: 1376-\n01-15
+# - Persian digits: ۱۳۷۶/\n۰۱/۱۵
+# - Gregorian dates: 2025/\n05/14
+#
+# The regex allows optional whitespace around separators because Hazm
+# normalization may add spaces around punctuation before this stage runs
+# in the pipeline. Each date component (day, month) is captured separately
+# to allow whitespace between them.
+_DATE_BROKEN_RE: re.Pattern = re.compile(
+    r'(\d{2,4})\s*/\s*\n\s*(\d{1,2})\s*/\s*(\d{1,2})'            # English digits with /
+    r'|(\d{2,4})\s*-\s*\n\s*(\d{1,2})\s*-\s*(\d{1,2})'            # English digits with -
+    r'|([۰-۹]{2,4})\s*/\s*\n\s*([۰-۹]{1,2})\s*/\s*([۰-۹]{1,2})'   # Persian digits with /
+    r'|([۰-۹]{2,4})\s*-\s*\n\s*([۰-۹]{1,2})\s*-\s*([۰-۹]{1,2})'   # Persian digits with -
+)
+
+# ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
 
@@ -136,11 +195,15 @@ class PersianNormalizer:
 
         0. :meth:`_nfkc_normalize` — NFKC normalization (converts Arabic
            Presentation Forms to standard Unicode codepoints)
-        1. :meth:`strip_tatweel` — remove Kashida characters
-        2. :meth:`clean_control_chars` — remove PDF artifacts
-        3. :meth:`normalize_arabic_chars` — character normalization via Hazm
-        4. :meth:`fix_half_spaces` — ZWNJ fixes via Hazm + custom regex
-        5. Final cleanup — collapse excessive whitespace
+        1. :meth:`fix_ligature_reversals` — post-NFKC correction for common
+           ``لا`` reversal errors
+        2. :meth:`strip_tatweel` — remove Kashida characters
+        3. :meth:`clean_control_chars` — remove PDF artifacts
+        4. :meth:`normalize_arabic_chars` — character normalization via Hazm
+        5. :meth:`fix_half_spaces` — ZWNJ fixes via Hazm + custom regex
+        6. :meth:`repair_broken_dates` — fix dates split across lines
+           (applied after Hazm to avoid Hazm adding spaces around ``/``)
+        7. Final cleanup — collapse excessive whitespace
 
         Args:
             text: The raw extracted text, possibly containing Persian
@@ -161,19 +224,31 @@ class PersianNormalizer:
         # may affect how certain characters are represented.
         text = self._nfkc_normalize(text)
 
-        # Stage 1: Strip Tatweel/Kashida (MUST be before regex matching)
+        # Stage 1: Fix ligature reversals — post-NFKC correction for common
+        # ``لا`` reversal errors (e.g., "وکالی" → "وکلای").
+        # Applied here because NFKC may decompose ligatures, and we want to
+        # catch reversal patterns before further processing.
+        text = self.fix_ligature_reversals(text)
+
+        # Stage 2: Strip Tatweel/Kashida (MUST be before regex matching)
         text = self.strip_tatweel(text)
 
-        # Stage 2: Remove PDF-induced control characters
+        # Stage 3: Remove PDF-induced control characters
         text = self.clean_control_chars(text)
 
-        # Stage 3: Normalize Arabic/Persian character variants via Hazm
+        # Stage 4: Normalize Arabic/Persian character variants via Hazm
         text = self.normalize_arabic_chars(text)
 
-        # Stage 4: Fix half-space (ZWNJ) issues
+        # Stage 5: Fix half-space (ZWNJ) issues
         text = self.fix_half_spaces(text)
 
-        # Stage 5: Final cleanup — collapse excessive whitespace
+        # Stage 6: Repair broken dates — fix dates split across lines
+        # (e.g., "1376/\n01/15" → "1376/01/15").
+        # Applied after Hazm because Hazm adds spaces around ``/`` which
+        # would break the repaired date.
+        text = self.repair_broken_dates(text)
+
+        # Stage 7: Final cleanup — collapse excessive whitespace
         text = self._final_cleanup(text)
 
         logger.debug(
@@ -184,6 +259,63 @@ class PersianNormalizer:
         )
 
         return text
+
+    def fix_ligature_reversals(self, text: str) -> str:
+        """Fix common ligature-reversal errors after NFKC normalization.
+
+        PDF extraction of Persian text often produces garbled words where
+        the ``لا`` (Lam-Alef) ligature is reversed or mis-encoded. This
+        method applies a dictionary of known garbled → correct mappings.
+
+        This is a **tactical fix** — it handles known patterns but does not
+        scale to unseen errors.
+
+        Args:
+            text: NFKC-normalized text with potential ligature reversals.
+
+        Returns:
+            Text with known ligature-reversal patterns corrected.
+        """
+        for garbled, correct in _LIGATURE_FIXES.items():
+            text = text.replace(garbled, correct)
+        return text
+
+    def repair_broken_dates(self, text: str) -> str:
+        """Repair dates that were split across lines during PDF extraction.
+
+        Persian dates like ``1376/01/15`` often break across lines in PDF
+        extraction, becoming ``1376/\n01/15``. This method uses a
+        comprehensive regex to detect and fix such breaks.
+
+        Handles:
+        - 4-digit Persian dates: ``1376/\n01/15``
+        - 2-digit dates: ``76/\n01/15``
+        - Dash-separated: ``1376-\n01-15``
+        - Persian digits: ``۱۳۷۶/\n۰۱/۱۵``
+        - Gregorian dates: ``2025/\n05/14``
+
+        Args:
+            text: Text with potentially broken dates.
+
+        Returns:
+            Text with broken dates repaired.
+        """
+        def _rejoin(match: re.Match) -> str:
+            # Groups 1-3: English digits with / (year/month/day)
+            if match.group(1) and match.group(2) and match.group(3):
+                return f"{match.group(1)}/{match.group(2)}/{match.group(3)}"
+            # Groups 4-6: English digits with - (year-month-day)
+            if match.group(4) and match.group(5) and match.group(6):
+                return f"{match.group(4)}-{match.group(5)}-{match.group(6)}"
+            # Groups 7-9: Persian digits with / (year/month/day)
+            if match.group(7) and match.group(8) and match.group(9):
+                return f"{match.group(7)}/{match.group(8)}/{match.group(9)}"
+            # Groups 10-12: Persian digits with - (year-month-day)
+            if match.group(10) and match.group(11) and match.group(12):
+                return f"{match.group(10)}-{match.group(11)}-{match.group(12)}"
+            return match.group(0)  # fallback (shouldn't happen)
+
+        return _DATE_BROKEN_RE.sub(_rejoin, text)
 
     def strip_tatweel(self, text: str) -> str:
         """Remove all Tatweel/Kashida characters (U+0640) from text.
