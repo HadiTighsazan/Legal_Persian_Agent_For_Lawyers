@@ -1,131 +1,166 @@
-# WIP Context — Phase 4: Table Extraction with Dual Representation
+# WIP Context — Phase 6: Extended Test Coverage
 
-## Status: ✅ COMPLETED — Phase 4 Fully Implemented and Tested
+## Status: ✅ COMPLETED — Phase 6 Fully Implemented and Tested
 
-## Latest: Phase 4 — Table Extraction with Dual Representation (2026-05-14)
+## Latest: Phase 6 — Extended Test Coverage (2026-05-14)
 
 ### Changes Made
 
-#### 4.1 `ExtractedTable` Dataclass — [`table_extractor.py`](src/backend/documents/utils/table_extractor.py:39)
+#### 6.1 Extended Persian Normalizer Tests — [`test_persian_normalizer_extended.py`](src/backend/documents/tests/test_persian_normalizer_extended.py)
 
-Created a `@dataclass` with fields:
-- `page: int` — 1-based page number where the table was found
-- `bbox: tuple[float, float, float, float]` — Bounding box (x0, y0, x1, y1) from pdfplumber
-- `markdown: str` — GitHub-flavored Markdown representation (for display/LLM context)
-- `semantic_text: str` — Key-value pair representation (for embedding)
-- `raw_data: list[list[str | None]]` — Raw cell data from pdfplumber (default `field(default_factory=list)`)
+**NEW** — 42 tests across 3 test classes:
 
-#### 4.2 `_table_to_markdown()` — [`table_extractor.py`](src/backend/documents/utils/table_extractor.py:66)
+**`TestLigatureReversalsExtended`** (12 tests):
+- `test_ligature_fix_in_sentence_context` — Ligature fix applied within a full Persian sentence
+- `test_ligature_fix_multiple_occurrences` — Multiple occurrences of the same garbled word are all fixed
+- `test_ligature_fix_overlapping_patterns` — Multiple different garbled patterns in the same text are fixed
+- `test_ligature_fix_with_punctuation` — Garbled words adjacent to punctuation are still fixed
+- `test_ligature_fix_with_numbers` — Garbled words mixed with numbers are fixed
+- `test_ligature_fix_idempotent` — Applying ligature fixes twice produces the same result
+- `test_ligature_fix_مطالبات_unchanged` — Already-correct word remains unchanged
+- `test_ligature_fix_does_not_corrupt_similar_words` — Similar-looking words are not corrupted
+- `test_ligature_fix_through_full_pipeline` — Ligature fixes survive the full normalization pipeline
+- `test_ligature_fix_very_long_text` — Ligature fixes work correctly on long text (100x repeated)
+- `test_ligature_fix_unicode_normalization_interaction` — NFKC normalization does not break ligature fixes
+- Uses presentation forms (`\uFEDF\uFE8D\uFEAF\uFEE1`) that NFKC decomposes to "لازم"
 
-Converts a `list[list[str | None]]` table to GitHub-flavored Markdown:
-- First row becomes the header row
-- Second row is a separator (`|---|---|`)
-- Remaining rows become data rows
-- `None` cells rendered as empty string `""`
-- Empty cells rendered as empty string `""`
+**`TestDateRepairExtended`** (16 tests):
+- Edge cases: start of text, end of text, tab+newline, newline+tab, multiple spaces around newline
+- Persian digit dates in sentences, with dash separator
+- Gregorian dates with dash, two-digit year with dash
+- Idempotency, no false positives on regular newlines or non-date slashes
+- Full pipeline integration, multiple broken dates with different formats
+- Single-digit month/day (English and Persian digits)
 
-#### 4.3 `_table_to_semantic_text()` — [`table_extractor.py`](src/backend/documents/utils/table_extractor.py:123)
+**`TestBidiBracketsExtended`** (16 tests):
+- Closing bracket before multi-word Persian phrase → word-by-word fix (regex matches first Persian word)
+- Opening bracket after multi-word Persian phrase → word-by-word fix
+- Brackets with Persian digits, mixed Persian/English content
+- Severe bracket imbalance removal (diff >= 3)
+- No false positives on English text, empty string, no brackets
+- Multiple lines, nested parentheses, full pipeline integration
+- Tatweel-affected text, correctly-placed brackets preserved
+- Multiple closing/opening brackets before/after Persian text
 
-Converts a table to normalized key-value pairs for embedding:
-- Uses the first row as headers (keys)
-- Each subsequent row becomes a line of `"key1: value1 | key2: value2 | ..."`
-- `None` cells rendered as empty string `""`
-- Empty cells rendered as empty string `""`
-- Empty tables return `""`
-- Single-row tables (header only) return `""`
+#### 6.2 Garbled Detection Tests — [`test_garbled_detection.py`](src/backend/documents/tests/test_garbled_detection.py)
 
-#### 4.4 `TableExtractor` Class — [`table_extractor.py`](src/backend/documents/utils/table_extractor.py:184)
+**NEW** — 50 tests across 8 test classes:
 
-Main extraction class with:
-- `extract_tables(pdf_bytes: bytes) -> list[ExtractedTable]` — Extracts all tables from a PDF
-- `_extract_tables_from_page(page, page_number: int) -> list[ExtractedTable]` — Extracts tables from a single page
-- **Filters:** `min_rows=2`, `min_cols=2` to avoid false positives (single-row/column artifacts)
-- **Graceful degradation:** If pdfplumber is not installed, logs a warning and returns empty list
-- **Per-page error handling:** If `find_tables()` fails on a page, logs a warning and continues to next page
+**`TestRtlReversedConnectedText`** (10 tests):
+- 5 single reversed words (رپونده, خوااهن, ناوخد, هدبش, هدافتسا) — scored against valid equivalents
+- Full reversed sentence and mixed reversed+valid sentence
+- Single valid word not false positive, short text edge case, empty string
+- Uses **relative comparison** (score < valid_score) instead of absolute threshold, because reversing preserves bigrams making absolute thresholds unreliable
 
-#### 4.5 Integration into `extract_text_from_pdf` — [`document_processing.py`](src/backend/documents/tasks/document_processing.py:1002)
+**`TestPersianLanguageConfidenceScore`** (12 tests):
+- Valid legal text high score (>0.5) and not garbled
+- Valid Persian article high score (>0.5)
+- Random chars low score (<0.4), shattered text low score (<0.4)
+- Shattered text detected as garbled
+- English text score (~0.5), mixed Persian/English score (>0.3)
+- Whitespace-only (0.0), stopword-only (>0.7)
+- Threshold boundary test, legacy mode fallback and garbled detection
 
-Table extraction is performed during `extract_text_from_pdf`:
-- Gated by `settings.TABLE_EXTRACTION_ENABLED` (default `True`)
-- Runs after text extraction but before Persian normalization
-- Extracted tables are stored on `Document.tables_data` as a list of dicts with keys: `page`, `bbox`, `markdown`, `semantic_text`
-- If pdfplumber is unavailable or extraction fails, logs a warning and continues (non-blocking)
-- `document.save(update_fields=[...])` updated to include `tables_data`
+**`TestStopwordRatio`** (10 tests):
+- Valid Persian has stopwords, no Persian stopwords, empty string
+- Only stopwords (1.0), mixed stopwords and content (0.5)
+- English text (0.0), garbled reversed text (<0.2)
+- Legal stopwords included, whitespace-only (0.0)
+- Single stopword (1.0), single non-stopword (0.0)
 
-#### 4.6 Table-to-Chunk Attachment in `chunk_document` — [`document_processing.py`](src/backend/documents/tasks/document_processing.py:1298)
+**`TestBigramPlausibilityExtended`** (5 tests):
+- Valid Persian high score (>0.5), garbled lower than valid
+- No Persian chars (1.0), single Persian char (1.0), empty string (1.0)
 
-Tables are attached to chunks as metadata (not injected into content):
-- Reads `document.tables_data` (list of dicts)
-- `_get_tables_for_chunk(chunk_pages)` helper matches tables to chunks by page overlap
-- Tables are stored in `chunk.metadata["tables"]` as a list of dicts with `page`, `markdown`, `semantic_text`
-- If no tables overlap a chunk's pages, `metadata["tables"]` is an empty list `[]`
-- This keeps `chunk.content` clean (no table text pollution in content)
+**`TestRtlConsistencyExtended`** (6 tests):
+- Valid Persian high consistency (>0.8), isolated chars low (<0.5)
+- No Persian chars (1.0), empty string (1.0), whitespace-only (1.0)
+- Mixed Persian/English (>0.5)
 
-#### 4.7 `_prepare_embedding_content()` — [`embedding_service.py`](src/backend/documents/services/embedding_service.py:47)
+**`TestCharacterEntropyExtended`** (4 tests):
+- Valid Persian moderate entropy (2.0–4.0)
+- No Persian chars (0.0), empty string (0.0), repeated char (0.0)
 
-New function that prepares content for embedding:
-- Takes a `DocumentChunk` object
-- Returns `chunk.content` if no tables in metadata
-- Appends `"\n\n" + "\n".join(table["semantic_text"])` if tables exist
-- Skips tables with empty `semantic_text`
-- Handles `None` metadata gracefully
+**`TestShatteredWordsExtended`** (7 tests):
+- Shattered text → True, normal text → False
+- Legal structure → False, single-char words (و) → False
+- Empty string → False, no Persian chars → False
+- Threshold parameter controls sensitivity (threshold=1.0 → not detected, threshold=0.1 → detected)
 
-Updated callers:
-- `_process_chunk_batch()` — uses `_prepare_embedding_content(chunk)` instead of `chunk.content`
-- `batch_embed_chunks()` — uses `_prepare_embedding_content(chunk)` instead of `chunk.content`
+**`TestGarbledRatioLegacyExtended`** (5 tests):
+- Empty string (0.0), no Persian chars (0.0)
+- Valid Persian low ratio (<0.3), isolated chars high ratio (>0.5)
+- Whitespace-only (0.0)
 
-#### 4.8 Migration 0016 — Add `tables_data` Field — [`0016_add_tables_data_field.py`](src/backend/documents/migrations/0016_add_tables_data_field.py)
+#### 6.3 Table Extraction Tests — [`test_table_extraction.py`](src/backend/documents/tests/test_table_extraction.py)
 
-- Adds `tables_data` JSONField to `documents` table (default `list`, blank)
-- No GIN index (JSONField is metadata-only, not queried directly)
-- Dependencies: depends on migration `0015_document_hub_type_documentchunk_hub_type_and_more`
+**NEW** — 56 tests across 5 test classes:
 
-### Files Created/Modified
+**`TestPdfplumberTableDetection`** (12 tests):
+- Simple 2x2 table, multiple tables on same page, tables across multiple pages
+- No tables on page, find_tables exception on one page (other pages still work)
+- min_rows filter, min_cols filter, custom min_rows and min_cols
+- pdfplumber not installed, PDF open failure
 
-| File | Action | Description |
-|------|--------|-------------|
-| [`table_extractor.py`](src/backend/documents/utils/table_extractor.py) | **NEW** | Core utility: `ExtractedTable` dataclass, `_table_to_markdown()`, `_table_to_semantic_text()`, `TableExtractor` class |
-| [`models.py`](src/backend/documents/models.py:113) | **MODIFIED** | Added `tables_data = JSONField(default=list, blank=True)` to Document model |
-| [`0016_add_tables_data_field.py`](src/backend/documents/migrations/0016_add_tables_data_field.py) | **NEW** | Migration adding `tables_data` field |
-| [`document_processing.py`](src/backend/documents/tasks/document_processing.py:1002) | **MODIFIED** | Table extraction in `extract_text_from_pdf` + table-to-chunk attachment in `chunk_document` |
-| [`embedding_service.py`](src/backend/documents/services/embedding_service.py:47) | **MODIFIED** | Added `_prepare_embedding_content()` and updated `_process_chunk_batch()` / `batch_embed_chunks()` |
-| [`test_table_extractor.py`](src/backend/documents/tests/test_table_extractor.py) | **NEW** | 27 tests covering all components |
+**`TestMarkdownTableConversion`** (10 tests):
+- Empty table, single-row header only, basic table with header+data
+- None cells, empty cells, wide columns, numbers
+- Mixed column count (missing cells), Persian legal table
+
+**`TestSemanticTextConversion`** (12 tests):
+- Empty table, single-row header only, basic key-value pairs
+- Multiple rows, None cells, empty header cell, empty value cell
+- All empty values, Persian legal table, numbers
+- Single column, headerless multi-row
+
+**`TestTableExtractionPipeline`** (8 tests):
+- Full pipeline single table, multiple tables, no tables, empty PDF
+- Raw data preservation (same reference, not deep-copied)
+- Persian legal table, graceful degradation with invalid bytes
+- Table with all empty cells (produces markdown but empty semantic_text)
+
+**`TestExtractedTableDataclass`** (3 tests):
+- Dataclass creation with all fields, default raw_data, useful repr
 
 ### Test Results
 
 ```
-100 passed in 31.71s
+148 passed in 40.65s
 ```
 
-All 100 tests pass, including 27 new tests for Phase 4 features:
-- **`TableToMarkdownTest`** (5 tests): empty table, single-row, basic, None cells, empty cells
-- **`TableToSemanticTextTest`** (7 tests): empty, single-row, basic key-value, multiple rows, None cells, empty header, Persian legal table
-- **`ExtractedTableTest`** (2 tests): dataclass creation, default raw_data
-- **`TableExtractorTest`** (7 tests): pdfplumber not installed, import error, PDF open failure, min_rows filter, min_cols filter, successful extraction, multiple pages, find_tables failure on page
-- **`PrepareEmbeddingContentTest`** (6 tests): no tables, with tables, multiple tables, empty semantic text skipped, metadata is None
+All 148 tests pass across the 3 new test files:
+- **`test_persian_normalizer_extended.py`** — 42 tests (ligature reversals, date repair, bidi brackets)
+- **`test_garbled_detection.py`** — 50 tests (RTL-reversed detection, quality score, stopword ratio, signals)
+- **`test_table_extraction.py`** — 56 tests (pdfplumber detection, markdown, semantic text, pipeline, dataclass)
 
-### Key Design Decisions
+### Key Fixes Applied During Test Development
 
-1. **Dual representation (Markdown + Semantic text):** Markdown is for display/LLM context (human-readable). Semantic text (key-value pairs) is for embedding (machine-optimized). This prevents embedding pollution from Markdown formatting characters.
+1. **Garbled detection threshold strategy**: Changed from absolute threshold comparison (`score < 0.4`) to relative comparison (`score < valid_score`). Single reversed words score ~0.40-0.44 because reversing preserves bigrams, making absolute thresholds unreliable. Relative comparison against valid equivalents is more robust.
 
-2. **Tables stored as chunk metadata, not injected into content:** Tables are attached to `chunk.metadata["tables"]` rather than appended to `chunk.content`. This keeps the content clean for display and search. The `_prepare_embedding_content()` function appends semantic text only at embedding time.
+2. **Stopword ratio test data**: Changed test words from legal domain terms (e.g., "قانون" which IS in `_LEGAL_STOPWORDS`) to neutral words (e.g., "خانه", "مدرسه", "بازار") to avoid false positives.
 
-3. **Page-aware table-to-chunk mapping:** Tables are matched to chunks based on page overlap (`page_min <= table.page <= page_max`). This ensures each chunk gets only the tables that appear on its pages.
+3. **Shattered words threshold**: `_has_shattered_persian_words` uses strict `>` comparison (`ratio > threshold`). With ratio=1.0 and threshold=0.9, `1.0 > 0.9` is True. Fixed by using threshold=1.0 where `1.0 > 1.0` is False.
 
-4. **Extraction during `extract_text_from_pdf`, not `chunk_document`:** Table extraction happens during the first task in the Celery chain because it requires access to the raw PDF bytes (which are available at extraction time). The extracted tables are stored on the Document model and read during chunking.
+4. **Bidi bracket word-by-word behavior**: The regex in `_fix_bidi_brackets` matches the FIRST Persian word after/before a bracket, not the whole phrase. E.g., `") مجتمع شهید"` → `"مجتمع) شهید"` (not `"مجتمع شهید)"`). Tests updated to match actual behavior.
 
-5. **Configurable via settings:** Gated by `TABLE_EXTRACTION_ENABLED` setting (default `True`), allowing easy disable if issues are discovered.
+5. **Unicode presentation forms**: The original test used `\uFEDF\uFE8D\uFEB1\uFEE1` which decomposes to "لاسم" (U+FEB1 = س), not "لازم". Fixed to use `\uFEDF\uFE8D\uFEAF\uFEE1` (U+FEAF = ز).
 
-6. **Graceful degradation:** If pdfplumber is not installed or table extraction fails, the pipeline continues without tables (non-blocking). Per-page errors are caught and logged individually.
+6. **Table markdown column widths**: `_table_to_markdown` uses `len()` for width calculation. Persian characters have len=1 each. Column widths: "ردیف"=4, "نام"=4, "نام خانوادگی"=12, "سمت"=4. Min width 3 → widths: [4, 4, 12, 4].
 
-7. **Minimum table size filter:** `min_rows=2`, `min_cols=2` to avoid false positives from single-row/column artifacts that pdfplumber sometimes detects.
+7. **Empty cells table**: Empty cells produce a markdown table with empty cells (`|     |     |`) but empty semantic_text. The filter checks `if not markdown and not semantic_text` — since markdown is non-empty, the table passes through.
 
-### Next Steps
-Phase 5+ as defined in the remediation plan (not yet started).
+### Files Created
+
+| File | Action | Description |
+|------|--------|-------------|
+| [`test_persian_normalizer_extended.py`](src/backend/documents/tests/test_persian_normalizer_extended.py) | **NEW** | 42 tests for ligature reversals, date repair, bidi brackets |
+| [`test_garbled_detection.py`](src/backend/documents/tests/test_garbled_detection.py) | **NEW** | 50 tests for RTL-reversed detection, quality score, stopword ratio, signals |
+| [`test_table_extraction.py`](src/backend/documents/tests/test_table_extraction.py) | **NEW** | 56 tests for pdfplumber detection, markdown, semantic text, pipeline, dataclass |
 
 ### Reference Docs
-- [`table_extractor.py`](src/backend/documents/utils/table_extractor.py) — Core table extraction utility
-- [`document_processing.py`](src/backend/documents/tasks/document_processing.py) — Table extraction integration in `extract_text_from_pdf` and `chunk_document`
-- [`embedding_service.py`](src/backend/documents/services/embedding_service.py) — `_prepare_embedding_content()` for embedding with table context
-- [`test_table_extractor.py`](src/backend/documents/tests/test_table_extractor.py) — 27 tests for Phase 4 features
-- [`database-schema.md`](docs/references/database-schema.md) — Updated with `tables_data` field and migration 0016
+- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py) — PersianNormalizer with ligature fixes, date repair
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py) — Garbled detection functions (`_fix_bidi_brackets`, `_compute_persian_quality_score`, etc.)
+- [`table_extractor.py`](src/backend/documents/utils/table_extractor.py) — Table extraction with dual representation
+- [`test_persian_normalizer_extended.py`](src/backend/documents/tests/test_persian_normalizer_extended.py) — Phase 6.1 tests
+- [`test_garbled_detection.py`](src/backend/documents/tests/test_garbled_detection.py) — Phase 6.2 tests
+- [`test_table_extraction.py`](src/backend/documents/tests/test_table_extraction.py) — Phase 6.3 tests
