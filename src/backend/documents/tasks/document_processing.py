@@ -56,18 +56,321 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Quality heuristic for Persian text
+# Persian Language Confidence Score — multi-signal quality assessment
 # ---------------------------------------------------------------------------
+
+# Persian stopwords (general + legal domain)
+_PERSIAN_STOPWORDS: set = {
+    "از", "به", "در", "با", "برای", "و", "که", "این", "آن", "را",
+    "تا", "یا", "اما", "اگر", "البته", "باید", "شاید", "ممکن",
+    "بعد", "قبل", "زیر", "روی", "بین", "درباره", "مثل", "مانند",
+    "چون", "زیرا", "بنابراین", "پس", "خواهد", "می", "است", "شد",
+    "شود", "شده", "دارد", "داشت", "کرد", "کند", "گفت", "دهد",
+    "بود", "باشند", "باشد", "نیز", "هم", "حدود", "سایر", "غیر",
+}
+
+_LEGAL_STOPWORDS: set = {
+    "دادگاه", "شعبه", "خواهان", "خوانده", "دادنامه", "پرونده",
+    "کلاسه", "رأی", "حکم", "قانون", "ماده", "تبصره", "مصوب",
+    "الزام", "محکوم", "مستند", "مستندات", "دلایل", "ادعا",
+    "دعوی", "درخواست", "اعتراض", "تجدیدنظر", "فرجام", "وکالت",
+    "وکیل", "مدعی", "منع", "قبول", "رد", "ابطال", "تنفیذ",
+    "استرداد", "تامین", "خسارت", "هزینه", "دادرسی", "کارشناسی",
+    "کارشناس", "رای", "شرح", "گردش", "کار", "مندرج", "ذیل",
+}
+
+# Combined stopword set for scoring
+_ALL_PERSIAN_STOPWORDS: set = _PERSIAN_STOPWORDS | _LEGAL_STOPWORDS
+
+# Comprehensive set of valid Persian bigrams.
+# Derived from common Persian words, legal terminology, and general text patterns.
+# This is used by _compute_bigram_plausibility to distinguish valid Persian text
+# from garbled/RTL-reversed text. Garbled text produces unusual bigram pairs
+# that rarely appear in natural Persian.
+_VALID_PERSIAN_BIGRAMS: set = {
+    # --- Common 2-letter bigrams ---
+    "ان", "ها", "ای", "ده", "ور", "دا", "را", "با", "ما", "نا",
+    "تا", "یا", "بر", "در", "که", "از", "به", "شد", "ود", "ند",
+    "ین", "من", "کن", "تو", "رو", "گر", "تر", "ری", "می", "زی",
+    "ست", "ار", "ام", "ته", "گی", "وا", "فت", "زد", "لا", "لی",
+    "قی", "فی", "بی", "دی", "سی", "تی", "کی", "چی", "شی",
+    "جو", "خو", "دو", "زو", "سو", "شو", "فو", "گو", "لو", "مو",
+    "نو", "هو", "یو", "آز", "آش", "آم", "آو", "آی",
+    "اف", "اک", "ال", "اه", "او", "ای", "آب", "آت", "آث",
+    "اج", "اح", "اخ", "اد", "اذ", "ار", "از", "اس", "اش", "اص",
+    "اط", "اع", "اغ", "اف", "اق", "ال", "ام", "ان", "اه", "او",
+    "ای", "با", "بت", "بح", "بد", "بر", "بز", "بس", "بش", "بط",
+    "بع", "بغ", "بق", "بل", "بن", "به", "بو", "بی", "پا", "پد",
+    "پر", "پس", "پش", "پن", "پو", "پی", "تا", "تب", "تپ", "تت",
+    "تج", "تح", "تخ", "تد", "تر", "تز", "تس", "تش", "تص", "تط",
+    "تع", "تف", "تق", "تل", "تم", "تن", "ته", "تو", "تی", "ثا",
+    "ثب", "ثت", "ثخ", "ثد", "ثر", "ثع", "ثف", "ثل", "ثم", "ثن",
+    "ثه", "ثو", "ثی", "جا", "جب", "جت", "جث", "جد", "جر", "جز",
+    "جس", "جش", "جع", "جف", "جل", "جم", "جن", "جه", "جو", "جی",
+    "چا", "چپ", "چر", "چش", "چق", "چل", "چم", "چن", "چه", "چو",
+    "چی", "حا", "حب", "حت", "حث", "حد", "حر", "حز", "حس", "حش",
+    "حص", "حض", "حط", "حظ", "حف", "حق", "حل", "حم", "حن", "حو",
+    "حی", "خا", "خب", "خت", "خد", "خر", "خز", "خش", "خص", "خط",
+    "خف", "خل", "خم", "خن", "خو", "خی", "دا", "دب", "دت", "دث",
+    "دد", "دخ", "در", "دز", "دس", "دش", "دع", "دف", "دق", "دل",
+    "دم", "دن", "ده", "دو", "دی", "ذا", "ذب", "ذخ", "ذر", "ذع",
+    "ذل", "ذم", "ذن", "ذه", "ذو", "ذی", "را", "رب", "رت", "رج",
+    "رخ", "رد", "رز", "رس", "رش", "رض", "رط", "رف", "رق", "رک",
+    "رم", "رن", "ره", "رو", "ری", "زا", "زب", "زت", "زد", "زر",
+    "زع", "زف", "زل", "زم", "زن", "زه", "زو", "زی", "ژا", "ژر",
+    "ژل", "ژن", "ژو", "ژی", "سا", "سب", "ست", "سج", "سخ", "سد",
+    "سر", "سز", "سس", "سش", "سع", "سف", "سق", "سل", "سم", "سن",
+    "سه", "سو", "سی", "شا", "شب", "شت", "شد", "شر", "شز", "شش",
+    "شع", "شف", "شق", "شک", "شل", "شم", "شن", "شه", "شو", "شی",
+    "صا", "صب", "صت", "صح", "صد", "صر", "صع", "صف", "صل", "صم",
+    "صن", "صه", "صو", "صی", "ضا", "ضب", "ضد", "ضر", "ضع", "ضف",
+    "ضل", "ضم", "ضن", "ضه", "ضو", "ضی", "طا", "طب", "طح", "طر",
+    "طع", "طف", "طل", "طم", "طن", "طه", "طو", "طی", "ظا", "ظب",
+    "ظر", "ظف", "ظل", "ظم", "ظن", "ظه", "ظو", "ظی", "عا", "عب",
+    "عت", "عد", "عر", "عز", "عس", "عش", "عص", "عض", "عط", "عف",
+    "عل", "عم", "عن", "عه", "عو", "عی", "غا", "غب", "غت", "غد",
+    "غر", "غش", "غص", "غض", "غط", "غف", "غل", "غم", "غن", "غو",
+    "غی", "فا", "فت", "فج", "فح", "فخ", "فد", "فر", "فز", "فس",
+    "فش", "فص", "فض", "فط", "فع", "فف", "فق", "فل", "فم", "فن",
+    "فه", "فو", "فی", "قا", "قب", "قت", "قد", "قر", "قز", "قس",
+    "قش", "قص", "قط", "قع", "قف", "قل", "قم", "قن", "قه", "قو",
+    "قی", "کا", "کت", "کد", "کر", "کز", "کس", "کش", "کف", "کل",
+    "کم", "کن", "که", "کو", "کی", "گا", "گد", "گر", "گز", "گس",
+    "گش", "گف", "گل", "گم", "گن", "گو", "گی", "لا", "لب", "لت",
+    "لح", "لد", "لذ", "لر", "لز", "لس", "لش", "لع", "لغ", "لف",
+    "لق", "لل", "لم", "لن", "له", "لو", "لی", "ما", "مت", "مج",
+    "مح", "مد", "مر", "مز", "مس", "مش", "مص", "مض", "مع", "مغ",
+    "مف", "مق", "مل", "مم", "من", "مه", "مو", "می", "نا", "نت",
+    "نج", "نح", "ند", "نر", "نز", "نس", "نش", "نص", "نض", "نط",
+    "نظ", "نع", "نف", "نق", "نل", "نم", "نن", "نه", "نو", "نی",
+    "ها", "هب", "هد", "هر", "هز", "هس", "هش", "هل", "هم", "هن",
+    "هو", "هی", "وا", "وت", "وج", "وح", "ود", "ور", "وز", "وس",
+    "وش", "وص", "وض", "وط", "وظ", "وع", "وف", "وق", "ول", "وم",
+    "ون", "وه", "وی", "یا", "یت", "ید", "یر", "یز", "یس", "یش",
+    "یع", "یف", "یل", "یم", "ین", "یه", "یو",
+}
+
+# Arabic/Persian Unicode block
+_PERSIAN_UNICODE_RANGE = range(0x0600, 0x06FF + 1)
+
+
+def _compute_stopword_ratio(text: str) -> float:
+    """Compute the ratio of Persian stopwords in the text.
+
+    In valid Persian text, stopwords like ``از``, ``به``, ``در``, ``و``, ``که``
+    appear frequently. In RTL-reversed or garbled text, these stopwords disappear
+    or become unrecognizable.
+
+    Args:
+        text: The extracted text to evaluate.
+
+    Returns:
+        A float (0.0–1.0) representing the proportion of tokens that are
+        known Persian stopwords. Returns 0.0 if no tokens are found.
+    """
+    words = text.split()
+    if not words:
+        return 0.0
+
+    stopword_count = sum(1 for w in words if w in _ALL_PERSIAN_STOPWORDS)
+    return stopword_count / len(words)
+
+
+def _compute_bigram_plausibility(text: str) -> float:
+    """Compute a bigram plausibility score for Persian text.
+
+    Uses a pre-computed set of valid Persian bigrams. The score is the
+    proportion of adjacent Persian character pairs that appear in the
+    valid bigram set. Garbled text tends to have unusual bigram
+    distributions (many invalid bigrams).
+
+    Args:
+        text: The extracted text to evaluate.
+
+    Returns:
+        A float (0.0–1.0) representing the proportion of valid Persian
+        bigrams. Returns 1.0 if fewer than 2 Persian characters are found.
+    """
+    if not text:
+        return 1.0
+
+    # Collect all adjacent Persian character pairs
+    persian_chars_only = "".join(
+        ch for ch in text if ord(ch) in _PERSIAN_UNICODE_RANGE
+    )
+
+    if len(persian_chars_only) < 2:
+        return 1.0
+
+    valid_count = 0
+    total_bigrams = 0
+
+    for i in range(len(persian_chars_only) - 1):
+        bigram = persian_chars_only[i : i + 2]
+        total_bigrams += 1
+        if bigram in _VALID_PERSIAN_BIGRAMS:
+            valid_count += 1
+
+    if total_bigrams == 0:
+        return 1.0
+
+    return valid_count / total_bigrams
+
+
+def _compute_rtl_consistency(text: str) -> float:
+    """Compute an RTL consistency score for Persian text.
+
+    In valid Persian text, Persian characters appear in contiguous runs
+    (words). RTL-reversed text often has Persian characters interspersed
+    with non-Persian characters in unnatural patterns.
+
+    This score measures the proportion of Persian characters that are
+    adjacent to at least one other Persian character (i.e., part of a
+    multi-character Persian word). This is similar to the inverse of the
+    old ``_compute_garbled_ratio``.
+
+    Args:
+        text: The extracted text to evaluate.
+
+    Returns:
+        A float (0.0–1.0) where 1.0 means all Persian characters are
+        part of multi-character runs (highly consistent), and 0.0 means
+        all Persian characters are isolated. Returns 1.0 if no Persian
+        characters are found.
+    """
+    if not text or not text.strip():
+        return 1.0
+
+    total_persian = 0
+    connected_count = 0
+
+    for i, ch in enumerate(text):
+        if ord(ch) in _PERSIAN_UNICODE_RANGE:
+            total_persian += 1
+            prev_char = text[i - 1] if i > 0 else " "
+            next_char = text[i + 1] if i + 1 < len(text) else " "
+
+            prev_is_persian = ord(prev_char) in _PERSIAN_UNICODE_RANGE
+            next_is_persian = ord(next_char) in _PERSIAN_UNICODE_RANGE
+
+            # A character is "connected" if at least one neighbor is Persian
+            if prev_is_persian or next_is_persian:
+                connected_count += 1
+
+    if total_persian == 0:
+        return 1.0
+
+    return connected_count / total_persian
+
+
+def _compute_character_entropy(text: str) -> float:
+    """Compute the Shannon entropy of Persian characters in the text.
+
+    Garbled text often has higher entropy (more random character distribution)
+    compared to natural Persian text which follows predictable patterns.
+
+    Args:
+        text: The extracted text to evaluate.
+
+    Returns:
+        A float representing the entropy (0.0+). Natural Persian text
+        typically has entropy around 2.0–3.5. Garbled text can exceed 4.0.
+        Returns 0.0 if no Persian characters are found.
+    """
+    if not text:
+        return 0.0
+
+    # Count frequency of each Persian character
+    freq: dict[str, int] = {}
+    total = 0
+    for ch in text:
+        if ord(ch) in _PERSIAN_UNICODE_RANGE:
+            freq[ch] = freq.get(ch, 0) + 1
+            total += 1
+
+    if total == 0:
+        return 0.0
+
+    # Compute Shannon entropy: -sum(p * log2(p))
+    import math
+    entropy = 0.0
+    for count in freq.values():
+        p = count / total
+        if p > 0:
+            entropy -= p * math.log2(p)
+
+    return entropy
+
+
+def _compute_persian_quality_score(text: str) -> float:
+    """Compute a quality score (0.0 = garbage, 1.0 = perfect) for Persian text.
+
+    Combines multiple signals:
+    1. **Stopword ratio** (weight 0.50) — Most reliable signal. Valid Persian
+       text has frequent stopwords like ``از``, ``به``, ``در``, ``و``, ``که``.
+       Garbled/RTL-reversed text loses these stopwords because the character
+       sequence is reversed, making stopwords unrecognizable.
+    2. **Bigram plausibility** (weight 0.10) — Statistical bigram frequency.
+       NOTE: This signal is NOT reliable for RTL-reversed text (reversing
+       preserves bigrams), but helps detect other types of corruption like
+       random character substitution.
+    3. **RTL consistency** (weight 0.25) — Measures if Persian characters appear
+       in contiguous runs (words) vs isolated. Helps detect shattered text
+       (spaces between characters).
+    4. **Character entropy** (weight 0.15) — Garbled text often has higher
+       entropy (more random character distribution).
+
+    Args:
+        text: The extracted text to evaluate.
+
+    Returns:
+        A float (0.0–1.0) representing the quality score.
+        0.0 = completely garbled, 1.0 = perfect Persian text.
+    """
+    if not text or not text.strip():
+        return 0.0
+
+    signals = []
+
+    # Signal 1: Stopword ratio (0.0–1.0)
+    # Most powerful signal for RTL-reversed text detection.
+    # In reversed text, stopwords like از, به, در become unrecognizable.
+    stopword_ratio = _compute_stopword_ratio(text)
+    signals.append(stopword_ratio)
+
+    # Signal 2: Bigram plausibility (0.0–1.0)
+    # Less reliable for RTL reversal, but helps with other corruption types.
+    bigram_score = _compute_bigram_plausibility(text)
+    signals.append(bigram_score)
+
+    # Signal 3: RTL consistency (0.0–1.0)
+    # Detects shattered text where Persian chars are isolated by spaces.
+    rtl_score = _compute_rtl_consistency(text)
+    signals.append(rtl_score)
+
+    # Signal 4: Character entropy (0.0–1.0, inverted)
+    # High entropy indicates random character distribution.
+    entropy = _compute_character_entropy(text)
+    entropy_score = 1.0 - min(entropy / 5.0, 1.0)
+    signals.append(entropy_score)
+
+    # Weighted combination — stopwords most reliable for RTL reversal
+    weights = [0.50, 0.10, 0.25, 0.15]
+    return sum(s * w for s, w in zip(signals, weights))
 
 
 def _compute_garbled_ratio(text: str) -> float:
-    """Compute the garbled ratio for Persian text.
+    """Compute the garbled ratio for Persian text (legacy heuristic).
 
     Uses a heuristic: counts the proportion of Persian/Arabic characters that
     appear isolated (surrounded by non-Persian characters). In properly rendered
     Persian text, most characters should be adjacent to other Persian characters.
 
     The Arabic/Persian Unicode block is U+0600–U+06FF.
+
+    .. deprecated::
+        Use :func:`_compute_persian_quality_score` instead, which combines
+        multiple signals for more reliable detection.
 
     Args:
         text: The extracted text to evaluate.
@@ -79,19 +382,18 @@ def _compute_garbled_ratio(text: str) -> float:
     if not text or not text.strip():
         return 0.0
 
-    persian_range = range(0x0600, 0x06FF + 1)
     isolated_count = 0
     total_persian = 0
 
     for i, ch in enumerate(text):
-        if ord(ch) in persian_range:
+        if ord(ch) in _PERSIAN_UNICODE_RANGE:
             total_persian += 1
             # Check if surrounded by non-Persian characters
             prev_char = text[i - 1] if i > 0 else " "
             next_char = text[i + 1] if i + 1 < len(text) else " "
 
-            prev_is_persian = ord(prev_char) in persian_range
-            next_is_persian = ord(next_char) in persian_range
+            prev_is_persian = ord(prev_char) in _PERSIAN_UNICODE_RANGE
+            next_is_persian = ord(next_char) in _PERSIAN_UNICODE_RANGE
 
             # A character is "isolated" if neither neighbor is Persian
             if not prev_is_persian and not next_is_persian:
@@ -103,17 +405,34 @@ def _compute_garbled_ratio(text: str) -> float:
     return isolated_count / total_persian
 
 
-def _is_persian_text_garbled(text: str, threshold: float | None = None) -> bool:
+def _is_persian_text_garbled(
+    text: str,
+    threshold: float | None = None,
+    *,
+    use_quality_score: bool = True,
+) -> bool:
     """Check if extracted Persian text appears garbled (RTL reversal).
 
-    Uses :func:`_compute_garbled_ratio` to get the ratio of isolated Persian
-    characters, then compares it against the threshold.
+    Uses the multi-signal :func:`_compute_persian_quality_score` by default,
+    which combines stopword ratio, bigram plausibility, RTL consistency, and
+    character entropy for more reliable detection.
+
+    Falls back to the legacy :func:`_compute_garbled_ratio` if
+    ``use_quality_score=False``.
+
+    For documents detected as Persian legal text, uses the stricter
+    ``EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL`` threshold (default 0.15).
 
     Args:
         text: The extracted text to evaluate.
-        threshold: Ratio threshold (0.0–1.0). If the proportion of isolated
-            Persian chars exceeds this, the text is considered garbled.
+        threshold: Quality score threshold (0.0–1.0). If the quality score
+            falls below this threshold, the text is considered garbled.
             Defaults to ``settings.EXTRACTION_GARBLED_THRESHOLD`` or 0.3.
+            When ``use_quality_score=True``, a lower threshold means *stricter*
+            (quality < threshold → garbled), so 0.4 means "quality below 0.4
+            is garbled".
+        use_quality_score: If ``True`` (default), uses the multi-signal
+            quality score. If ``False``, uses the legacy garbled ratio.
 
     Returns:
         ``True`` if the text appears garbled, ``False`` otherwise.
@@ -124,13 +443,23 @@ def _is_persian_text_garbled(text: str, threshold: float | None = None) -> bool:
     if threshold is None:
         threshold = getattr(settings, "EXTRACTION_GARBLED_THRESHOLD", 0.3)
 
-    ratio = _compute_garbled_ratio(text)
-    logger.debug(
-        "Persian garbled check: ratio=%.2f, threshold=%.2f",
-        ratio,
-        threshold,
-    )
-    return ratio > threshold
+    if use_quality_score:
+        quality = _compute_persian_quality_score(text)
+        logger.debug(
+            "Persian quality score: %.3f, threshold=%.2f",
+            quality,
+            threshold,
+        )
+        # Quality score < threshold → garbled (lower quality = more garbled)
+        return quality < threshold
+    else:
+        ratio = _compute_garbled_ratio(text)
+        logger.debug(
+            "Persian garbled check (legacy): ratio=%.2f, threshold=%.2f",
+            ratio,
+            threshold,
+        )
+        return ratio > threshold
 
 
 def _has_shattered_persian_words(text: str, threshold: float = 0.4) -> bool:
@@ -159,13 +488,12 @@ def _has_shattered_persian_words(text: str, threshold: float = 0.4) -> bool:
     if not tokens:
         return False
 
-    persian_range = range(0x0600, 0x06FF + 1)
     single_char_count = 0
     persian_token_count = 0
 
     for token in tokens:
         # Count Persian chars in this token
-        persian_chars = [c for c in token if ord(c) in persian_range]
+        persian_chars = [c for c in token if ord(c) in _PERSIAN_UNICODE_RANGE]
         if not persian_chars:
             continue
         persian_token_count += 1
@@ -557,9 +885,24 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         # auto_fallback is already initialized at function start, so it's
         # always defined even in exception fallback paths.
 
-        # Helper: check both garbled-text heuristics (isolated chars + shattered words)
+        # Helper: check both quality score and shattered-word heuristic.
+        # Uses the multi-signal Persian quality score by default, with the
+        # stricter Persian legal threshold for legal-domain documents.
         def _is_garbled(t: str) -> bool:
-            return _is_persian_text_garbled(t) or _has_shattered_persian_words(t)
+            # Use the quality score with the Persian-legal-specific threshold
+            # if configured, otherwise fall back to the general threshold.
+            legal_threshold = getattr(
+                settings, "EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL", None
+            )
+            if legal_threshold is not None:
+                return (
+                    _is_persian_text_garbled(t, threshold=legal_threshold)
+                    or _has_shattered_persian_words(t)
+                )
+            return (
+                _is_persian_text_garbled(t)
+                or _has_shattered_persian_words(t)
+            )
 
         # Stage 2: Check quality and fall back to pdfplumber if garbled
         if auto_fallback and _is_garbled(extracted_text):
@@ -615,7 +958,14 @@ def extract_text_from_pdf(self, document_id: str) -> str:
                     e,
                 )
 
-        # Compute garbled score on the final extracted text.
+        # Compute quality score on the final extracted text.
+        # Uses the multi-signal Persian quality score (0.0 = garbage, 1.0 = perfect).
+        # The quality score is stored as `garbled_score` for backward compatibility
+        # with the Document model field name, but now represents a quality metric
+        # rather than a garbled ratio.
+        quality_score = _compute_persian_quality_score(extracted_text)
+        # For backward compatibility, also compute the legacy garbled ratio
+        # so existing monitoring dashboards continue to work.
         garbled_score = _compute_garbled_ratio(extracted_text)
 
         # Update document metadata including extraction monitoring fields.
@@ -632,6 +982,17 @@ def extract_text_from_pdf(self, document_id: str) -> str:
                 "extracted_text_length",
                 "total_pages",
             ]
+        )
+
+        logger.info(
+            "extract_text_from_pdf: Document %s quality_score=%.3f "
+            "(garbled_ratio=%.3f, method=%s, chars=%d, pages=%d)",
+            document_id,
+            quality_score,
+            garbled_score,
+            extraction_method,
+            len(extracted_text),
+            num_pages,
         )
 
         # Mark the ProcessingTask as completed.

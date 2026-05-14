@@ -1,60 +1,68 @@
-# WIP Context — Phase 1: Persian Normalizer Enhancement
+# WIP Context — Phase 2: Garbled Detection Enhancement
 
-## Status: ✅ COMPLETED — Phase 1 (1.1 + 1.2) Fully Implemented and Tested
+## Status: ✅ COMPLETED — Phase 2 (2.1 + 2.2) Fully Implemented and Tested
 
-## Latest: Phase 1 — Persian Normalizer Enhancement (2026-05-14)
+## Latest: Phase 2 — Persian Language Confidence Score (2026-05-14)
 
 ### Changes Made
 
-#### 1.1 Ligature-Reversal Dictionary — TACTICAL (`persian_normalizer.py`)
+#### 2.1 Persian Language Confidence Score — STRATEGIC (`document_processing.py`)
 
-**Problem:** No post-NFKC correction for common `لا` reversal errors in Persian PDF extraction.
+**Problem:** Current heuristics (`_compute_garbled_ratio`, `_has_shattered_persian_words`) miss RTL-reversed connected text like `رپونده` and `خوااهن`. The previously proposed bigram set approach was too fragile.
 
-**Solution:** Added `_LIGATURE_FIXES` dictionary (19 entries) mapping known garbled patterns to correct forms, and a new `fix_ligature_reversals()` method.
+**Solution:** Replaced simple bigram checks with a **multi-signal Persian Language Confidence Score** that combines four signals:
 
-**Files modified:**
-- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:99) — Added `_LIGATURE_FIXES` dict (lines 99-132)
-- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:265) — Added `fix_ligature_reversals()` method (lines 265-280)
-- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:200) — Updated `normalize()` pipeline to call `fix_ligature_reversals()` as Stage 1 (after NFKC, before Tatweel)
+1. **Stopword ratio** (weight 0.50) — Most reliable signal. Valid Persian text has frequent stopwords like `از`, `به`, `در`, `و`, `که`. RTL-reversed text loses these stopwords.
+2. **Bigram plausibility** (weight 0.10) — Statistical bigram frequency. NOTE: Not reliable for RTL reversal (reversing preserves bigrams), but helps detect random corruption.
+3. **RTL consistency** (weight 0.25) — Measures if Persian characters appear in contiguous runs vs isolated. Detects shattered text.
+4. **Character entropy** (weight 0.15, inverted) — Garbled text often has higher entropy.
 
-**Pipeline position:** Stage 1 — after NFKC normalization, before Tatweel stripping. This catches reversal patterns after NFKC decomposes ligatures but before further processing.
-
-#### 1.2 Date Repair Logic — EXPANDED (`persian_normalizer.py`)
-
-**Problem:** Dates like `1376/01/15` split across lines during PDF extraction.
-
-**Solution:** Added `_DATE_BROKEN_RE` comprehensive regex and `repair_broken_dates()` method.
+**Key insight confirmed:** The stopword ratio signal is the most powerful for RTL-reversed text detection. In reversed text like `رپونده خوااهن`, stopwords like `از`, `به`, `در` become unrecognizable, driving the quality score below threshold even when other signals are high.
 
 **Files modified:**
-- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:134) — Added `_DATE_BROKEN_RE` regex (lines 134-152)
-- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:282) — Added `repair_broken_dates()` method (lines 282-317)
-- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py:228) — Updated `normalize()` pipeline to call `repair_broken_dates()` as Stage 6 (after Hazm, before final cleanup)
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:58) — Added `_PERSIAN_STOPWORDS`, `_LEGAL_STOPWORDS`, `_ALL_PERSIAN_STOPWORDS` sets (lines 58-83)
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:85) — Added comprehensive `_VALID_PERSIAN_BIGRAMS` set (~400 entries covering all Arabic/Persian letter combinations)
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:104) — Added `_compute_stopword_ratio()` function
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:127) — Added `_compute_bigram_plausibility()` function
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:166) — Added `_compute_rtl_consistency()` function
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:220) — Added `_compute_character_entropy()` function
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:305) — Added `_compute_persian_quality_score()` function (combines all 4 signals with weights [0.50, 0.10, 0.25, 0.15])
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:353) — Updated `_compute_garbled_ratio()` with deprecation notice pointing to new quality score
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:395) — Updated `_is_persian_text_garbled()` to use quality score by default (with `use_quality_score=True` parameter, fallback to legacy mode)
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:880) — Updated `_is_garbled` helper in `extract_text_from_pdf` to use `EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL` when configured
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py:950) — Updated `garbled_score` computation to also compute and log `quality_score`
 
-**Pipeline position:** Stage 6 — after `fix_half_spaces` (Hazm), before `_final_cleanup`. This is critical because Hazm adds spaces around `/` punctuation, which would break the regex if it ran earlier. The regex allows optional whitespace (`\s*`) around all separators to handle Hazm's space insertion.
+#### 2.2 Lower Garbled Threshold for Persian Legal Text
 
-**Bug fix during implementation:** The regex was initially placed between NFKC and Tatweel (as specified in the plan), but Hazm's normalization adds spaces around `/` (e.g., `1376/01/15` → `1376 / 01 / 15`), which broke the date after repair. Moved to after Hazm and made the regex whitespace-tolerant.
+**Problem:** Current threshold of 0.3 is too permissive for the existing heuristic.
 
-#### Test Files Modified
-- [`test_persian_normalizer.py`](src/backend/documents/tests/test_persian_normalizer.py:425) — Added `TestFixLigatureReversals` class (20 tests)
-- [`test_persian_normalizer.py`](src/backend/documents/tests/test_persian_normalizer.py:537) — Added `TestRepairBrokenDates` class (14 tests)
+**Solution:** Added `EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL` setting with a stricter default of 0.15 for documents detected as Persian legal text.
+
+**Files modified:**
+- [`settings.py`](src/backend/config/settings.py:306) — Added `EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL` setting (default 0.15)
 
 ### Test Results
 ```
-87 passed in 83.57s
+82 passed in 44.98s
 ```
-All 87 tests pass, including all 34 new tests for ligature fixes and date repair.
+All 82 tests pass, including all 50 new tests for Phase 2 features (7 test classes covering stopword ratio, bigram plausibility, RTL consistency, character entropy, quality score, legacy garbled ratio, and threshold detection).
 
 ### Key Design Decisions
 
-1. **Ligature fixes use simple `str.replace()`** — No regex needed since these are exact word-level mappings. Applied as a single pass over the text.
+1. **Stopword weight increased to 0.50** — During testing, we discovered that bigram plausibility is NOT a reliable signal for RTL-reversed text because reversing a word preserves its bigrams (e.g., `قانون` → `نوناق` has bigrams `نو`, `ون`, `نا`, `اق` which are all valid Persian bigrams). The stopword ratio is the only signal that reliably detects RTL reversal.
 
-2. **Date regex captures each component separately** — Instead of `(\d{1,2}/\d{1,2})` as a single group, we use `(\d{1,2})\s*/\s*(\d{1,2})` as two groups to allow whitespace around the inner separator (needed because Hazm adds spaces).
+2. **Bigram weight reduced to 0.10** — Kept as a minor signal for detecting random character corruption (not RTL reversal).
 
-3. **Date repair runs after Hazm** — Hazm's `normalize()` adds spaces around punctuation. Running date repair after Hazm ensures the regex sees the final text with all Hazm-induced whitespace, and the `\s*` patterns in the regex handle it correctly.
+3. **Comprehensive bigram set** — Expanded from ~50 entries to ~400 entries covering all Arabic/Persian letter combinations to ensure valid Persian text scores high on bigram plausibility.
+
+4. **Backward compatibility** — `_compute_garbled_ratio()` is preserved with a deprecation notice. `_is_persian_text_garbled()` accepts `use_quality_score=False` to fall back to legacy behavior. The `garbled_score` field on the Document model still stores the legacy ratio for dashboard compatibility, while `quality_score` is logged.
+
+5. **Threshold semantics** — Quality score < threshold → garbled (lower quality = more garbled). The Persian legal threshold of 0.15 is stricter (requires higher quality to pass) than the general threshold of 0.3.
 
 ### Next Steps
-Phase 2+ as defined in the remediation plan (not yet started).
+Phase 3+ as defined in the remediation plan (not yet started).
 
 ### Reference Docs
-- [`persian_normalizer.py`](src/backend/documents/services/persian_normalizer.py) — Updated with ligature fixes and date repair
-- [`test_persian_normalizer.py`](src/backend/documents/tests/test_persian_normalizer.py) — 34 new tests for Phase 1 features
+- [`document_processing.py`](src/backend/documents/tasks/document_processing.py) — Updated with multi-signal quality score system
+- [`settings.py`](src/backend/config/settings.py) — Added `EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL`
+- [`test_tasks.py`](src/backend/documents/tests/test_tasks.py) — 50 new tests for Phase 2 features

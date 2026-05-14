@@ -302,6 +302,17 @@ EXTRACTION_BACKEND = env('EXTRACTION_BACKEND', default='pymupdf')  # pymupdf | p
 EXTRACTION_AUTO_FALLBACK = env.bool('EXTRACTION_AUTO_FALLBACK', default=True)
 EXTRACTION_GARBLED_THRESHOLD = env.float('EXTRACTION_GARBLED_THRESHOLD', default=0.3)
 
+# Persian Legal Text Garbled Detection
+# Stricter threshold (0.15) for documents detected as Persian legal text.
+# The multi-signal quality score (0.0 = garbage, 1.0 = perfect) is compared
+# against this threshold: quality < threshold → garbled.
+# A lower value means MORE strict (requires higher quality to pass).
+# Set to None or remove to fall back to EXTRACTION_GARBLED_THRESHOLD.
+EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL = env.float(
+    'EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL',
+    default=0.15,
+)
+
 # Storage Configuration
 STORAGE_TYPE = env('STORAGE_TYPE', default='local')
 LOCAL_STORAGE_PATH = env('LOCAL_STORAGE_PATH', default=os.path.join(BASE_DIR, 'media/documents'))

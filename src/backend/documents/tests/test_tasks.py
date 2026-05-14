@@ -7,6 +7,11 @@ Covers:
 - :func:`~documents.tasks.document_processing.process_document`
 - :func:`~documents.tasks.embedding_tasks.embed_document`
 - :func:`~documents.tasks.document_processing._has_shattered_persian_words`
+- :func:`~documents.tasks.document_processing._compute_persian_quality_score`
+- :func:`~documents.tasks.document_processing._compute_stopword_ratio`
+- :func:`~documents.tasks.document_processing._compute_bigram_plausibility`
+- :func:`~documents.tasks.document_processing._compute_rtl_consistency`
+- :func:`~documents.tasks.document_processing._compute_character_entropy`
 """
 
 from __future__ import annotations
@@ -26,8 +31,15 @@ from documents.models import Document, DocumentChunk
 from documents.services.anchor_chunking_service import AnchorChunkingService
 from documents.tasks import process_document  # re-exported from services module
 from documents.tasks.document_processing import (
+    _compute_bigram_plausibility,
+    _compute_character_entropy,
+    _compute_garbled_ratio,
+    _compute_persian_quality_score,
+    _compute_rtl_consistency,
+    _compute_stopword_ratio,
     _handle_chain_error,
     _has_shattered_persian_words,
+    _is_persian_text_garbled,
     chunk_document,
     extract_text_from_pdf,
 )
@@ -870,3 +882,282 @@ class HasShatteredPersianWordsTests(TestCase):
         self.assertFalse(_has_shattered_persian_words(text, threshold=0.9))
         # With a very low threshold, this should be detected
         self.assertTrue(_has_shattered_persian_words(text, threshold=0.1))
+
+
+# ---------------------------------------------------------------------------
+# Tests — Persian Language Confidence Score (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class ComputeStopwordRatioTests(TestCase):
+    """Tests for :func:`_compute_stopword_ratio`."""
+
+    def test_empty_text(self) -> None:
+        """Empty string → 0.0."""
+        self.assertEqual(_compute_stopword_ratio(""), 0.0)
+
+    def test_no_persian_stopwords(self) -> None:
+        """Text with no Persian stopwords → 0.0."""
+        text = "This is a test with no Persian words at all."
+        self.assertEqual(_compute_stopword_ratio(text), 0.0)
+
+    def test_all_stopwords(self) -> None:
+        """Text consisting entirely of stopwords → 1.0."""
+        text = "از به در با و که این آن را"
+        self.assertAlmostEqual(_compute_stopword_ratio(text), 1.0)
+
+    def test_mixed_stopwords(self) -> None:
+        """Mixed Persian text with stopwords → ratio between 0 and 1."""
+        text = "قانون مدنی جمهوری اسلامی ایران در تاریخ ۱۳۷۶ تصویب شد"
+        # Stopwords in this text: "در", "شد"
+        ratio = _compute_stopword_ratio(text)
+        self.assertGreater(ratio, 0.0)
+        self.assertLess(ratio, 1.0)
+
+    def test_legal_stopwords(self) -> None:
+        """Legal-domain stopwords are recognized."""
+        text = "دادگاه شعبه خواهان خوانده پرونده کلاسه"
+        ratio = _compute_stopword_ratio(text)
+        self.assertGreater(ratio, 0.5)
+
+    def test_garbled_text_low_stopwords(self) -> None:
+        """RTL-reversed garbled text should have very few stopwords."""
+        # Simulated RTL-reversed text — stopwords like از, به, در are gone
+        text = "رپونده خوااهن ناوخد هدبش هدافتسا"
+        ratio = _compute_stopword_ratio(text)
+        self.assertLess(ratio, 0.1)
+
+    def test_typical_legal_paragraph(self) -> None:
+        """A typical Persian legal paragraph should have a decent stopword ratio."""
+        text = (
+            "به موجب ماده ۲ قانون مدنی، قراردادهای خصوصی نسبت به کسانی که "
+            "آن را منعقد نموده اند، در حکم قانون است و دادگاه نمی تواند "
+            "طرفین را از اجرای آن منع نماید مگر به موجب قانون."
+        )
+        ratio = _compute_stopword_ratio(text)
+        self.assertGreater(ratio, 0.1)
+
+
+class ComputeBigramPlausibilityTests(TestCase):
+    """Tests for :func:`_compute_bigram_plausibility`."""
+
+    def test_empty_text(self) -> None:
+        """Empty string → 1.0."""
+        self.assertEqual(_compute_bigram_plausibility(""), 1.0)
+
+    def test_no_persian_chars(self) -> None:
+        """Text with no Persian characters → 1.0."""
+        text = "Hello World"
+        self.assertEqual(_compute_bigram_plausibility(text), 1.0)
+
+    def test_single_persian_char(self) -> None:
+        """Single Persian character → 1.0 (no bigrams to evaluate)."""
+        self.assertEqual(_compute_bigram_plausibility("و"), 1.0)
+
+    def test_valid_persian_bigrams(self) -> None:
+        """Valid Persian text should have many valid bigrams."""
+        text = "قانون مدنی جمهوری اسلامی ایران"
+        score = _compute_bigram_plausibility(text)
+        # Most bigrams in this text should be valid
+        self.assertGreater(score, 0.3)
+
+    def test_garbled_bigrams(self) -> None:
+        """Garbled text (random chars) should have fewer valid bigrams.
+
+        NOTE: RTL-reversed text preserves bigrams (reversing a word keeps
+        the same character pairs), so bigram plausibility is NOT a reliable
+        signal for RTL reversal. This test uses random character sequences
+        which genuinely have fewer valid bigrams.
+        """
+        # Random Persian character sequence (not reversed, just random)
+        # This simulates OCR garbage or random corruption
+        garbled = "ثخدحزظصضطظغفذ"
+        score_garbled = _compute_bigram_plausibility(garbled)
+        # Valid Persian text should score higher
+        valid = "قانون مدنی جمهوری اسلامی ایران"
+        score_valid = _compute_bigram_plausibility(valid)
+        self.assertGreater(score_valid, score_garbled)
+
+
+class ComputeRtlConsistencyTests(TestCase):
+    """Tests for :func:`_compute_rtl_consistency`."""
+
+    def test_empty_text(self) -> None:
+        """Empty string → 1.0."""
+        self.assertEqual(_compute_rtl_consistency(""), 1.0)
+
+    def test_no_persian_chars(self) -> None:
+        """Text with no Persian characters → 1.0."""
+        text = "Hello World"
+        self.assertEqual(_compute_rtl_consistency(text), 1.0)
+
+    def test_valid_persian_high_consistency(self) -> None:
+        """Valid Persian text should have high RTL consistency."""
+        text = "قانون مدنی جمهوری اسلامی ایران"
+        score = _compute_rtl_consistency(text)
+        self.assertGreater(score, 0.8)
+
+    def test_isolated_persian_chars_low_consistency(self) -> None:
+        """Isolated Persian characters (garbled) should have low consistency."""
+        # Each Persian char isolated by spaces
+        text = "ق ا ن و ن   م د ن ی"
+        score = _compute_rtl_consistency(text)
+        self.assertLess(score, 0.3)
+
+    def test_mixed_text(self) -> None:
+        """Mixed Persian/English text should still have reasonable consistency."""
+        text = "قانون مدنی is the Persian Civil Code"
+        score = _compute_rtl_consistency(text)
+        # Most Persian chars are in contiguous runs
+        self.assertGreater(score, 0.5)
+
+
+class ComputeCharacterEntropyTests(TestCase):
+    """Tests for :func:`_compute_character_entropy`."""
+
+    def test_empty_text(self) -> None:
+        """Empty string → 0.0."""
+        self.assertEqual(_compute_character_entropy(""), 0.0)
+
+    def test_no_persian_chars(self) -> None:
+        """Text with no Persian characters → 0.0."""
+        text = "Hello World"
+        self.assertEqual(_compute_character_entropy(text), 0.0)
+
+    def test_single_repeated_char(self) -> None:
+        """Single repeated character → 0.0 entropy."""
+        text = "اااااااااا"
+        self.assertAlmostEqual(_compute_character_entropy(text), 0.0, places=1)
+
+    def test_valid_persian_entropy(self) -> None:
+        """Valid Persian text should have moderate entropy (2.0–4.0)."""
+        text = "قانون مدنی جمهوری اسلامی ایران ماده ۱"
+        entropy = _compute_character_entropy(text)
+        self.assertGreater(entropy, 1.0)
+        self.assertLess(entropy, 5.0)
+
+
+class ComputePersianQualityScoreTests(TestCase):
+    """Tests for :func:`_compute_persian_quality_score`."""
+
+    def test_empty_text(self) -> None:
+        """Empty string → 0.0."""
+        self.assertEqual(_compute_persian_quality_score(""), 0.0)
+
+    def test_whitespace_only(self) -> None:
+        """Whitespace-only string → 0.0."""
+        self.assertEqual(_compute_persian_quality_score("   \n\n  "), 0.0)
+
+    def test_valid_persian_high_score(self) -> None:
+        """Valid Persian legal text should score high (>0.5)."""
+        text = (
+            "به موجب ماده ۲ قانون مدنی، قراردادهای خصوصی نسبت به کسانی که "
+            "آن را منعقد نموده اند، در حکم قانون است و دادگاه نمی تواند "
+            "طرفین را از اجرای آن منع نماید مگر به موجب قانون."
+        )
+        score = _compute_persian_quality_score(text)
+        self.assertGreater(score, 0.5)
+
+    def test_garbled_text_low_score(self) -> None:
+        """RTL-reversed garbled text should score low (<0.4).
+
+        RTL-reversed text has zero valid stopwords (the most reliable signal),
+        which dominates the weighted score (weight 0.50). Even though bigram
+        plausibility and RTL consistency may be high, the absence of stopwords
+        pulls the score below threshold.
+        """
+        # Simulated RTL-reversed text — stopwords like از, به, در are gone
+        text = "رپونده خوااهن ناوخد هدبش هدافتسا"
+        score = _compute_persian_quality_score(text)
+        self.assertLess(score, 0.4)
+
+    def test_shattered_text_low_score(self) -> None:
+        """Shattered Persian text (spaces between chars) should score low.
+
+        Shattered text has low RTL consistency (chars are isolated by spaces)
+        AND zero valid stopwords, so both the stopword and RTL signals fire.
+        """
+        text = "ق ا ن و ن   م د ن ی   ج م ه و ر ی   ا س ل ا م ی"
+        score = _compute_persian_quality_score(text)
+        self.assertLess(score, 0.4)
+
+    def test_english_text_default_score(self) -> None:
+        """English text with no Persian chars → depends on signals."""
+        text = "This is a test document with multiple sentences."
+        score = _compute_persian_quality_score(text)
+        # No Persian chars → stopword_ratio=0, bigram=1.0, rtl=1.0, entropy=0.0
+        # entropy_score = 1.0 - min(0/5, 1.0) = 1.0
+        # Weighted: 0*0.50 + 1.0*0.10 + 1.0*0.25 + 1.0*0.15 = 0.10+0.25+0.15 = 0.50
+        self.assertAlmostEqual(score, 0.50, places=1)
+
+    def test_persian_legal_document_high_score(self) -> None:
+        """A realistic Persian legal document should score well above threshold."""
+        text = (
+            "دادنامه شماره ۹۹۰۹۹۷۰۲۲۲۲۰۰۱۲۳\n"
+            "شعبه ۲۲ دادگاه تجدیدنظر استان تهران\n"
+            "در خصوص تجدیدنظرخواهی آقای ... به طرفیت ...\n"
+            "نظر به اینکه دادنامه بدوی مطابق با قانون و دلایل موجود در پرونده "
+            "می باشد و از ناحیه تجدیدنظرخواه دلیل یا مدرکی که موجب نقض یا "
+            "بی اعتباری رأی بدوی گردد اقامه نشده است، لذا دادگاه اعتراض "
+            "مذکور را وارد ندانسته و به استناد ماده ۳۵۸ قانون آیین دادرسی "
+            "دادگاه های عمومی و انقلاب در امور مدنی، رأی بدوی را تأیید می نماید."
+        )
+        score = _compute_persian_quality_score(text)
+        self.assertGreater(score, 0.5)
+
+    def test_threshold_detection(self) -> None:
+        """Quality score < 0.4 should be detected as garbled by _is_persian_text_garbled.
+
+        Uses shattered text (spaces between chars) which has both low stopword
+        ratio AND low RTL consistency, ensuring the score is well below 0.4.
+        """
+        # Shattered text — low stopword ratio AND low RTL consistency
+        garbled = "ق ا ن و ن   م د ن ی   ج م ه و ر ی   ا س ل ا م ی"
+        self.assertTrue(_is_persian_text_garbled(garbled, threshold=0.4))
+
+    def test_threshold_clear_text(self) -> None:
+        """Quality score >= 0.4 should NOT be detected as garbled."""
+        valid = (
+            "به موجب ماده ۲ قانون مدنی، قراردادهای خصوصی نسبت به کسانی که "
+            "آن را منعقد نموده اند، در حکم قانون است."
+        )
+        self.assertFalse(_is_persian_text_garbled(valid, threshold=0.4))
+
+    def test_legacy_mode_fallback(self) -> None:
+        """Legacy mode (use_quality_score=False) uses old garbled ratio."""
+        text = "قانون مدنی جمهوری اسلامی ایران"
+        # With legacy mode and a very low threshold, clean text should not be garbled
+        self.assertFalse(
+            _is_persian_text_garbled(text, threshold=0.9, use_quality_score=False)
+        )
+
+    def test_legacy_mode_garbled_detection(self) -> None:
+        """Legacy mode detects isolated Persian chars as garbled."""
+        text = "ق ا ن و ن   م د ن ی"
+        self.assertTrue(
+            _is_persian_text_garbled(text, threshold=0.3, use_quality_score=False)
+        )
+
+
+class ComputeGarbledRatioLegacyTests(TestCase):
+    """Tests for the legacy :func:`_compute_garbled_ratio` (kept for backward compat)."""
+
+    def test_empty_text(self) -> None:
+        """Empty string → 0.0."""
+        self.assertEqual(_compute_garbled_ratio(""), 0.0)
+
+    def test_no_persian_chars(self) -> None:
+        """Text with no Persian characters → 0.0."""
+        self.assertEqual(_compute_garbled_ratio("Hello World"), 0.0)
+
+    def test_valid_persian_low_ratio(self) -> None:
+        """Valid Persian text should have low garbled ratio."""
+        text = "قانون مدنی جمهوری اسلامی ایران"
+        ratio = _compute_garbled_ratio(text)
+        self.assertLess(ratio, 0.3)
+
+    def test_isolated_chars_high_ratio(self) -> None:
+        """Isolated Persian characters should have high garbled ratio."""
+        text = "ق ا ن و ن"
+        ratio = _compute_garbled_ratio(text)
+        self.assertGreater(ratio, 0.5)
