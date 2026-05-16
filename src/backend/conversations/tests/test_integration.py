@@ -80,7 +80,7 @@ class ConversationIntegrationTests(TestCase):
             page_end=3,
             content="Machine learning is a subset of artificial intelligence.",
             token_count=10,
-            embedding=[0.1] * 768,
+            embedding=[0.1] * 1024,
         )
         DocumentChunk.objects.create(
             document=self.document,
@@ -89,7 +89,7 @@ class ConversationIntegrationTests(TestCase):
             page_end=6,
             content="Deep learning uses neural networks with multiple layers.",
             token_count=8,
-            embedding=[0.2] * 768,
+            embedding=[0.2] * 1024,
         )
 
     # -- Test: Full conversation lifecycle ------------------------------------
@@ -189,7 +189,7 @@ class ConversationIntegrationTests(TestCase):
     ):
         """Test that run_rag_query correctly orchestrates embedding, search, and chat provider."""
         # Arrange
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_hybrid_search.return_value = [
             {
                 "chunk_id": "chunk-1",

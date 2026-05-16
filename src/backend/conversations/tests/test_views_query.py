@@ -278,17 +278,17 @@ class DocumentDirectQueryViewTests(TestCase):
         self.assertEqual(response.data["error"], "rate_limit_exceeded")
         self.assertEqual(response.data["retry_after"], 60)
 
-    # -- 11. Default top_k is 5 -----------------------------------------------
+    # -- 11. Default top_k is 15 ----------------------------------------------
 
     @patch("conversations.views.run_rag_query")
     def test_post_default_top_k(
         self,
         mock_run_rag_query,
     ) -> None:
-        """POST without top_k should default to 5."""
+        """POST without top_k should default to 15."""
         mock_run_rag_query.return_value = self._MOCK_RAG_RESPONSE
 
         self._post_query(question="Test question?")
 
         call_kwargs = mock_run_rag_query.call_args[1]
-        self.assertEqual(call_kwargs["top_k"], 5)
+        self.assertEqual(call_kwargs["top_k"], 15)

@@ -272,7 +272,7 @@ class RunRagQueryTests:
                 "document to maximize embedding similarity with real legal text."
             ),
         )
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_hybrid_search.return_value = [
             {
                 "chunk_id": "chunk-1",
@@ -340,7 +340,7 @@ class RunRagQueryTests:
                 "document to maximize embedding similarity with real legal text."
             ),
         )
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_hybrid_search.return_value = [
             {
                 "chunk_id": "chunk-a",
@@ -406,7 +406,7 @@ class RunRagQueryTests:
                 "document to maximize embedding similarity with real legal text."
             ),
         )
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_hybrid_search.return_value = []
 
         # Create 20 turns of history (40 messages)
@@ -468,7 +468,7 @@ class RunRagQueryTests:
                 "document to maximize embedding similarity with real legal text."
             ),
         )
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_hybrid_search.return_value = []
         mock_provider = MagicMock()
         mock_provider.chat.side_effect = Exception("Chat provider API error")
@@ -533,7 +533,7 @@ class RunRagQueryTests:
                 "document to maximize embedding similarity with real legal text."
             ),
         )
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_hybrid_search.side_effect = Exception("Search failed")
 
         # Act / Assert
@@ -566,7 +566,7 @@ class RunRagQueryTests:
                 "document to maximize embedding similarity with real legal text."
             ),
         )
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_hybrid_search.return_value = []
 
         mock_provider = MagicMock()
@@ -611,7 +611,7 @@ class RunRagQueryTests:
                 "document to maximize embedding similarity with real legal text."
             ),
         )
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_hybrid_search.return_value = []
 
         mock_provider = MagicMock()
@@ -635,7 +635,7 @@ class RunRagQueryTests:
         # Assert — verify formulation.fts_query is passed as query_text
         mock_hybrid_search.assert_called_once_with(
             document_id="doc-topk",
-            query_vector=[0.1] * 768,
+            query_vector=[0.1] * 1024,
             query_text="optimized fts query",
             top_k=3,
             filters=None,

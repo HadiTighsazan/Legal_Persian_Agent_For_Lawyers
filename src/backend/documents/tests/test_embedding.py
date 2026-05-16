@@ -37,7 +37,7 @@ from users.models import User
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_embedding(dim: int = 768) -> list[float]:
+def _make_fake_embedding(dim: int = 1024) -> list[float]:
     """Return a fake embedding vector of *dim* floats (all 0.1)."""
     return [0.1] * dim
 
@@ -87,11 +87,11 @@ class GenerateEmbeddingTests(TestCase):
     """Tests for :func:`generate_embedding`."""
 
     @patch("documents.services.embedding_service.get_embedding_provider")
-    def test_generate_embedding_returns_768_floats(
+    def test_generate_embedding_returns_1024_floats(
         self,
         mock_get_provider: MagicMock,
     ) -> None:
-        """A valid text should return a 768-dim embedding vector."""
+        """A valid text should return a 1024-dim embedding vector."""
         fake_embedding = _make_fake_embedding()
         mock_provider = MagicMock()
         mock_provider.embed.return_value = fake_embedding
@@ -101,7 +101,7 @@ class GenerateEmbeddingTests(TestCase):
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(len(result), 768)
+        self.assertEqual(len(result), 1024)
         self.assertEqual(result, fake_embedding)
         mock_provider.embed.assert_called_once_with("Hello world")
 
@@ -129,11 +129,11 @@ class EmbedQueryTests(TestCase):
     """Tests for :func:`embed_query`."""
 
     @patch("documents.services.embedding_service.get_embedding_provider")
-    def test_embed_query_returns_768_floats(
+    def test_embed_query_returns_1024_floats(
         self,
         mock_get_provider: MagicMock,
     ) -> None:
-        """A valid query should return a 768-dim embedding vector."""
+        """A valid query should return a 1024-dim embedding vector."""
         fake_embedding = _make_fake_embedding()
         mock_provider = MagicMock()
         mock_provider.embed_query.return_value = fake_embedding
@@ -141,7 +141,7 @@ class EmbedQueryTests(TestCase):
 
         result = embed_query("hello world")
 
-        self.assertEqual(len(result), 768)
+        self.assertEqual(len(result), 1024)
         self.assertEqual(result, fake_embedding)
         mock_provider.embed_query.assert_called_once_with("hello world")
 
@@ -188,9 +188,9 @@ class BatchGenerateEmbeddingsTests(TestCase):
         texts = ["First text", "Second text", "Third text"]
         mock_provider = MagicMock()
         mock_provider.embed_batch.return_value = [
-            [1.0] + [0.0] * 767,
-            [2.0] + [0.0] * 767,
-            [3.0] + [0.0] * 767,
+            [1.0] + [0.0] * 1023,
+            [2.0] + [0.0] * 1023,
+            [3.0] + [0.0] * 1023,
         ]
         mock_get_provider.return_value = mock_provider
 
@@ -201,7 +201,7 @@ class BatchGenerateEmbeddingsTests(TestCase):
             self.assertIsNotNone(result)
             assert result is not None
             self.assertEqual(result[0], float(idx + 1))
-            self.assertEqual(len(result), 768)
+            self.assertEqual(len(result), 1024)
 
         mock_provider.embed_batch.assert_called_once_with(texts)
 
@@ -385,7 +385,7 @@ class ReembedChunkTests(TestCase):
             embedding=_make_fake_embedding(),
         )
 
-        new_embedding = [0.5] * 768
+        new_embedding = [0.5] * 1024
         mock_generate.return_value = new_embedding
 
         result = reembed_chunk(str(chunk.id))
@@ -531,7 +531,7 @@ class DocumentEmbedViewTests(TestCase):
             content="Embedded chunk",
             token_count=50,
             metadata={},
-            embedding=[0.1] * 768,
+            embedding=[0.1] * 1024,
         )
         DocumentChunk.objects.create(
             document=self.document,
@@ -882,7 +882,7 @@ class EmbeddingCeleryTaskTests(TestCase):
                 page_end=1,
                 content=f"Test chunk content {i}." * 20,
                 token_count=50,
-                embedding=None if not has_embedding else [0.1] * 768,
+                embedding=None if not has_embedding else [0.1] * 1024,
             )
             chunks.append(chunk)
         return chunks
@@ -895,7 +895,7 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.services.embedding_service.batch_generate_embeddings",
-            return_value=[[0.1] * 768, [0.2] * 768, [0.3] * 768],
+            return_value=[[0.1] * 1024, [0.2] * 1024, [0.3] * 1024],
         ):
             self._run_task()
 
@@ -907,7 +907,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         chunks = DocumentChunk.objects.filter(document=self.document).order_by("chunk_index")
         for chunk in chunks:
             self.assertIsNotNone(chunk.embedding)
-            self.assertEqual(len(chunk.embedding), 768)
+            self.assertEqual(len(chunk.embedding), 1024)
 
     def test_no_unembedded_chunks(self) -> None:
         """All chunks already embedded -> task completes immediately."""
@@ -961,7 +961,7 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.services.embedding_service.batch_generate_embeddings",
-            return_value=[[0.1] * 768, None, [0.3] * 768],
+            return_value=[[0.1] * 1024, None, [0.3] * 1024],
         ):
             self._run_task()
 
@@ -995,7 +995,7 @@ class EmbeddingCeleryTaskTests(TestCase):
         """Verify progress goes from 0 -> 50 -> 100 for 2 batches of 100 chunks each."""
         self._create_chunks(200)
 
-        embeddings = [[float(i)] * 768 for i in range(200)]
+        embeddings = [[float(i)] * 1024 for i in range(200)]
 
         with patch(
             "documents.services.embedding_service.batch_generate_embeddings",
@@ -1019,7 +1019,7 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.services.embedding_service.batch_generate_embeddings",
-            return_value=[[0.1] * 768] * 25,
+            return_value=[[0.1] * 1024] * 25,
         ):
             self._run_task()
 
@@ -1035,7 +1035,7 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.services.embedding_service.batch_generate_embeddings",
-            return_value=[[0.1] * 768],
+            return_value=[[0.1] * 1024],
         ):
             self._run_task()
 
@@ -1048,7 +1048,7 @@ class EmbeddingCeleryTaskTests(TestCase):
 
         with patch(
             "documents.services.embedding_service.batch_generate_embeddings",
-            return_value=[[0.1] * 768],
+            return_value=[[0.1] * 1024],
         ):
             self._run_task()
 
@@ -1058,12 +1058,12 @@ class EmbeddingCeleryTaskTests(TestCase):
     # -- Edge cases -------------------------------------------------------
 
     def test_exactly_one_batch(self) -> None:
-        """Exactly SUB_BATCH_SIZE (100) chunks -> processed in a single batch."""
-        self._create_chunks(100)
+        """Exactly SUB_BATCH_SIZE chunks -> processed in a single batch."""
+        self._create_chunks(SUB_BATCH_SIZE)
 
         with patch(
             "documents.services.embedding_service.batch_generate_embeddings",
-            return_value=[[0.1] * 768] * 100,
+            return_value=[[0.1] * 1024] * SUB_BATCH_SIZE,
         ) as mock_embed:
             self._run_task()
 
@@ -1074,12 +1074,13 @@ class EmbeddingCeleryTaskTests(TestCase):
         self.assertEqual(self.processing_task.progress, 100)
 
     def test_uneven_batch(self) -> None:
-        """150 chunks (1.5 batches) -> processed correctly with 2 batch calls."""
-        self._create_chunks(150)
+        """1.5x SUB_BATCH_SIZE chunks -> processed correctly with 2 batch calls."""
+        uneven_count = int(SUB_BATCH_SIZE * 1.5)
+        self._create_chunks(uneven_count)
 
         with patch(
             "documents.services.embedding_service.batch_generate_embeddings",
-            return_value=[[0.1] * 768] * 150,
+            return_value=[[0.1] * 1024] * uneven_count,
         ) as mock_embed:
             self._run_task()
 

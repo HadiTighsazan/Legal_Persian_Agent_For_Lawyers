@@ -41,6 +41,7 @@ from documents.models import Document, DocumentChunk
 from documents.services.anchor_chunking_service import (
     AnchorChunkingService,
 )
+from documents.services.persian_legal_chunker import PersianLegalChunker
 from documents.services.error_handler import (
     classify_pdf_error,
     fail_processing_task,
@@ -1178,6 +1179,8 @@ def extract_text_from_pdf(self, document_id: str) -> str:
     retry_backoff=True,
     retry_backoff_max=60,
     retry_jitter=True,
+    soft_time_limit=300,
+    time_limit=600,
 )
 def chunk_document(self, extracted_text: str, document_id: str) -> None:
     """Split ``extracted_text`` into chunks and persist them to the database.
@@ -1239,14 +1242,20 @@ def chunk_document(self, extracted_text: str, document_id: str) -> None:
         return
 
     try:
-        # Use AnchorChunkingService with settings-based configuration
-        anchor_chunking_enabled = getattr(
-            settings, "ANCHOR_CHUNKING_ENABLED", True
-        )
+        # Use PersianLegalChunker (semantic chunking) or fallback to
+        # AnchorChunkingService based on settings.
         chunk_tokens = getattr(settings, "ANCHOR_CHUNK_TOKENS", 400)
         overlap_tokens = getattr(settings, "ANCHOR_OVERLAP_TOKENS", 50)
 
-        chunker = AnchorChunkingService()
+        if getattr(settings, "PERSIAN_LEGAL_CHUNKER_ENABLED", True):
+            chunker = PersianLegalChunker(
+                min_chunk_tokens=getattr(settings, "MIN_CHUNK_TOKENS", 150),
+                max_chunk_tokens=chunk_tokens,
+                overlap_sentences=getattr(settings, "OVERLAP_SENTENCES", 1),
+            )
+        else:
+            chunker = AnchorChunkingService()
+
         chunk_results = chunker.chunk_text(
             extracted_text,
             chunk_tokens=chunk_tokens,

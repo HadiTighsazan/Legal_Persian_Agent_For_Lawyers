@@ -28,8 +28,8 @@ from users.models import User
 # Constants
 # ---------------------------------------------------------------------------
 
-EMBEDDING_DIM: int = 768
-"""Standard embedding dimension (Gemini gemini-embedding-001)."""
+EMBEDDING_DIM: int = 1024
+"""Standard embedding dimension."""
 
 # ---------------------------------------------------------------------------
 # Helpers (reused from test_search_service.py)
@@ -47,7 +47,7 @@ def _make_vector(*values: float) -> list[float]:
         *values: The first N components of the vector.
 
     Returns:
-        A 768-dim list of floats.
+        A 1024-dim list of floats.
     """
     vec = list(values)
     vec.extend([0.0] * (EMBEDDING_DIM - len(vec)))

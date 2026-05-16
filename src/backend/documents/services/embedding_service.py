@@ -199,7 +199,7 @@ def batch_embed_chunks(chunk_ids: list[str]) -> dict[str, Any]:
     Returns:
         A dict with keys ``processed``, ``skipped``, and ``failed``.
     """
-    chunks = DocumentChunk.objects.filter(id__in=chunk_ids)
+    chunks = DocumentChunk.objects.filter(id__in=chunk_ids).order_by("chunk_index")
 
     needs_embedding: list[DocumentChunk] = []
     skipped = 0

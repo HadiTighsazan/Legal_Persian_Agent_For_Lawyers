@@ -986,7 +986,7 @@ class DocumentSearchViewTests(TestCase):
         mock_embed_query: MagicMock,
     ) -> None:
         """POST with valid query should return 200 with search results."""
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_hybrid_search.return_value = [
             {
                 "chunk_id": str(uuid.uuid4()),
@@ -1053,7 +1053,7 @@ class DocumentSearchViewTests(TestCase):
         mock_embed_query: MagicMock,
     ) -> None:
         """POST with valid query but no matching chunks should return 200 with empty list."""
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_hybrid_search.return_value = []
 
         response = self.client.post(
@@ -1101,7 +1101,7 @@ class DocumentSearchViewTests(TestCase):
         mock_embed_query: MagicMock,
     ) -> None:
         """Default ``search_mode="hybrid"`` should call ``hybrid_search``."""
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_hybrid_search.return_value = [
             {
                 "chunk_id": str(uuid.uuid4()),
@@ -1179,7 +1179,7 @@ class DocumentSearchViewTests(TestCase):
         mock_embed_query: MagicMock,
     ) -> None:
         """``search_mode="vector"`` should call ``search_chunks`` (legacy path)."""
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_search_chunks.return_value = [
             {
                 "chunk_id": str(uuid.uuid4()),
@@ -1216,7 +1216,7 @@ class DocumentSearchViewTests(TestCase):
         mock_embed_query: MagicMock,
     ) -> None:
         """``filters`` should be passed through to ``hybrid_search``."""
-        mock_embed_query.return_value = [0.1] * 768
+        mock_embed_query.return_value = [0.1] * 1024
         mock_hybrid_search.return_value = []
 
         response = self.client.post(

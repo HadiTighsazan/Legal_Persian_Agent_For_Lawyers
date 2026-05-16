@@ -399,6 +399,14 @@ ANCHOR_CHUNK_TOKENS = 400
 ANCHOR_OVERLAP_TOKENS = 50
 
 # ---------------------------------------------------------------------------
+# Persian Legal Chunker settings (replaces AnchorChunkingService)
+# ---------------------------------------------------------------------------
+PERSIAN_LEGAL_CHUNKER_ENABLED = True
+MIN_CHUNK_TOKENS = 150
+MAX_CHUNK_TOKENS = 400  # Same as ANCHOR_CHUNK_TOKENS
+OVERLAP_SENTENCES = 1
+
+# ---------------------------------------------------------------------------
 # OCR settings (EasyOCR + Tesseract)
 # ---------------------------------------------------------------------------
 OCR_EASYOCR_ENABLED = True

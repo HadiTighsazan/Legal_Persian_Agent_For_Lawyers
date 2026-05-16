@@ -464,8 +464,9 @@ class ChunkDocumentTests(TestCase):
 
     def test_exception_sets_failed_status(self) -> None:
         """If chunking raises, both Document and ProcessingTask should be failed."""
-        with patch.object(
-            AnchorChunkingService, "chunk_text", side_effect=ValueError("Simulated failure")
+        with patch(
+            "documents.tasks.document_processing.PersianLegalChunker.chunk_text",
+            side_effect=ValueError("Simulated failure"),
         ):
             self._run_task("[PAGE 1]\nSome text.")
 
@@ -536,9 +537,10 @@ class ChunkDocumentTests(TestCase):
         self.document.total_chunks = 0
         self.document.save(update_fields=["processing_status", "total_chunks"])
 
-        # Now run chunk_document with a mocked AnchorChunkingService that raises.
-        with patch.object(
-            AnchorChunkingService, "chunk_text", side_effect=ValueError("Chunking failed")
+        # Now run chunk_document with a mocked PersianLegalChunker that raises.
+        with patch(
+            "documents.tasks.document_processing.PersianLegalChunker.chunk_text",
+            side_effect=ValueError("Chunking failed"),
         ):
             self._run_task("[PAGE 1]\nSome text to chunk.")
 

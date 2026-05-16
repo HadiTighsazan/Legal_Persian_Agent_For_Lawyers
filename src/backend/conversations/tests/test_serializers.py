@@ -495,10 +495,10 @@ class DirectQuerySerializerTests(TestCase):
         self.assertTrue(serializer.is_valid())
 
     def test_default_top_k(self) -> None:
-        """Omitting ``top_k`` should default to 5."""
+        """Omitting ``top_k`` should default to 15."""
         serializer = DirectQuerySerializer(data={"question": "What is this?"})
         self.assertTrue(serializer.is_valid())
-        self.assertEqual(serializer.validated_data["top_k"], 5)
+        self.assertEqual(serializer.validated_data["top_k"], 15)
 
     def test_top_k_min_value(self) -> None:
         """``top_k=0`` should fail validation (``min_value=1``)."""
