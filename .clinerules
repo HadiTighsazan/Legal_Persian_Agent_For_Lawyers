@@ -27,21 +27,22 @@ Never read the entire src/ directory or massive files unless specifically reques
   - Example for migrations: `docker-compose exec backend python manage.py migrate`
 
 # 4. Coding Rules
-- Write Clean Code: Keep functions small and modular.
+- Write Clean & Extensible Code: Keep functions small and adhere to the Single Responsibility Principle. Design modules to be loosely coupled and easily extendable for future features without rewriting core logic.
+- File Size Limits & Modularization (CRITICAL): DO NOT create massive, monolithic files. If a file approaches 300-400 lines, you MUST stop and refactor it into smaller, logical modules (e.g., split a 1000-line file into three focused files). Separate interfaces, utilities, and core logic into distinct files.
 - Naming Conventions: Use camelCase for variables/functions, PascalCase for classes/components.
 - Error Handling: Always use try/catch blocks and provide meaningful error messages.
 - Strict Typing: Use TypeScript for all Frontend code. Use Python Type Hints (PEP 484) for all Backend code.
-
 # 5. TDD Flow & Testing Strategy
 For Backend and strictly non-UI Frontend logic (e.g., stores, API utilities), follow these 3 exact steps:
 1. RED: Write a failing test first. Stop and verify.
 2. GREEN: Write the minimum code required to make the test pass.
 3. REFACTOR: Clean up the code without changing behavior.
 
-CRITICAL UI RULE: Do NOT write automated tests for Frontend UI Components. Follow a strictly "Visual First" and Manual Testing approach:
+CRITICAL UI RULE: Automated UI Verification via Puppeteer
 1. Write the UI code (React components, layouts, etc.).
-2. STOP and wait for the user to manually verify the behavior in the browser.
-3. DO NOT write automated UI tests (No Playwright, No RTL, No Vitest for UI components). We rely entirely on user's manual verification for visuals and UI interactions. Proceed to the next task only after user approval.
+2. Do NOT wait for the user to manually verify. Use the `puppeteer` MCP to navigate to the local frontend URL, check the browser console for JS/CORS errors, and capture screenshots to verify the layout.
+3. RESOURCE LIMITS (CRITICAL): To prevent RAM/VRAM exhaustion, ALWAYS execute Puppeteer in `headless: true` mode and apply the `--disable-gpu` flag.
+4. MEMORY CLEANUP: You MUST close the Puppeteer browser instance immediately after reading logs or taking a screenshot. Never leave the browser running in the background while coding.
 # 6. WIP & State Management (CRITICAL)
 - After completing ANY step or before stopping to ask the user for input, you MUST update `docs/active-task/wip-context.md`.
 - Overwrite the file with: 
