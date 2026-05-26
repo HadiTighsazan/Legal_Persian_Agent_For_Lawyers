@@ -13,17 +13,13 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import requests
 from django.test import TestCase, override_settings
 
 from providers.base import EmbeddingBatchError
 from providers.gemini_embedding import GeminiEmbeddingProvider
 from providers.openai_embedding import OpenAIEmbeddingProvider
 from providers.ollama_embedding import OllamaEmbeddingProvider
-
-
-# ============================================================================
-# GeminiEmbeddingProvider Tests
-# ============================================================================
 
 
 @override_settings(
@@ -35,41 +31,50 @@ class GeminiEmbeddingProviderTests(TestCase):
 
     def setUp(self) -> None:
         self.provider = GeminiEmbeddingProvider()
+        # Replace the real session with a mock so no real HTTP calls are made.
+        self.mock_session = MagicMock(spec=requests.Session)
+        self.provider._session = self.mock_session
 
     def test_dimensions_property(self) -> None:
         """dimensions returns 768."""
         self.assertEqual(self.provider.dimensions, 768)
 
+    def test_session_property_lazy_init(self) -> None:
+        """The ``session`` property lazily creates a ``Session`` with an ``HTTPAdapter``."""
+        # Reset _session to None to force lazy init
+        self.provider._session = None
+        sess = self.provider.session
+        self.assertIsNotNone(sess)
+        # Calling again returns the same instance
+        self.assertIs(sess, self.provider.session)
+
     # -- embed() tests ----------------------------------------------------
 
-    @patch("providers.gemini_embedding.requests.post")
-    def test_embed_returns_embedding(self, mock_post: MagicMock) -> None:
+    def test_embed_returns_embedding(self) -> None:
         """A valid text returns an embedding vector."""
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "embedding": {"values": [0.1] * 768},
         }
-        mock_post.return_value = mock_response
+        self.mock_session.post.return_value = mock_response
 
         result = self.provider.embed("Hello world")
 
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(len(result), 768)
-        mock_post.assert_called_once()
+        self.mock_session.post.assert_called_once()
 
-    @patch("providers.gemini_embedding.requests.post")
-    def test_embed_empty_text_returns_none(self, mock_post: MagicMock) -> None:
+    def test_embed_empty_text_returns_none(self) -> None:
         """Empty or whitespace-only text returns None without API call."""
         self.assertIsNone(self.provider.embed(""))
         self.assertIsNone(self.provider.embed("   "))
-        mock_post.assert_not_called()
+        self.mock_session.post.assert_not_called()
 
-    @patch("providers.gemini_embedding.requests.post")
-    def test_embed_api_error_returns_none(self, mock_post: MagicMock) -> None:
+    def test_embed_api_error_returns_none(self) -> None:
         """API error returns None after retries."""
         from requests.exceptions import ConnectionError
-        mock_post.side_effect = ConnectionError("connection refused")
+        self.mock_session.post.side_effect = ConnectionError("connection refused")
 
         with patch("providers.gemini_embedding.time.sleep"):
             result = self.provider.embed("Hello")
@@ -78,8 +83,7 @@ class GeminiEmbeddingProviderTests(TestCase):
 
     # -- embed_batch() tests ----------------------------------------------
 
-    @patch("providers.gemini_embedding.requests.post")
-    def test_embed_batch_returns_in_order(self, mock_post: MagicMock) -> None:
+    def test_embed_batch_returns_in_order(self) -> None:
         """Multiple texts return embeddings in correct order."""
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -88,7 +92,7 @@ class GeminiEmbeddingProviderTests(TestCase):
                 {"values": [2.0] + [0.0] * 767},
             ],
         }
-        mock_post.return_value = mock_response
+        self.mock_session.post.return_value = mock_response
 
         results = self.provider.embed_batch(["First", "Second"])
 
@@ -100,14 +104,13 @@ class GeminiEmbeddingProviderTests(TestCase):
         self.assertEqual(results[0][0], 1.0)
         self.assertEqual(results[1][0], 2.0)
 
-    @patch("providers.gemini_embedding.requests.post")
-    def test_embed_batch_empty_texts(self, mock_post: MagicMock) -> None:
+    def test_embed_batch_empty_texts(self) -> None:
         """Empty texts in batch produce None at correct positions."""
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "embeddings": [{"values": [1.0] + [0.0] * 767}],
         }
-        mock_post.return_value = mock_response
+        self.mock_session.post.return_value = mock_response
 
         results = self.provider.embed_batch(["Valid", "", "Another"])
 
@@ -119,14 +122,13 @@ class GeminiEmbeddingProviderTests(TestCase):
 
     # -- embed_query() tests ----------------------------------------------
 
-    @patch("providers.gemini_embedding.requests.post")
-    def test_embed_query_returns_embedding(self, mock_post: MagicMock) -> None:
+    def test_embed_query_returns_embedding(self) -> None:
         """A valid query returns an embedding vector."""
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "embedding": {"values": [0.1] * 768},
         }
-        mock_post.return_value = mock_response
+        self.mock_session.post.return_value = mock_response
 
         result = self.provider.embed_query("test query")
 
@@ -139,11 +141,10 @@ class GeminiEmbeddingProviderTests(TestCase):
         with self.assertRaises(ValueError):
             self.provider.embed_query("   ")
 
-    @patch("providers.gemini_embedding.requests.post")
-    def test_embed_query_api_error_raises(self, mock_post: MagicMock) -> None:
+    def test_embed_query_api_error_raises(self) -> None:
         """API error propagates the exception."""
         from requests.exceptions import ConnectionError
-        mock_post.side_effect = ConnectionError("API error")
+        self.mock_session.post.side_effect = ConnectionError("API error")
 
         with patch("providers.gemini_embedding.time.sleep"):
             with self.assertRaises(ConnectionError):

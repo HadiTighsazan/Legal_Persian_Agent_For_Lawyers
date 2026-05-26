@@ -9,6 +9,7 @@ Functions
 ---------
 - :func:`generate_embedding` — Embed a single text string.
 - :func:`embed_query` — Embed a search query string.
+- :func:`embed_query_cached` — Embed a search query string with Redis caching.
 - :func:`batch_generate_embeddings` — Embed a list of texts, handling sub-batching.
 - :func:`_prepare_embedding_content` — Prepare chunk content for embedding,
   appending table semantic text if present.
@@ -19,14 +20,20 @@ Functions
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Callable
+
+from django.core.cache import cache
 
 from documents.models import DocumentChunk
 from providers.base import EMBEDDING_SUB_BATCH_SIZE as SUB_BATCH_SIZE
 from providers.registry import get_embedding_provider
 
 logger = logging.getLogger(__name__)
+
+# Default TTL for cached embeddings (1 hour)
+EMBEDDING_CACHE_TIMEOUT: int = 3600
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +132,42 @@ def embed_query(text: str) -> list[float]:
     except Exception as e:
         logger.exception("embed_query failed for text: %s...", text[:50])
         raise EmbeddingError(f"Failed to embed query: {e}") from e
+
+
+def embed_query_cached(
+    text: str,
+    timeout: int = EMBEDDING_CACHE_TIMEOUT,
+) -> list[float]:
+    """Embed query text with Redis caching.
+
+    Wraps :func:`embed_query` with a Redis cache layer keyed by
+    ``(query_text, model_name)``.  If the same query text is embedded
+    again within the TTL window, the cached result is returned instead
+    of making an API call.
+
+    Cache key format: ``docuchat:embedding:<md5_of_text>``
+
+    Args:
+        text: The search query text (must be non-empty).
+        timeout: Cache TTL in seconds (default: 1 hour).
+
+    Returns:
+        A list of floats representing the query embedding.
+
+    Raises:
+        ValueError: If *text* is empty or whitespace-only.
+        EmbeddingError: If the provider API call fails.
+    """
+    cache_key = f"embedding:{hashlib.md5(text.encode('utf-8')).hexdigest()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        logger.debug("embed_query_cached: HIT for text=%.50s", text)
+        return cached
+    logger.debug("embed_query_cached: MISS for text=%.50s", text)
+    result = embed_query(text)
+    if result:
+        cache.set(cache_key, result, timeout)
+    return result
 
 
 def batch_generate_embeddings(texts: list[str]) -> list[list[float] | None]:

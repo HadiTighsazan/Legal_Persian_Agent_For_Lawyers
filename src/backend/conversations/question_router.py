@@ -35,16 +35,21 @@ Architecture::
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Any
 
 from django.conf import settings
+from django.core.cache import cache
 
 from providers.registry import get_chat_provider
 
 logger = logging.getLogger(__name__)
+
+# Default TTL for cached router decisions (1 hour)
+ROUTER_CACHE_TIMEOUT: int = 3600
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -313,6 +318,39 @@ def route_question(user_query: str) -> RouterResult:
         )
 
 
+def route_question_cached(
+    user_query: str,
+    timeout: int = ROUTER_CACHE_TIMEOUT,
+) -> RouterResult:
+    """Route a user's legal question with Redis caching.
+
+    Wraps :func:`route_question` with a Redis cache layer keyed by
+    a normalized (lowercased, stripped) version of the query text.
+    If the same question is routed again within the TTL window, the
+    cached :class:`RouterResult` is returned instead of making an LLM
+    call.
+
+    Cache key format: ``docuchat:router:<md5_of_normalized_query>``
+
+    Args:
+        user_query: The raw user question text.
+        timeout: Cache TTL in seconds (default: 1 hour).
+
+    Returns:
+        A :class:`RouterResult` with sub-queries for each relevant hub.
+    """
+    normalized = user_query.strip().lower()
+    cache_key = f"router:{hashlib.md5(normalized.encode('utf-8')).hexdigest()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        logger.debug("route_question_cached: HIT for query=%.80s", user_query)
+        return _router_result_from_dict(cached)
+    logger.debug("route_question_cached: MISS for query=%.80s", user_query)
+    result = route_question(user_query)
+    cache.set(cache_key, asdict(result), timeout)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Internal Helpers
 # ---------------------------------------------------------------------------
@@ -497,6 +535,37 @@ def _parse_router_response(raw_content: str) -> RouterResult:
         sub_queries=sub_queries,
         reasoning=reasoning,
         hypothetical_answer=hypothetical_answer,
+    )
+
+
+def _router_result_from_dict(data: dict[str, Any]) -> RouterResult:
+    """Reconstruct a :class:`RouterResult` from a serialised dict.
+
+    This is the inverse of ``asdict(result)`` used when storing
+    :class:`RouterResult` in the cache.  It converts the nested
+    ``sub_queries`` dict-of-dicts back into dict-of-:class:`SubQuery`.
+
+    Args:
+        data: A dict produced by ``dataclasses.asdict()`` on a
+            :class:`RouterResult`.
+
+    Returns:
+        A reconstructed :class:`RouterResult`.
+    """
+    sub_queries_raw = data.get("sub_queries", {})
+    sub_queries: dict[str, SubQuery] = {}
+    for hub, sq_data in sub_queries_raw.items():
+        if isinstance(sq_data, dict):
+            sub_queries[hub] = SubQuery(
+                fts_query=sq_data.get("fts_query", ""),
+                vector_query=sq_data.get("vector_query", ""),
+            )
+        elif isinstance(sq_data, SubQuery):
+            sub_queries[hub] = sq_data
+    return RouterResult(
+        sub_queries=sub_queries,
+        reasoning=data.get("reasoning", ""),
+        hypothetical_answer=data.get("hypothetical_answer", ""),
     )
 
 

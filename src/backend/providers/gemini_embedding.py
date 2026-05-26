@@ -17,10 +17,10 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_MAX_RETRIES: int = 3
+_MAX_RETRIES: int = 2
 """Number of retry attempts for failed API calls."""
 
-_TIMEOUT_SECONDS: int = 60
+_TIMEOUT_SECONDS: int = 30
 """HTTP request timeout for Gemini API calls."""
 
 
@@ -32,6 +32,37 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
         self.base_url: str = "https://generativelanguage.googleapis.com/v1beta"
         self.model: str = settings.GEMINI_EMBEDDING_MODEL
         self._dimensions: int = 768
+        self._session: requests.Session | None = None
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
+
+    # ------------------------------------------------------------------
+    # Connection pool
+    # ------------------------------------------------------------------
+
+    @property
+    def session(self) -> requests.Session:
+        """Lazily-initialized ``requests.Session`` with connection pooling.
+
+        Uses ``HTTPAdapter`` with ``pool_connections=10`` and
+        ``pool_maxsize=20`` to reuse TCP connections across API calls,
+        avoiding the overhead of TCP handshake + TLS negotiation per
+        request.
+        """
+        if self._session is None:
+            self._session = requests.Session()
+            adapter = requests.adapters.HTTPAdapter(
+                pool_connections=10,
+                pool_maxsize=20,
+            )
+            self._session.mount("https://", adapter)
+        return self._session
 
     # ------------------------------------------------------------------
     # Properties
@@ -57,7 +88,7 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
 
         for attempt in range(_MAX_RETRIES):
             try:
-                response = requests.post(
+                response = self.session.post(
                     url,
                     json={
                         "model": f"models/{self.model}",
@@ -163,7 +194,7 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
             # Send the sub-batch to Gemini with retry logic.
             for attempt in range(_MAX_RETRIES):
                 try:
-                    response = requests.post(
+                    response = self.session.post(
                         url,
                         json={"requests": requests_payload},
                         timeout=_TIMEOUT_SECONDS,
@@ -254,7 +285,7 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
 
         for attempt in range(_MAX_RETRIES):
             try:
-                response = requests.post(
+                response = self.session.post(
                     url,
                     json={
                         "model": f"models/{self.model}",

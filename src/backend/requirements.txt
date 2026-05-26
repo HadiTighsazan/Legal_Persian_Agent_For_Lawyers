@@ -14,6 +14,7 @@ django-filter==23.5
 # Async & Task Queue
 celery==5.3.6
 redis==5.0.1
+django-redis==5.4.0
 
 # API Documentation
 drf-yasg==1.21.7

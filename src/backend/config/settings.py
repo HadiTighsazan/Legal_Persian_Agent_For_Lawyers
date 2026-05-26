@@ -245,6 +245,26 @@ CELERY_TASK_RETRY_BACKOFF = True       # Exponential backoff
 CELERY_TASK_RETRY_BACKOFF_MAX = 600    # Max 10 minutes between retries
 CELERY_TASK_RETRY_JITTER = True        # Add randomness to backoff
 
+# ---------------------------------------------------------------------------
+# Cache Configuration (Redis via django-redis)
+# ---------------------------------------------------------------------------
+# Reuses the same Redis URL as Celery (default: redis://localhost:6379/0).
+# Database 1 is used for caching to avoid key collisions with Celery.
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": env("REDIS_CACHE_URL", default="redis://localhost:6379/1"),
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "COMPRESSOR": "django_redis.compressors.zlib.ZlibCompressor",
+            "IGNORE_EXCEPTIONS": True,  # Cache failures never break the app
+            "SOCKET_CONNECT_TIMEOUT": 2,  # seconds
+            "SOCKET_TIMEOUT": 3,  # seconds
+        },
+        "KEY_PREFIX": "docuchat",
+    }
+}
+
 # OpenAI Configuration
 OPENAI_API_KEY = env('OPENAI_API_KEY', default='')
 
