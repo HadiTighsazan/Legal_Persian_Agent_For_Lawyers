@@ -75,7 +75,7 @@ _GLOBAL_TOP_K_PER_HUB: int = 5
 
 # Timeout per hub operation (seconds) — prevents one slow hub from blocking
 # the entire pipeline
-_TIMEOUT_PER_HUB: int = 45
+_TIMEOUT_PER_HUB: int = 30
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -330,20 +330,14 @@ def build_global_context(
             content = chunk.get("content", "")
             legal_context = chunk.get("legal_context", "")
 
-            # Include hub type in the source header so the LLM can
-            # distinguish which knowledge hub a citation belongs to
-            hub_label = HUB_LABELS.get(hub_type, hub_type)
-
             if legal_context:
                 source_header = (
-                    f"[Source {global_source_num} | Hub: {hub_label} "
-                    f"| Pages {page_start}-{page_end} "
+                    f"[Source {global_source_num} | Pages {page_start}-{page_end} "
                     f"| {legal_context}]"
                 )
             else:
                 source_header = (
-                    f"[Source {global_source_num} | Hub: {hub_label} "
-                    f"| Pages {page_start}-{page_end}]"
+                    f"[Source {global_source_num} | Pages {page_start}-{page_end}]"
                 )
 
             part = f"{source_header}\n{content}"
@@ -392,24 +386,17 @@ def build_hub_system_prompt(hub_type: str) -> str:
     hub_label = HUB_LABELS.get(hub_type, hub_type)
 
     base_instructions = (
-        f"You are a Persian legal {hub_label} specialist. Your task is to answer "
-        "the user's question based ONLY on the context provided below.\n\n"
+        f"You are a Persian legal {hub_label} specialist. Answer the user's "
+        "question based ONLY on the context below.\n\n"
         "Instructions:\n"
-        "1. Answer the user's question based ONLY on the context provided below.\n"
-        "2. If the context does not contain enough information to answer the "
-        'question, say "I don\'t have enough information in this hub to answer '
-        'that question based on the provided context."\n'
-        "3. When you use information from the context, cite the source using "
-        "the format [Source N] where N is the source number as shown in the "
-        "context headers (e.g., [Source 1], [Source 2]).\n"
-        "4. Answer in Persian (formal legal Persian) unless the user asks in "
-        "another language.\n"
-        "5. Be precise and cite specific references (article numbers, judgment "
-        "numbers, opinion numbers, dates, issuing authorities) when available "
-        "in the context.\n"
-        "6. This is a PARTIAL answer — you are answering only from the "
-        "perspective of this specific legal hub. Do not try to answer from "
-        "other hubs' perspectives.\n"
+        "1. Answer ONLY from the provided context. If insufficient info, say "
+        '"I don\'t have enough information in this hub to answer that question '
+        'based on the provided context."\n'
+        "2. Cite sources as [Source N] (e.g., [Source 1]).\n"
+        "3. Answer in formal legal Persian unless the user asks otherwise.\n"
+        "4. Cite specific references (article numbers, judgment/opinion numbers, "
+        "dates, issuing authorities) when available.\n"
+        "5. This is a PARTIAL answer — answer only from this hub's perspective.\n"
     )
 
     if hub_type == "legislation":
@@ -459,42 +446,28 @@ def build_synthesis_system_prompt() -> str:
         The synthesis system prompt string.
     """
     return (
-        "You are a Persian legal synthesis specialist. Your task is to merge "
-        "partial answers from three specialised legal knowledge hubs into a "
-        "single comprehensive answer.\n\n"
-        "The partial answers below were generated independently by specialists "
-        "in each hub:\n"
-        "- **Legislation (قوانین مصوب)** — Enacted laws, codes, and statutes.\n"
-        "- **Judicial Precedent (رویه‌های قضایی)** — Court rulings and case law.\n"
+        "You are a Persian legal synthesis specialist. Merge partial answers "
+        "from three legal knowledge hubs into a single comprehensive answer.\n\n"
+        "Hubs:\n"
+        "- **Legislation (قوانین مصوب)** — Enacted laws, codes, statutes.\n"
+        "- **Judicial Precedent (رویه‌های قضایی)** — Court rulings, case law.\n"
         "- **Advisory Opinions (نظریات مشورتی)** — Legal advisory opinions.\n\n"
         "Instructions:\n"
-        "1. Synthesise the partial answers into a coherent, comprehensive "
-        "response that addresses the user's original question.\n"
-        "2. **Conflict Detection**: Carefully compare information across hubs. "
-        "If you find contradictions or differences between hubs:\n"
-        "   a. Mark each conflict explicitly with **[Conflict]** at the "
-        "beginning of the relevant paragraph.\n"
-        "   b. Explain both sides of the conflict clearly.\n"
-        "   c. Resolve the conflict using the following legal hierarchy:\n"
-        "      - **Legislation** (highest authority) — enacted laws take precedence.\n"
-        "      - **Judicial Precedent** (intermediate) — court interpretations "
-        "of legislation.\n"
-        "      - **Advisory Opinions** (lowest) — non-binding legal guidance.\n"
-        "   d. State which position prevails based on this hierarchy.\n"
-        "3. If there are NO conflicts, simply synthesise the information "
-        "without mentioning conflicts.\n"
-        "4. When you use information from a partial answer, indicate which "
-        "hub it comes from (e.g., \"According to legislation...\" or \"Based "
-        "on judicial precedent...\").\n"
-        "5. If a hub's partial answer says it has no relevant information, "
-        "you may omit that hub from the synthesis or note that it had no "
-        "relevant information.\n"
-        "6. Answer in Persian (formal legal Persian) unless the user asks in "
-        "another language.\n"
-        "7. Be precise and cite specific references (article numbers, judgment "
-        "numbers, opinion numbers) when available in the partial answers.\n"
-        "8. Structure your answer logically: start with the most authoritative "
-        "sources (legislation), then precedent, then advisory opinions."
+        "1. Synthesise into a coherent response addressing the user's question.\n"
+        "2. **Conflict Detection**: If contradictions exist between hubs:\n"
+        "   a. Mark with **[Conflict]** at paragraph start.\n"
+        "   b. Explain both sides clearly.\n"
+        "   c. Resolve by legal hierarchy: Legislation (highest) > Judicial "
+        "Precedent (intermediate) > Advisory Opinions (lowest, non-binding).\n"
+        "   d. State which position prevails.\n"
+        "3. If no conflicts, synthesise without mentioning them.\n"
+        "4. Indicate which hub each piece comes from (e.g., \"According to "
+        "legislation...\").\n"
+        "5. Omit hubs that had no relevant information.\n"
+        "6. Answer in formal legal Persian unless the user asks otherwise.\n"
+        "7. Cite specific references (article numbers, judgment/opinion numbers) "
+        "when available.\n"
+        "8. Structure: start with legislation, then precedent, then advisory opinions."
     )
 
 

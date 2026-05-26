@@ -197,13 +197,10 @@ class BuildGlobalContextTests:
         }
         context = build_global_context(hub_results)
 
-        leg_label = HUB_LABELS["legislation"]
-        jud_label = HUB_LABELS["judicial_precedent"]
-
         # Source 1, 2 from legislation, Source 3 from judicial_precedent
-        assert f"[Source 1 | Hub: {leg_label} | Pages 1-3" in context
-        assert f"[Source 2 | Hub: {leg_label} | Pages 4-6" in context
-        assert f"[Source 3 | Hub: {jud_label} | Pages 10-12" in context
+        assert "[Source 1 | Pages 1-3" in context
+        assert "[Source 2 | Pages 4-6" in context
+        assert "[Source 3 | Pages 10-12" in context
 
     def test_skips_hubs_with_no_chunks(
         self,
@@ -244,8 +241,6 @@ class BuildGlobalContextTests:
             },
         }
         context = build_global_context(hub_results)
-        leg_label = HUB_LABELS["legislation"]
-        assert f"Hub: {leg_label}" in context
         assert "قانون: قانون مجازات اسلامی | ماده: 523" in context
 
     @override_settings(RAG_CONTEXT_TOKEN_BUDGET=10)  # 10 tokens = 40 chars

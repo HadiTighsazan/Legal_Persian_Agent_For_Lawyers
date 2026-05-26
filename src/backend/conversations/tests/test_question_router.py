@@ -52,11 +52,12 @@ class BuildRouterMessagesTests:
         """System prompt includes all three hub labels."""
         messages = _build_router_messages("test")
         system_content = messages[0]["content"]
-        for label in HUB_LABELS.values():
-            assert label in system_content
         assert "legislation" in system_content
         assert "judicial_precedent" in system_content
         assert "advisory_opinion" in system_content
+        assert "قوانین مصوب" in system_content
+        assert "رویه‌های قضایی" in system_content
+        assert "نظریات مشورتی" in system_content
 
     def test_system_prompt_contains_json_format_instructions(self) -> None:
         """System prompt includes JSON output format instructions."""

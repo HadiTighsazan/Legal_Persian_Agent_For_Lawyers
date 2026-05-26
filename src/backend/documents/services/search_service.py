@@ -63,10 +63,11 @@ logger = logging.getLogger(__name__)
 _RRF_K: int = 60
 
 # RRF depth multiplier and minimum — used by _get_rrf_depth() to compute
-# per-call candidate depth.  Multiplier=6 with min=30 gives a 2x reduction
-# over the old hardcoded 60, while preserving quality.
-_RRF_DEPTH_MULTIPLIER: int = 6
-_RRF_MIN_DEPTH: int = 30
+# per-call candidate depth.  Multiplier=4 with min=20 gives depth=20 for
+# top_k=5, providing 4x the final result count — sufficient for RRF to
+# find the top-5.
+_RRF_DEPTH_MULTIPLIER: int = 4
+_RRF_MIN_DEPTH: int = 20
 
 
 def _get_rrf_depth(top_k: int) -> int:
