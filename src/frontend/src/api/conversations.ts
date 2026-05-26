@@ -1,4 +1,4 @@
-import { apiClient } from './axios';
+import { apiClient, normalizeBaseUrl } from './axios';
 
 // ── TypeScript Interfaces ──────────────────────────────────────────────
 
@@ -262,6 +262,7 @@ export function sendMessageStream(
   onDone: (data: { message_id: string; sources: MessageSource[]; token_usage: TokenUsage }) => void,
   onError: (error: Error) => void,
   mode?: RagMode,
+  onProgress?: (status: string, reasoning?: string) => void,
 ): AbortController {
   const controller = new AbortController();
   const token = localStorage.getItem('access_token');
@@ -272,8 +273,9 @@ export function sendMessageStream(
       if (mode !== undefined) {
         body.mode = mode;
       }
+      const baseUrl = normalizeBaseUrl(import.meta.env.VITE_API_URL || 'http://localhost:8000/api/');
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/'}conversations/${conversationId}/messages/stream/`,
+        `${baseUrl}conversations/${conversationId}/messages/stream/`,
         {
           method: 'POST',
           headers: {
@@ -315,6 +317,10 @@ export function sendMessageStream(
 
             if (data.type === 'token') {
               onToken(data.content);
+            } else if (data.type === 'progress') {
+              if (onProgress) {
+                onProgress(data.status, data.reasoning);
+              }
             } else if (data.type === 'done') {
               onDone({
                 message_id: data.message_id,

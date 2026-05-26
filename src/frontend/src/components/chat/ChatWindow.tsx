@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useConversationStore } from '@/stores/conversationStore';
 import { cn } from '@/lib/utils';
-import { MessageSquare, AlertCircle, X } from 'lucide-react';
+import { MessageSquare, AlertCircle, X, Loader2 } from 'lucide-react';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import MessageBubble from '@/components/chat/MessageBubble';
@@ -121,12 +121,35 @@ function ErrorAlert({ message, onRetry, onDismiss }: ErrorAlertProps) {
   );
 }
 
+// ── Thinking Indicator Sub-Component ────────────────────────────────────────
+
+function ThinkingIndicator({ status, reasoning }: { status: string | null; reasoning: string | null }) {
+  return (
+    <div className="flex items-start gap-2 px-4 py-2 text-muted-foreground">
+      <Loader2 className="h-4 w-4 animate-spin mt-0.5 shrink-0" />
+      <div className="flex flex-col gap-1">
+        <span className="text-sm">
+          {status || 'Thinking...'}
+        </span>
+        {reasoning && (
+          <span className="text-xs text-muted-foreground/70 italic line-clamp-2">
+            {reasoning}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function ChatWindow({ conversationId }: ChatWindowProps) {
   const activeConversation = useConversationStore((s) => s.activeConversation);
   const isLoadingMessages = useConversationStore((s) => s.isLoadingMessages);
   const isSendingMessage = useConversationStore((s) => s.isSendingMessage);
+  const streamingContent = useConversationStore((s) => s.streamingContent);
+  const thinkingStatus = useConversationStore((s) => s.thinkingStatus);
+  const thinkingReasoning = useConversationStore((s) => s.thinkingReasoning);
   const error = useConversationStore((s) => s.error);
   const ragMode = useConversationStore((s) => s.ragMode);
   const loadConversation = useConversationStore((s) => s.loadConversation);
@@ -199,6 +222,12 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
               }
             />
           ))}
+
+          {/* Thinking indicator: shown when sending but no streaming content yet */}
+          {isSendingMessage && !streamingContent && (
+            <ThinkingIndicator status={thinkingStatus} reasoning={thinkingReasoning} />
+          )}
+
           <div ref={messagesEndRef} />
         </div>
       )}

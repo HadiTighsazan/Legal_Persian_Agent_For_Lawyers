@@ -1,6 +1,18 @@
 """
 LLM Query Formulation Layer for the RAG pipeline (Lightweight HyDE).
 
+.. deprecated::
+    This module is **deprecated** as of Phase 3 of the RAG performance
+    refactoring. The HyDE query formulation has been merged into the
+    question router (:mod:`conversations.question_router`) as the
+    ``hypothetical_answer`` field of :class:`RouterResult`, saving one
+    LLM call per pipeline run.
+
+    This file is kept for backward compatibility with the single-document
+    RAG pipeline (:mod:`conversations.rag_service`), which still uses
+    :func:`formulate_query`. Once the single-document RAG is migrated to
+    use the merged router, this file can be removed entirely.
+
 Transforms a user's raw conversational query into optimized search strings
 for both Full-Text Search (FTS) and Vector Search.  The ``vector_query``
 is generated as a **hypothetical answer** written in the style of Persian

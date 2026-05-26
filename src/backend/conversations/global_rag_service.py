@@ -18,14 +18,15 @@ Architecture::
               ▼
     ┌──────────────────────┐
     │  Multi-Hub Search    │  ← multi_hub_search()
-    │  (parallel per hub)  │
+    │  (parallel per hub)  │     (ThreadPoolExecutor max_workers=3)
     └─────────┬────────────┘
               │ hub_results: {hub: [chunks]}
               │
               ▼
     ┌──────────────────────┐
     │  Per-Hub Partial     │  ← generate_hub_partial_answer()
-    │  Answers (3 LLM)     │     (specialized prompts per hub)
+    │  Answers (3 LLM)     │     (ThreadPoolExecutor max_workers=3)
+    │  (parallel)          │
     └─────────┬────────────┘
               │ partial_answers: {hub: {content, token_usage}}
               │
@@ -42,9 +43,11 @@ Architecture::
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Generator
 
 from django.conf import settings
+from django.db import close_old_connections
 
 from documents.services.embedding_service import embed_query
 from documents.services.search_service import cross_document_hybrid_search
@@ -70,6 +73,10 @@ _CHARS_PER_TOKEN: int = 4
 # Number of chunks to retrieve per hub
 _GLOBAL_TOP_K_PER_HUB: int = 5
 
+# Timeout per hub operation (seconds) — prevents one slow hub from blocking
+# the entire pipeline
+_TIMEOUT_PER_HUB: int = 45
+
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
@@ -81,92 +88,176 @@ class GlobalRAGServiceException(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Multi-Hub Search
+# Multi-Hub Search (Parallel)
 # ---------------------------------------------------------------------------
+
+
+def _search_single_hub(
+    hub_type: str,
+    sub_query: SubQuery,
+    top_k_per_hub: int,
+    hypothetical_answer: str = "",
+) -> tuple[str, dict[str, Any]]:
+    """Execute hybrid search for a single hub (runs in a worker thread).
+
+    Each thread calls :func:`close_old_connections` first to avoid reusing
+    stale database connections inherited from the parent thread. Django's ORM
+    creates a new connection on first DB access, so this is sufficient for
+    thread safety on read-only operations.
+
+    .. versionchanged:: Phase 3
+        The ``hypothetical_answer`` parameter replaces the per-hub
+        ``sub_query.vector_query`` for embedding search. The HyDE-style
+        answer is now generated once by the question router (saving 1 LLM
+        call) and used as the vector query for all relevant hubs.
+
+    Args:
+        hub_type: The hub type key (e.g. ``"legislation"``).
+        sub_query: The :class:`SubQuery` containing FTS query and (legacy)
+            per-hub vector query.
+        top_k_per_hub: Number of top chunks to retrieve.
+        hypothetical_answer: The HyDE-style hypothetical answer from the
+            question router, used as the vector query for embedding search.
+            Falls back to ``sub_query.vector_query`` if empty.
+
+    Returns:
+        A ``(hub_type, result_dict)`` tuple where ``result_dict`` has keys:
+        - ``chunks`` (list[dict]): Retrieved chunks for this hub.
+        - ``sub_query`` (SubQuery): The sub-query used for this hub.
+        - ``token_usage`` (dict): Token usage for embedding.
+        - ``error`` (str | None): Error message if something failed.
+    """
+    close_old_connections()
+
+    # Determine the vector query: use hypothetical_answer (Phase 3 merge),
+    # falling back to per-hub vector_query for backward compatibility
+    vector_query = hypothetical_answer or sub_query.vector_query
+
+    # Skip hubs with no queries (not relevant)
+    if not sub_query.fts_query and not vector_query:
+        logger.info(
+            "_search_single_hub: Skipping hub '%s' — no queries (not relevant)",
+            hub_type,
+        )
+        return hub_type, {
+            "chunks": [],
+            "sub_query": sub_query,
+            "token_usage": {"embedding_tokens": 0},
+        }
+
+    logger.info(
+        "_search_single_hub: Searching hub '%s' — "
+        "fts_query=%.300s vector_query=%.300s",
+        hub_type,
+        sub_query.fts_query,
+        vector_query,
+    )
+
+    try:
+        # Embed the vector query (Phase 3: uses hypothetical_answer from router)
+        query_embedding = embed_query(vector_query)
+
+        # Cross-document hybrid search within this hub
+        chunks = cross_document_hybrid_search(
+            hub_type=hub_type,
+            query_vector=query_embedding,
+            query_text=sub_query.fts_query,
+            top_k=top_k_per_hub,
+        )
+
+        logger.info(
+            "_search_single_hub: Hub '%s' returned %d chunks",
+            hub_type,
+            len(chunks),
+        )
+
+        return hub_type, {
+            "chunks": chunks,
+            "sub_query": sub_query,
+            "token_usage": {"embedding_tokens": 0},
+        }
+
+    except Exception as e:
+        logger.exception(
+            "_search_single_hub: Search failed for hub '%s': %s",
+            hub_type,
+            e,
+        )
+        return hub_type, {
+            "chunks": [],
+            "sub_query": sub_query,
+            "error": str(e),
+            "token_usage": {"embedding_tokens": 0},
+        }
 
 
 def multi_hub_search(
     router_result: RouterResult,
     top_k_per_hub: int = _GLOBAL_TOP_K_PER_HUB,
 ) -> dict[str, dict[str, Any]]:
-    """Execute cross-document hybrid search for each relevant hub.
+    """Execute cross-document hybrid search for each relevant hub **in parallel**.
 
-    For each hub with non-empty sub-queries, this function:
-    1. Embeds the hub's ``vector_query`` using :func:`embed_query`.
-    2. Calls :func:`cross_document_hybrid_search` with the hub's queries.
-    3. Stores the results keyed by hub type.
+    Uses :class:`ThreadPoolExecutor` with ``max_workers=3`` to run the 3 hub
+    searches concurrently. Each hub search involves an embedding API call
+    followed by 3 database queries (vector + FTS + trigram, fused via RRF).
+
+    Each worker thread calls :func:`close_old_connections` to ensure thread
+    safety with Django's ORM.
+
+    .. versionchanged:: Phase 3
+        The ``router_result.hypothetical_answer`` is passed to each hub's
+        search as the vector query, replacing the separate
+        :func:`formulate_query` call. This saves 1 LLM invocation per
+        pipeline run.
 
     Args:
         router_result: The :class:`RouterResult` from :func:`route_question`
-            containing sub-queries for each hub.
-        top_k_per_hub: Number of top chunks to retrieve per hub (default 10).
+            containing sub-queries for each hub and a top-level
+            ``hypothetical_answer`` for vector search.
+        top_k_per_hub: Number of top chunks to retrieve per hub (default 5).
 
     Returns:
         A dict mapping hub type to a result dict with keys:
         - ``chunks`` (list[dict]): Retrieved chunks for this hub.
         - ``sub_query`` (SubQuery): The sub-query used for this hub.
         - ``token_usage`` (dict): Token usage for embedding this hub's query.
+        - ``error`` (str | None): Error message if the search failed.
     """
     hub_results: dict[str, dict[str, Any]] = {}
+    hypothetical_answer = router_result.hypothetical_answer
 
-    for hub_type, sub_query in router_result.sub_queries.items():
-        # Skip hubs with no queries (not relevant)
-        if not sub_query.fts_query and not sub_query.vector_query:
-            logger.info(
-                "multi_hub_search: Skipping hub '%s' — no queries (not relevant)",
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_map = {
+            executor.submit(
+                _search_single_hub,
                 hub_type,
-            )
-            hub_results[hub_type] = {
-                "chunks": [],
-                "sub_query": sub_query,
-                "token_usage": {"embedding_tokens": 0},
-            }
-            continue
+                sub_query,
+                top_k_per_hub,
+                hypothetical_answer,
+            ): hub_type
+            for hub_type, sub_query in router_result.sub_queries.items()
+        }
 
-        logger.info(
-            "multi_hub_search: Searching hub '%s' — "
-            "fts_query=%.300s vector_query=%.300s",
-            hub_type,
-            sub_query.fts_query,
-            sub_query.vector_query,
-        )
-
-        try:
-            # Embed the vector query for this hub
-            query_embedding = embed_query(sub_query.vector_query)
-
-            # Cross-document hybrid search within this hub
-            chunks = cross_document_hybrid_search(
-                hub_type=hub_type,
-                query_vector=query_embedding,
-                query_text=sub_query.fts_query,
-                top_k=top_k_per_hub,
-            )
-
-            logger.info(
-                "multi_hub_search: Hub '%s' returned %d chunks",
-                hub_type,
-                len(chunks),
-            )
-
-            hub_results[hub_type] = {
-                "chunks": chunks,
-                "sub_query": sub_query,
-                "token_usage": {"embedding_tokens": 0},
-            }
-
-        except Exception as e:
-            logger.exception(
-                "multi_hub_search: Search failed for hub '%s': %s",
-                hub_type,
-                e,
-            )
-            hub_results[hub_type] = {
-                "chunks": [],
-                "sub_query": sub_query,
-                "error": str(e),
-                "token_usage": {"embedding_tokens": 0},
-            }
+        # Collect results as they complete, with per-future timeout
+        for future in as_completed(future_map, timeout=60):
+            hub_type = future_map[future]
+            try:
+                _, result = future.result(timeout=_TIMEOUT_PER_HUB)
+                hub_results[hub_type] = result
+            except TimeoutError:
+                logger.warning(
+                    "multi_hub_search: Hub '%s' timed out after %ds",
+                    hub_type,
+                    _TIMEOUT_PER_HUB,
+                )
+                hub_results[hub_type] = {
+                    "chunks": [],
+                    "sub_query": router_result.sub_queries.get(
+                        hub_type, SubQuery()
+                    ),
+                    "error": "timeout",
+                    "token_usage": {"embedding_tokens": 0},
+                }
 
     return hub_results
 
@@ -674,6 +765,33 @@ def build_global_system_prompt() -> str:
 # ---------------------------------------------------------------------------
 
 
+def _generate_single_partial_answer(
+    hub_type: str,
+    question: str,
+    chunks: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any]]:
+    """Generate a partial answer for a single hub (runs in a worker thread).
+
+    Wraps :func:`generate_hub_partial_answer` for use with
+    :class:`ThreadPoolExecutor`. Calls :func:`close_old_connections` first
+    for thread safety.
+
+    Args:
+        hub_type: The hub type key.
+        question: The original user question.
+        chunks: List of chunk dicts for this hub.
+
+    Returns:
+        A ``(hub_type, result_dict)`` tuple.
+    """
+    close_old_connections()
+    return hub_type, generate_hub_partial_answer(
+        hub_type=hub_type,
+        question=question,
+        chunks=chunks,
+    )
+
+
 def run_global_rag_query(
     question: str,
     conversation_history: list[dict[str, str]] | None = None,
@@ -683,8 +801,9 @@ def run_global_rag_query(
 
     Steps:
     1. **Route** the question to relevant hubs via :func:`route_question`.
-    2. **Search** each relevant hub via :func:`multi_hub_search`.
-    3. **Generate** per-hub partial answers via :func:`generate_hub_partial_answer`.
+    2. **Search** each relevant hub via :func:`multi_hub_search` (parallel).
+    3. **Generate** per-hub partial answers via :func:`generate_hub_partial_answer`
+       (parallel via :class:`ThreadPoolExecutor`).
     4. **Synthesize** partial answers via :func:`synthesize_answers` with
        conflict detection and legal hierarchy resolution.
     5. **Extract** citations and return the result.
@@ -694,7 +813,7 @@ def run_global_rag_query(
         conversation_history: Optional list of prior message dicts with
             ``role`` and ``content`` keys. Only the last
             ``RAG_MAX_HISTORY_TURNS`` turns are included.
-        top_k_per_hub: Number of top chunks to retrieve per hub (default 10).
+        top_k_per_hub: Number of top chunks to retrieve per hub (default 5).
 
     Returns:
         A dict with keys:
@@ -728,9 +847,9 @@ def run_global_rag_query(
     )
 
     # ------------------------------------------------------------------
-    # Step 2: Search each relevant hub
+    # Step 2: Search each relevant hub (parallel via ThreadPoolExecutor)
     # ------------------------------------------------------------------
-    logger.info("run_global_rag_query: Searching hubs")
+    logger.info("run_global_rag_query: Searching hubs (parallel)")
     try:
         hub_results = multi_hub_search(
             router_result=router_result,
@@ -752,6 +871,7 @@ def run_global_rag_query(
             "sub_query": {
                 "fts_query": hub_data.get("sub_query", SubQuery()).fts_query,
                 "vector_query": hub_data.get("sub_query", SubQuery()).vector_query,
+                "hypothetical_answer": router_result.hypothetical_answer,
             },
             "error": hub_data.get("error"),
         }
@@ -763,9 +883,9 @@ def run_global_rag_query(
         )
 
     # ------------------------------------------------------------------
-    # Step 3: Generate per-hub partial answers
+    # Step 3: Generate per-hub partial answers (parallel via ThreadPoolExecutor)
     # ------------------------------------------------------------------
-    logger.info("run_global_rag_query: Generating per-hub partial answers")
+    logger.info("run_global_rag_query: Generating per-hub partial answers (parallel)")
     partial_answers: dict[str, dict[str, Any]] = {}
     total_token_usage: dict[str, int] = {
         "prompt_tokens": 0,
@@ -773,26 +893,61 @@ def run_global_rag_query(
         "total_tokens": 0,
     }
 
-    for hub_type in ["legislation", "judicial_precedent", "advisory_opinion"]:
+    # Prepare hub data for parallel execution
+    hub_order = ["legislation", "judicial_precedent", "advisory_opinion"]
+    hub_partial_args: list[tuple[str, str, list[dict[str, Any]]]] = []
+    for hub_type in hub_order:
         hub_data = hub_results.get(hub_type)
         chunks = hub_data.get("chunks", []) if hub_data else []
+        hub_partial_args.append((hub_type, question, chunks))
 
-        pa = generate_hub_partial_answer(
-            hub_type=hub_type,
-            question=question,
-            chunks=chunks,
-        )
-        partial_answers[hub_type] = pa
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_map = {
+            executor.submit(
+                _generate_single_partial_answer,
+                hub_type,
+                question,
+                chunks,
+            ): hub_type
+            for hub_type, question, chunks in hub_partial_args
+        }
 
-        # Accumulate token usage
+        for future in as_completed(future_map, timeout=60):
+            hub_type = future_map[future]
+            try:
+                _, pa = future.result(timeout=_TIMEOUT_PER_HUB)
+                partial_answers[hub_type] = pa
+            except TimeoutError:
+                logger.warning(
+                    "run_global_rag_query: Hub '%s' partial answer timed out after %ds",
+                    hub_type,
+                    _TIMEOUT_PER_HUB,
+                )
+                hub_label = HUB_LABELS.get(hub_type, hub_type)
+                partial_answers[hub_type] = {
+                    "content": f"تولید پاسخ جزئی برای {hub_label} با خطای timeout مواجه شد.",
+                    "token_usage": {
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                    },
+                    "error": "timeout",
+                }
+
+    # Accumulate token usage from partial answers
+    for hub_type in hub_order:
+        pa = partial_answers.get(hub_type)
+        if not pa:
+            continue
         pa_tokens = pa.get("token_usage", {})
         for key in total_token_usage:
             total_token_usage[key] += pa_tokens.get(key, 0)
 
         # Update hub_metadata with partial answer info
-        hub_metadata[hub_type]["partial_answer"] = pa.get("content", "")
-        hub_metadata[hub_type]["partial_answer_token_usage"] = pa_tokens
-        hub_metadata[hub_type]["partial_answer_error"] = pa.get("error")
+        if hub_type in hub_metadata:
+            hub_metadata[hub_type]["partial_answer"] = pa.get("content", "")
+            hub_metadata[hub_type]["partial_answer_token_usage"] = pa_tokens
+            hub_metadata[hub_type]["partial_answer_error"] = pa.get("error")
 
         logger.info(
             "run_global_rag_query: Hub '%s' partial answer generated (%d tokens)",
@@ -880,9 +1035,14 @@ def run_global_rag_query_stream(
     provider's ``chat_stream()`` method so tokens are yielded as they
     arrive, providing a responsive UX.
 
+    Per-hub partial answers (Step 3) are generated **in parallel** using
+    :class:`ThreadPoolExecutor` with ``max_workers=3``.
+
     Yields:
         ``(event_type, data)`` tuples:
 
+        - ``("progress", {"status": str})`` — A progress status update
+          indicating which pipeline stage is currently executing.
         - ``("token", {"content": str})`` — A content token from the
           synthesis LLM call.
         - ``("done", {...})`` — Final event with keys:
@@ -896,6 +1056,7 @@ def run_global_rag_query_stream(
     # Step 1: Route the question to relevant hubs
     # ------------------------------------------------------------------
     logger.info("run_global_rag_query_stream: Routing question to hubs")
+    yield ("progress", {"status": "Formulating search query..."})
     try:
         router_result = route_question(question)
     except Exception as e:
@@ -910,10 +1071,19 @@ def run_global_rag_query_stream(
         active_hubs,
     )
 
+    # Yield router reasoning if available (Fix 3)
+    if router_result.reasoning:
+        yield ("progress", {
+            "status": "Routing question to legal knowledge hubs...",
+            "reasoning": router_result.reasoning,
+        })
+    else:
+        yield ("progress", {"status": "Routing question to legal knowledge hubs..."})
+
     # ------------------------------------------------------------------
-    # Step 2: Search each relevant hub
+    # Step 2: Search each relevant hub (parallel via ThreadPoolExecutor)
     # ------------------------------------------------------------------
-    logger.info("run_global_rag_query_stream: Searching hubs")
+    logger.info("run_global_rag_query_stream: Searching hubs (parallel)")
     try:
         hub_results = multi_hub_search(
             router_result=router_result,
@@ -935,6 +1105,7 @@ def run_global_rag_query_stream(
             "sub_query": {
                 "fts_query": hub_data.get("sub_query", SubQuery()).fts_query,
                 "vector_query": hub_data.get("sub_query", SubQuery()).vector_query,
+                "hypothetical_answer": router_result.hypothetical_answer,
             },
             "error": hub_data.get("error"),
         }
@@ -946,9 +1117,10 @@ def run_global_rag_query_stream(
         )
 
     # ------------------------------------------------------------------
-    # Step 3: Generate per-hub partial answers
+    # Step 3: Generate per-hub partial answers (parallel via ThreadPoolExecutor)
     # ------------------------------------------------------------------
-    logger.info("run_global_rag_query_stream: Generating per-hub partial answers")
+    logger.info("run_global_rag_query_stream: Generating per-hub partial answers (parallel)")
+    yield ("progress", {"status": "Searching legal knowledge hubs..."})
     partial_answers: dict[str, dict[str, Any]] = {}
     total_token_usage: dict[str, int] = {
         "prompt_tokens": 0,
@@ -956,26 +1128,67 @@ def run_global_rag_query_stream(
         "total_tokens": 0,
     }
 
-    for hub_type in ["legislation", "judicial_precedent", "advisory_opinion"]:
+    # Prepare hub data for parallel execution
+    hub_order = ["legislation", "judicial_precedent", "advisory_opinion"]
+    hub_partial_args: list[tuple[str, str, list[dict[str, Any]]]] = []
+    for hub_type in hub_order:
         hub_data = hub_results.get(hub_type)
         chunks = hub_data.get("chunks", []) if hub_data else []
+        hub_partial_args.append((hub_type, question, chunks))
 
-        pa = generate_hub_partial_answer(
-            hub_type=hub_type,
-            question=question,
-            chunks=chunks,
-        )
-        partial_answers[hub_type] = pa
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_map = {
+            executor.submit(
+                _generate_single_partial_answer,
+                hub_type,
+                question,
+                chunks,
+            ): hub_type
+            for hub_type, question, chunks in hub_partial_args
+        }
 
-        # Accumulate token usage
+        # Track completed hubs for per-hub progress events (Fix 4)
+        completed_hubs: list[str] = []
+        for future in as_completed(future_map, timeout=60):
+            hub_type = future_map[future]
+            try:
+                _, pa = future.result(timeout=_TIMEOUT_PER_HUB)
+                partial_answers[hub_type] = pa
+                completed_hubs.append(hub_type)
+                hub_label = HUB_LABELS.get(hub_type, hub_type)
+                yield ("progress", {"status": f"Retrieved answer from {hub_label}..."})
+            except TimeoutError:
+                logger.warning(
+                    "run_global_rag_query_stream: Hub '%s' partial answer timed out after %ds",
+                    hub_type,
+                    _TIMEOUT_PER_HUB,
+                )
+                hub_label = HUB_LABELS.get(hub_type, hub_type)
+                partial_answers[hub_type] = {
+                    "content": f"تولید پاسخ جزئی برای {hub_label} با خطای timeout مواجه شد.",
+                    "token_usage": {
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                    },
+                    "error": "timeout",
+                }
+                yield ("progress", {"status": f"Hub {hub_label} timed out..."})
+
+    # Accumulate token usage from partial answers and update hub_metadata
+    for hub_type in hub_order:
+        pa = partial_answers.get(hub_type)
+        if not pa:
+            continue
         pa_tokens = pa.get("token_usage", {})
         for key in total_token_usage:
             total_token_usage[key] += pa_tokens.get(key, 0)
 
         # Update hub_metadata with partial answer info
-        hub_metadata[hub_type]["partial_answer"] = pa.get("content", "")
-        hub_metadata[hub_type]["partial_answer_token_usage"] = pa_tokens
-        hub_metadata[hub_type]["partial_answer_error"] = pa.get("error")
+        if hub_type in hub_metadata:
+            hub_metadata[hub_type]["partial_answer"] = pa.get("content", "")
+            hub_metadata[hub_type]["partial_answer_token_usage"] = pa_tokens
+            hub_metadata[hub_type]["partial_answer_error"] = pa.get("error")
 
         logger.info(
             "run_global_rag_query_stream: Hub '%s' partial answer generated (%d tokens)",
@@ -987,9 +1200,9 @@ def run_global_rag_query_stream(
     # Step 4: Synthesize partial answers (STREAMING)
     # ------------------------------------------------------------------
     logger.info("run_global_rag_query_stream: Synthesizing partial answers (streaming)")
+    yield ("progress", {"status": "Synthesizing final answer..."})
 
     # Build synthesis context (same as synthesize_answers)
-    hub_order = ["legislation", "judicial_precedent", "advisory_opinion"]
     synthesis_parts: list[str] = []
 
     for hub_type in hub_order:

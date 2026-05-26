@@ -244,7 +244,11 @@ services:
     ports:
       - "5173:5173"
     environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost/api}
+      # NOTE: In development, the frontend (port 5173) calls the backend directly
+      # on port 8000. The Django backend does NOT have an /api prefix — that's
+      # only added by nginx in production. So the correct URL is localhost:8000
+      # (without /api). The normalizeBaseUrl() function adds the trailing slash.
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
       VITE_APP_NAME: ${VITE_APP_NAME:-DocuChat}
     command: npm run dev -- --host
     networks:

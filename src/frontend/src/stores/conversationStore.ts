@@ -34,6 +34,8 @@ interface ConversationState {
   isSendingMessage: boolean;
   isCreatingConversation: boolean;
   streamingContent: string;
+  thinkingStatus: string | null;
+  thinkingReasoning: string | null;
   error: string | null;
   ragMode: RagMode;
 }
@@ -63,6 +65,8 @@ const initialState: ConversationState = {
   isSendingMessage: false,
   isCreatingConversation: false,
   streamingContent: '',
+  thinkingStatus: null,
+  thinkingReasoning: null,
   error: null,
   ragMode: 'local_rag',
 };
@@ -123,6 +127,8 @@ export const useConversationStore = create<ConversationStore>((set) => ({
 
     set((state) => ({
       isSendingMessage: true,
+      thinkingStatus: 'Processing your request...',
+      thinkingReasoning: null,
       error: null,
       activeConversation: state.activeConversation
         ? {
@@ -137,6 +143,8 @@ export const useConversationStore = create<ConversationStore>((set) => ({
 
       set((state) => ({
         isSendingMessage: false,
+        thinkingStatus: null,
+        thinkingReasoning: null,
         activeConversation: state.activeConversation
           ? {
               ...state.activeConversation,
@@ -149,6 +157,8 @@ export const useConversationStore = create<ConversationStore>((set) => ({
 
       set((state) => ({
         isSendingMessage: false,
+        thinkingStatus: null,
+        thinkingReasoning: null,
         error: message,
         activeConversation: state.activeConversation
           ? {
@@ -185,6 +195,8 @@ export const useConversationStore = create<ConversationStore>((set) => ({
     set((state) => ({
       isSendingMessage: true,
       streamingContent: '',
+      thinkingStatus: null,
+      thinkingReasoning: null,
       error: null,
       activeConversation: state.activeConversation
         ? {
@@ -222,6 +234,8 @@ export const useConversationStore = create<ConversationStore>((set) => ({
           set((state) => ({
             isSendingMessage: false,
             streamingContent: '',
+            thinkingStatus: null,
+            thinkingReasoning: null,
             activeConversation: state.activeConversation
               ? {
                   ...state.activeConversation,
@@ -245,6 +259,8 @@ export const useConversationStore = create<ConversationStore>((set) => ({
           set((state) => ({
             isSendingMessage: false,
             streamingContent: '',
+            thinkingStatus: null,
+            thinkingReasoning: null,
             error: error.message,
             activeConversation: state.activeConversation
               ? {
@@ -258,6 +274,10 @@ export const useConversationStore = create<ConversationStore>((set) => ({
           reject(error);
         },
         mode,
+        // onProgress
+        (status: string, reasoning?: string) => {
+          set({ thinkingStatus: status, thinkingReasoning: reasoning ?? null });
+        },
       );
     });
   },

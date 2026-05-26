@@ -66,6 +66,7 @@ class BuildRouterMessagesTests:
         assert "vector_query" in system_content
         assert "sub_queries" in system_content
         assert "reasoning" in system_content
+        assert "hypothetical_answer" in system_content
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +81,7 @@ class ParseRouterResponseTests:
         """Valid JSON with all three hubs returns correct RouterResult."""
         raw = json.dumps({
             "reasoning": "All hubs are relevant to this legal question.",
+            "hypothetical_answer": "بر اساس قانون مجازات اسلامی، مجازات کلاهبرداری حبس است.",
             "sub_queries": {
                 "legislation": {
                     "fts_query": "مجازات کلاهبرداری قانون مجازات اسلامی",
@@ -97,6 +99,7 @@ class ParseRouterResponseTests:
         })
         result = _parse_router_response(raw)
         assert result.reasoning == "All hubs are relevant to this legal question."
+        assert result.hypothetical_answer == "بر اساس قانون مجازات اسلامی، مجازات کلاهبرداری حبس است."
         assert len(result.sub_queries) == 3
         assert "legislation" in result.sub_queries
         assert "judicial_precedent" in result.sub_queries
@@ -109,6 +112,7 @@ class ParseRouterResponseTests:
         """Valid JSON with some hubs having empty queries."""
         raw = json.dumps({
             "reasoning": "Only legislation is relevant.",
+            "hypothetical_answer": "ماده 22 قانون مدنی مربوط به تصرف مال غیر است.",
             "sub_queries": {
                 "legislation": {
                     "fts_query": "ماده 22 قانون مدنی",
@@ -126,6 +130,7 @@ class ParseRouterResponseTests:
         })
         result = _parse_router_response(raw)
         assert result.reasoning == "Only legislation is relevant."
+        assert result.hypothetical_answer == "ماده 22 قانون مدنی مربوط به تصرف مال غیر است."
         assert result.sub_queries["legislation"].fts_query == "ماده 22 قانون مدنی"
         assert result.sub_queries["judicial_precedent"].fts_query == ""
         assert result.sub_queries["advisory_opinion"].fts_query == ""
@@ -141,6 +146,7 @@ class ParseRouterResponseTests:
         raw = """```json
 {
   "reasoning": "Test reasoning.",
+  "hypothetical_answer": "A hypothetical legal answer for testing.",
   "sub_queries": {
     "legislation": {
       "fts_query": "test query",
@@ -159,18 +165,24 @@ class ParseRouterResponseTests:
 ```"""
         result = _parse_router_response(raw)
         assert result.reasoning == "Test reasoning."
+        assert result.hypothetical_answer == "A hypothetical legal answer for testing."
         assert result.sub_queries["legislation"].fts_query == "test query"
 
     def test_missing_sub_queries_key(self) -> None:
         """JSON missing sub_queries key returns empty sub_queries."""
-        raw = json.dumps({"reasoning": "No sub-queries."})
+        raw = json.dumps({
+            "reasoning": "No sub-queries.",
+            "hypothetical_answer": "Some answer.",
+        })
         result = _parse_router_response(raw)
         assert result.reasoning == "No sub-queries."
+        assert result.hypothetical_answer == "Some answer."
         assert len(result.sub_queries) == 0
 
     def test_missing_reasoning_key(self) -> None:
         """JSON missing reasoning key returns empty reasoning string."""
         raw = json.dumps({
+            "hypothetical_answer": "Some answer.",
             "sub_queries": {
                 "legislation": {"fts_query": "test", "vector_query": "test"},
                 "judicial_precedent": {"fts_query": "", "vector_query": ""},
@@ -179,13 +191,16 @@ class ParseRouterResponseTests:
         })
         result = _parse_router_response(raw)
         assert result.reasoning == ""
+        assert result.hypothetical_answer == "Some answer."
 
     def test_truncates_long_queries(self) -> None:
         """Queries exceeding SUB_QUERY_MAX_LENGTH are truncated."""
         long_fts = "a" * (SUB_QUERY_MAX_LENGTH + 100)
         long_vector = "b" * (SUB_QUERY_MAX_LENGTH + 100)
+        long_hypo = "c" * (SUB_QUERY_MAX_LENGTH + 100)
         raw = json.dumps({
             "reasoning": "Long queries.",
+            "hypothetical_answer": long_hypo,
             "sub_queries": {
                 "legislation": {
                     "fts_query": long_fts,
@@ -198,17 +213,25 @@ class ParseRouterResponseTests:
         result = _parse_router_response(raw)
         assert len(result.sub_queries["legislation"].fts_query) == SUB_QUERY_MAX_LENGTH
         assert len(result.sub_queries["legislation"].vector_query) == SUB_QUERY_MAX_LENGTH
+        assert len(result.hypothetical_answer) == SUB_QUERY_MAX_LENGTH
+        assert result.hypothetical_answer == "c" * SUB_QUERY_MAX_LENGTH
 
     def test_non_dict_sub_queries_returns_empty(self) -> None:
         """sub_queries that is not a dict returns empty sub_queries."""
-        raw = json.dumps({"reasoning": "test", "sub_queries": "not a dict"})
+        raw = json.dumps({
+            "reasoning": "test",
+            "hypothetical_answer": "answer",
+            "sub_queries": "not a dict",
+        })
         result = _parse_router_response(raw)
+        assert result.hypothetical_answer == "answer"
         assert len(result.sub_queries) == 0
 
     def test_non_dict_hub_data_skips_hub(self) -> None:
         """Hub data that is not a dict is skipped."""
         raw = json.dumps({
             "reasoning": "test",
+            "hypothetical_answer": "answer",
             "sub_queries": {
                 "legislation": "not a dict",
                 "judicial_precedent": {"fts_query": "", "vector_query": ""},
@@ -216,12 +239,14 @@ class ParseRouterResponseTests:
             },
         })
         result = _parse_router_response(raw)
+        assert result.hypothetical_answer == "answer"
         assert "legislation" not in result.sub_queries
 
     def test_non_string_fields_default_to_empty(self) -> None:
         """Non-string fts_query/vector_query default to empty string."""
         raw = json.dumps({
             "reasoning": "test",
+            "hypothetical_answer": 12345,
             "sub_queries": {
                 "legislation": {
                     "fts_query": 123,
@@ -234,6 +259,7 @@ class ParseRouterResponseTests:
         result = _parse_router_response(raw)
         assert result.sub_queries["legislation"].fts_query == ""
         assert result.sub_queries["legislation"].vector_query == ""
+        assert result.hypothetical_answer == ""
 
 
 # ---------------------------------------------------------------------------
@@ -253,11 +279,13 @@ class AllHubsFallbackTests:
             assert result.sub_queries[hub].fts_query == "raw user query"
             assert result.sub_queries[hub].vector_query == "raw user query"
         assert result.reasoning == "LLM failed"
+        assert result.hypothetical_answer == "raw user query"
 
     def test_reasoning_reflects_failure_reason(self) -> None:
         """Reasoning string contains the provided failure reason."""
         result = _all_hubs_fallback("query", "Network error")
         assert "Network error" in result.reasoning
+        assert result.hypothetical_answer == "query"
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +298,7 @@ class RouteQuestionTests:
 
     _VALID_LLM_RESPONSE: str = json.dumps({
         "reasoning": "Legislation and judicial precedent are relevant.",
+        "hypothetical_answer": "بر اساس قانون مجازات اسلامی، مجازات جعل اسناد رسمی حبس است.",
         "sub_queries": {
             "legislation": {
                 "fts_query": "مجازات جعل اسناد رسمی",
@@ -305,6 +334,7 @@ class RouteQuestionTests:
         assert result.sub_queries["judicial_precedent"].fts_query == "جعل اسناد رسمی رأی وحدت رویه"
         assert result.sub_queries["advisory_opinion"].fts_query == ""
         assert "Legislation and judicial precedent" in result.reasoning
+        assert result.hypothetical_answer == "بر اساس قانون مجازات اسلامی، مجازات جعل اسناد رسمی حبس است."
 
     @patch("conversations.question_router.get_chat_provider")
     def test_passes_user_query_to_llm(
@@ -340,6 +370,7 @@ class RouteQuestionTests:
             assert result.sub_queries[hub].fts_query == "test query"
             assert result.sub_queries[hub].vector_query == "test query"
         assert "API unreachable" in result.reasoning
+        assert result.hypothetical_answer == "test query"
 
     @patch("conversations.question_router.get_chat_provider")
     def test_fallback_on_invalid_json(
@@ -355,6 +386,7 @@ class RouteQuestionTests:
 
         for hub in ALL_HUBS:
             assert result.sub_queries[hub].fts_query == "test query"
+        assert result.hypothetical_answer == "test query"
 
     @override_settings(QUERY_FORMULATION_ENABLED=False)
     @patch("conversations.question_router.get_chat_provider")
@@ -373,6 +405,7 @@ class RouteQuestionTests:
             assert result.sub_queries[hub].fts_query == "test query"
             assert result.sub_queries[hub].vector_query == "test query"
         assert "Question routing disabled" in result.reasoning
+        assert result.hypothetical_answer == "test query"
 
     @patch("conversations.question_router.get_chat_provider")
     def test_missing_hub_in_response_adds_fallback(
@@ -382,6 +415,7 @@ class RouteQuestionTests:
         """When LLM response is missing a hub, it's added with raw query fallback."""
         incomplete_response = json.dumps({
             "reasoning": "Only legislation is relevant.",
+            "hypothetical_answer": "بر اساس قانون، مجازات حبس است.",
             "sub_queries": {
                 "legislation": {
                     "fts_query": "test fts",
@@ -401,6 +435,7 @@ class RouteQuestionTests:
         assert "advisory_opinion" in result.sub_queries
         assert result.sub_queries["judicial_precedent"].fts_query == "test query"
         assert result.sub_queries["advisory_opinion"].fts_query == "test query"
+        assert result.hypothetical_answer == "بر اساس قانون، مجازات حبس است."
 
     @patch("conversations.question_router.get_chat_provider")
     def test_empty_fts_query_falls_back_to_raw(
@@ -410,6 +445,7 @@ class RouteQuestionTests:
         """When fts_query is whitespace-only, fallback to raw query."""
         response = json.dumps({
             "reasoning": "test",
+            "hypothetical_answer": "بر اساس قانون مجازات اسلامی، مجازات حبس است.",
             "sub_queries": {
                 "legislation": {
                     "fts_query": "   ",
@@ -429,3 +465,4 @@ class RouteQuestionTests:
         assert result.sub_queries["legislation"].fts_query == "raw fallback query"
         # vector_query was valid, should be preserved
         assert result.sub_queries["legislation"].vector_query == "valid vector query"
+        assert result.hypothetical_answer == "بر اساس قانون مجازات اسلامی، مجازات حبس است."

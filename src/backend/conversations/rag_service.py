@@ -370,6 +370,7 @@ def run_rag_query_stream(
 
     Yields:
         ``(type: str, data: dict)`` tuples where ``type`` is one of:
+        - ``"progress"``: A pipeline progress update. ``data`` = ``{"status": str}``.
         - ``"token"``: A content token. ``data`` = ``{"content": str}``.
         - ``"done"``: Streaming complete. ``data`` = ``{"message_id": str, "sources": list, "token_usage": dict}``.
 
@@ -378,6 +379,7 @@ def run_rag_query_stream(
     """
     # Step 1: Formulate query via LLM (optimizes for FTS and vector search)
     logger.info("run_rag_query_stream: Formulating query for document %s", document_id)
+    yield ("progress", {"status": "Formulating search query..."})
     formulation = formulate_query(question)
 
     # ---- HyDE diagnostic: log the hypothetical answer being embedded ----
@@ -407,6 +409,7 @@ def run_rag_query_stream(
         document_id,
         top_k,
     )
+    yield ("progress", {"status": "Searching document..."})
     try:
         filters = _get_rag_filters(document_id)
         chunks = hybrid_search(
@@ -442,6 +445,7 @@ def run_rag_query_stream(
 
     # Step 5: Stream from the chat provider
     logger.info("run_rag_query_stream: Calling chat provider (streaming)")
+    yield ("progress", {"status": "Generating answer..."})
     try:
         provider = get_chat_provider()
         full_content: list[str] = []

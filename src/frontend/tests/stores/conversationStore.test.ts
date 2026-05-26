@@ -87,6 +87,7 @@ async function resetStore() {
     isSendingMessage: false,
     isCreatingConversation: false,
     streamingContent: '',
+    thinkingStatus: null,
     error: null,
   });
   return useConversationStore;

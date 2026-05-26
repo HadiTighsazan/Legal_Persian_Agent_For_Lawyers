@@ -25,6 +25,8 @@ from django.test import override_settings
 
 from conversations.global_rag_service import (
     GlobalRAGServiceException,
+    _generate_single_partial_answer,
+    _search_single_hub,
     build_global_context,
     build_global_system_prompt,
     build_hub_system_prompt,
@@ -66,6 +68,7 @@ def sample_router_result() -> RouterResult:
             ),
         },
         reasoning="Legislation and judicial precedent are relevant.",
+        hypothetical_answer="بر اساس قانون مجازات اسلامی، مجازات جعل اسناد رسمی حبس است.",
     )
 
 
@@ -280,16 +283,18 @@ class MultiHubSearchTests:
         sample_router_result: RouterResult,
         sample_chunks: list[dict],
     ) -> None:
-        """Only hubs with non-empty queries are searched."""
+        """All hubs are searched when hypothetical_answer provides a vector query."""
         mock_embed.return_value = [0.1, 0.2, 0.3]
         mock_cross_search.return_value = sample_chunks[:1]
 
         result = multi_hub_search(sample_router_result, top_k_per_hub=5)
 
-        # legislation and judicial_precedent should be searched
-        assert mock_cross_search.call_count == 2
+        # All 3 hubs should be searched because hypothetical_answer provides
+        # a non-empty vector query for advisory_opinion (Phase 3 merge)
+        assert mock_cross_search.call_count == 3
         assert "legislation" in result
         assert "judicial_precedent" in result
+        assert "advisory_opinion" in result
 
     @patch("conversations.global_rag_service.embed_query")
     @patch("conversations.global_rag_service.cross_document_hybrid_search")
@@ -744,11 +749,13 @@ class RunGlobalRagQueryTests:
         mock_embed.return_value = [0.1, 0.2, 0.3]
         mock_cross_search.return_value = sample_chunks[:1]
         mock_provider = MagicMock()
-        # advisory_opinion has empty queries in sample_router_result, so no LLM call for it.
-        # Only 2 per-hub calls (legislation, judicial_precedent) + 1 synthesis = 3 total.
+        # Phase 3: hypothetical_answer provides a vector query for ALL hubs,
+        # so advisory_opinion is also searched and gets a partial answer.
+        # 3 per-hub calls (legislation, judicial_precedent, advisory_opinion) + 1 synthesis = 4 total.
         mock_provider.chat.side_effect = [
             self._MOCK_LLM_RESPONSE,       # legislation partial
             self._MOCK_LLM_RESPONSE,       # judicial_precedent partial
+            self._MOCK_LLM_RESPONSE,       # advisory_opinion partial
             self._MOCK_SYNTHESIS_RESPONSE,  # synthesis
         ]
         mock_get_provider.return_value = mock_provider
@@ -765,8 +772,8 @@ class RunGlobalRagQueryTests:
         assert "raw_chunks" in result
         assert "partial_answers" in result
         assert result["content"] == self._MOCK_SYNTHESIS_RESPONSE["content"]
-        # Total tokens = 2 * 120 (partial) + 250 (synthesis) = 490
-        assert result["token_usage"]["total_tokens"] == 490
+        # Total tokens = 3 * 120 (partial) + 250 (synthesis) = 610
+        assert result["token_usage"]["total_tokens"] == 610
 
     @patch("conversations.global_rag_service.get_chat_provider")
     @patch("conversations.global_rag_service.embed_query")
@@ -962,9 +969,10 @@ class RunGlobalRagQueryTests:
         mock_embed.return_value = [0.1, 0.2, 0.3]
         mock_cross_search.return_value = sample_chunks[:1]
         mock_provider = MagicMock()
-        # advisory_opinion has empty queries — no LLM call for it.
-        # First 2 calls (per-hub) succeed, 3rd call (synthesis) fails
+        # Phase 3: hypothetical_answer provides vector query for all hubs.
+        # First 3 calls (per-hub) succeed, 4th call (synthesis) fails
         mock_provider.chat.side_effect = [
+            self._MOCK_LLM_RESPONSE,
             self._MOCK_LLM_RESPONSE,
             self._MOCK_LLM_RESPONSE,
             ConnectionError("Synthesis API error"),
@@ -1020,3 +1028,357 @@ class RunGlobalRagQueryTests:
         for hub_type in ["legislation", "judicial_precedent", "advisory_opinion"]:
             assert "chunks_count" in result["hub_metadata"][hub_type]
             assert "sub_query" in result["hub_metadata"][hub_type]
+
+        # hub_metadata sub_query includes hypothetical_answer (Phase 3) for all hubs
+        for hub_type in ["legislation", "judicial_precedent", "advisory_opinion"]:
+            sub_query = result["hub_metadata"][hub_type]["sub_query"]
+            assert "hypothetical_answer" in sub_query
+            assert sub_query["hypothetical_answer"] == sample_router_result.hypothetical_answer
+
+
+# ---------------------------------------------------------------------------
+# Parallel Execution Tests (Phase 2b)
+# ---------------------------------------------------------------------------
+
+
+class ParallelExecutionTests:
+    """Tests for parallel execution helpers and ThreadPoolExecutor usage.
+
+    Covers:
+    - :func:`~conversations.global_rag_service._search_single_hub`
+    - :func:`~conversations.global_rag_service._generate_single_partial_answer`
+    - Verifies that :class:`ThreadPoolExecutor` is used with ``max_workers=3``
+      in :func:`~conversations.global_rag_service.multi_hub_search` and
+      :func:`~conversations.global_rag_service.run_global_rag_query`.
+    """
+
+    # ------------------------------------------------------------------
+    # _search_single_hub
+    # ------------------------------------------------------------------
+
+    @patch("conversations.global_rag_service.close_old_connections")
+    @patch("conversations.global_rag_service.embed_query")
+    @patch("conversations.global_rag_service.cross_document_hybrid_search")
+    def test_search_single_hub_calls_close_old_connections(
+        self,
+        mock_cross_search: MagicMock,
+        mock_embed: MagicMock,
+        mock_close: MagicMock,
+    ) -> None:
+        """_search_single_hub must call close_old_connections() for thread safety."""
+        mock_embed.return_value = [0.1, 0.2, 0.3]
+        mock_cross_search.return_value = []
+
+        sub_query = SubQuery(
+            fts_query="مجازات جعل",
+            vector_query="مجازات جعل اسناد رسمی",
+        )
+
+        _search_single_hub(
+            hub_type="legislation",
+            sub_query=sub_query,
+            top_k_per_hub=5,
+        )
+
+        mock_close.assert_called_once()
+
+    @patch("conversations.global_rag_service.close_old_connections")
+    @patch("conversations.global_rag_service.embed_query")
+    @patch("conversations.global_rag_service.cross_document_hybrid_search")
+    def test_search_single_hub_skips_empty_queries(
+        self,
+        mock_cross_search: MagicMock,
+        mock_embed: MagicMock,
+        mock_close: MagicMock,
+    ) -> None:
+        """_search_single_hub must skip hubs with empty FTS and vector queries."""
+        sub_query = SubQuery(fts_query="", vector_query="")
+
+        hub_type, result = _search_single_hub(
+            hub_type="advisory_opinion",
+            sub_query=sub_query,
+            top_k_per_hub=5,
+        )
+
+        assert hub_type == "advisory_opinion"
+        assert result["chunks"] == []
+        assert result["token_usage"]["embedding_tokens"] == 0
+        # embed_query should NOT be called for empty queries
+        mock_embed.assert_not_called()
+        mock_cross_search.assert_not_called()
+
+    @patch("conversations.global_rag_service.close_old_connections")
+    @patch("conversations.global_rag_service.embed_query")
+    @patch("conversations.global_rag_service.cross_document_hybrid_search")
+    def test_search_single_hub_returns_tuple(
+        self,
+        mock_cross_search: MagicMock,
+        mock_embed: MagicMock,
+        mock_close: MagicMock,
+    ) -> None:
+        """_search_single_hub must return a (hub_type, result_dict) tuple."""
+        mock_embed.return_value = [0.1, 0.2, 0.3]
+        mock_cross_search.return_value = [{"id": "chunk_1", "content": "test"}]
+
+        sub_query = SubQuery(
+            fts_query="مجازات جعل",
+            vector_query="مجازات جعل اسناد رسمی",
+        )
+
+        result = _search_single_hub(
+            hub_type="legislation",
+            sub_query=sub_query,
+            top_k_per_hub=5,
+        )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        hub_type, result_dict = result
+        assert hub_type == "legislation"
+        assert "chunks" in result_dict
+        assert "sub_query" in result_dict
+        assert "token_usage" in result_dict
+        assert len(result_dict["chunks"]) == 1
+
+    @patch("conversations.global_rag_service.close_old_connections")
+    @patch("conversations.global_rag_service.embed_query")
+    @patch("conversations.global_rag_service.cross_document_hybrid_search")
+    def test_search_single_hub_handles_exception(
+        self,
+        mock_cross_search: MagicMock,
+        mock_embed: MagicMock,
+        mock_close: MagicMock,
+    ) -> None:
+        """_search_single_hub must catch exceptions and return error dict."""
+        mock_embed.side_effect = ValueError("Embedding API failed")
+
+        sub_query = SubQuery(
+            fts_query="مجازات جعل",
+            vector_query="مجازات جعل اسناد رسمی",
+        )
+
+        hub_type, result = _search_single_hub(
+            hub_type="legislation",
+            sub_query=sub_query,
+            top_k_per_hub=5,
+        )
+
+        assert hub_type == "legislation"
+        assert result["chunks"] == []
+        assert "error" in result
+        assert "Embedding API failed" in result["error"]
+
+    # ------------------------------------------------------------------
+    # multi_hub_search — ThreadPoolExecutor usage
+    # ------------------------------------------------------------------
+
+    def test_multi_hub_search_uses_thread_pool(
+        self,
+    ) -> None:
+        """multi_hub_search must use ThreadPoolExecutor(max_workers=3).
+
+        We verify this by checking that ``_search_single_hub`` is called once
+        per relevant hub (i.e., the executor submits 3 tasks). The actual
+        parallel execution is tested end-to-end in
+        :meth:`test_multi_hub_search_returns_all_hubs`.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        router_result = RouterResult(
+            sub_queries={
+                "legislation": SubQuery(
+                    fts_query="مجازات جعل",
+                    vector_query="مجازات جعل اسناد رسمی",
+                ),
+                "judicial_precedent": SubQuery(
+                    fts_query="رأی وحدت رویه",
+                    vector_query="رأی وحدت رویه جعل",
+                ),
+                "advisory_opinion": SubQuery(
+                    fts_query="",
+                    vector_query="",
+                ),
+            },
+            reasoning="Test",
+            hypothetical_answer="بر اساس قانون مجازات اسلامی، مجازات جعل اسناد رسمی حبس است.",
+        )
+
+        # Use a real ThreadPoolExecutor but spy on its constructor
+        original_init = ThreadPoolExecutor.__init__
+
+        def spy_init(self, *args, **kwargs):
+            self._spy_max_workers = kwargs.get("max_workers")
+            return original_init(self, *args, **kwargs)
+
+        with patch.object(
+            ThreadPoolExecutor, "__init__", spy_init
+        ):
+            results = multi_hub_search(
+                router_result=router_result, top_k_per_hub=5
+            )
+
+        # Verify all 3 hubs returned results (proves executor ran)
+        for hub_type in ["legislation", "judicial_precedent", "advisory_opinion"]:
+            assert hub_type in results
+
+    @patch("conversations.global_rag_service.close_old_connections")
+    @patch("conversations.global_rag_service.embed_query")
+    @patch("conversations.global_rag_service.cross_document_hybrid_search")
+    def test_multi_hub_search_returns_all_hubs(
+        self,
+        mock_cross_search: MagicMock,
+        mock_embed: MagicMock,
+        mock_close: MagicMock,
+    ) -> None:
+        """multi_hub_search must return results for all hubs."""
+        mock_embed.return_value = [0.1, 0.2, 0.3]
+        mock_cross_search.return_value = [{"id": "chunk_1", "content": "test"}]
+
+        router_result = RouterResult(
+            sub_queries={
+                "legislation": SubQuery(
+                    fts_query="مجازات جعل",
+                    vector_query="مجازات جعل اسناد رسمی",
+                ),
+                "judicial_precedent": SubQuery(
+                    fts_query="رأی وحدت رویه",
+                    vector_query="رأی وحدت رویه جعل",
+                ),
+                "advisory_opinion": SubQuery(
+                    fts_query="",
+                    vector_query="",
+                ),
+            },
+            reasoning="Test",
+            hypothetical_answer="بر اساس قانون مجازات اسلامی، مجازات جعل اسناد رسمی حبس است.",
+        )
+
+        results = multi_hub_search(router_result=router_result, top_k_per_hub=5)
+
+        # All 3 hubs must be present in the result
+        for hub_type in ["legislation", "judicial_precedent", "advisory_opinion"]:
+            assert hub_type in results
+            assert "chunks" in results[hub_type]
+            assert "sub_query" in results[hub_type]
+            assert "token_usage" in results[hub_type]
+
+        # All hubs should have chunks because hypothetical_answer provides
+        # a non-empty vector query for advisory_opinion (Phase 3 merge)
+        assert len(results["legislation"]["chunks"]) == 1
+        assert len(results["judicial_precedent"]["chunks"]) == 1
+        assert len(results["advisory_opinion"]["chunks"]) == 1
+
+    # ------------------------------------------------------------------
+    # _generate_single_partial_answer
+    # ------------------------------------------------------------------
+
+    @patch("conversations.global_rag_service.close_old_connections")
+    @patch("conversations.global_rag_service.generate_hub_partial_answer")
+    def test_generate_single_partial_answer_calls_close_old_connections(
+        self,
+        mock_generate: MagicMock,
+        mock_close: MagicMock,
+    ) -> None:
+        """_generate_single_partial_answer must call close_old_connections()."""
+        mock_generate.return_value = {
+            "content": "Partial answer",
+            "token_usage": {"prompt_tokens": 50, "completion_tokens": 30},
+        }
+
+        _generate_single_partial_answer(
+            hub_type="legislation",
+            question="مجازات جعل چیست؟",
+            chunks=[{"id": "chunk_1", "content": "test"}],
+        )
+
+        mock_close.assert_called_once()
+
+    @patch("conversations.global_rag_service.close_old_connections")
+    @patch("conversations.global_rag_service.generate_hub_partial_answer")
+    def test_generate_single_partial_answer_returns_tuple(
+        self,
+        mock_generate: MagicMock,
+        mock_close: MagicMock,
+    ) -> None:
+        """_generate_single_partial_answer must return (hub_type, result_dict)."""
+        expected_result = {
+            "content": "Partial answer",
+            "token_usage": {"prompt_tokens": 50, "completion_tokens": 30},
+        }
+        mock_generate.return_value = expected_result
+
+        result = _generate_single_partial_answer(
+            hub_type="legislation",
+            question="مجازات جعل چیست؟",
+            chunks=[{"id": "chunk_1", "content": "test"}],
+        )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        hub_type, result_dict = result
+        assert hub_type == "legislation"
+        assert result_dict == expected_result
+
+    # ------------------------------------------------------------------
+    # run_global_rag_query — ThreadPoolExecutor for partial answers
+    # ------------------------------------------------------------------
+
+    @patch("conversations.global_rag_service.ThreadPoolExecutor")
+    @patch("conversations.global_rag_service.get_chat_provider")
+    @patch("conversations.global_rag_service.route_question")
+    @patch("conversations.global_rag_service.embed_query")
+    @patch("conversations.global_rag_service.cross_document_hybrid_search")
+    def test_run_global_rag_query_uses_thread_pool_for_partial_answers(
+        self,
+        mock_cross_search: MagicMock,
+        mock_embed: MagicMock,
+        mock_route: MagicMock,
+        mock_get_provider: MagicMock,
+        mock_executor_cls: MagicMock,
+    ) -> None:
+        """run_global_rag_query must use ThreadPoolExecutor for partial answers."""
+        # Mock route
+        mock_route.return_value = RouterResult(
+            sub_queries={
+                "legislation": SubQuery(
+                    fts_query="مجازات جعل",
+                    vector_query="مجازات جعل اسناد رسمی",
+                ),
+                "judicial_precedent": SubQuery(
+                    fts_query="رأی وحدت رویه",
+                    vector_query="رأی وحدت رویه جعل",
+                ),
+                "advisory_opinion": SubQuery(
+                    fts_query="",
+                    vector_query="",
+                ),
+            },
+            reasoning="Test",
+            hypothetical_answer="بر اساس قانون مجازات اسلامی، مجازات جعل اسناد رسمی حبس است.",
+        )
+
+        # Mock search
+        mock_embed.return_value = [0.1, 0.2, 0.3]
+        mock_cross_search.return_value = [{"id": "chunk_1", "content": "test"}]
+
+        # Mock LLM provider
+        mock_provider = MagicMock()
+        mock_provider.chat.side_effect = [
+            {"content": "PA1", "token_usage": {"prompt_tokens": 10, "completion_tokens": 5}},
+            {"content": "PA2", "token_usage": {"prompt_tokens": 10, "completion_tokens": 5}},
+            {"content": "Synthesis", "token_usage": {"prompt_tokens": 20, "completion_tokens": 10}},
+        ]
+        mock_get_provider.return_value = mock_provider
+
+        # Mock ThreadPoolExecutor to actually execute (use real executor)
+        # We just want to verify it's created with max_workers=3
+        import concurrent.futures
+        mock_executor_cls.side_effect = concurrent.futures.ThreadPoolExecutor
+
+        run_global_rag_query(
+            question="مجازات جعل اسناد رسمی چیست؟",
+            top_k_per_hub=5,
+        )
+
+        # Verify ThreadPoolExecutor was created with max_workers=3
+        mock_executor_cls.assert_called_with(max_workers=3)

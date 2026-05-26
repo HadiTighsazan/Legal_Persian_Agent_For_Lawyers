@@ -96,10 +96,17 @@ SYSTEM_PROMPT: str = (
     "concepts, include ALL concepts in the sub-queries for each relevant hub.\n"
     "5. **Preserve all numbers exactly**: Do not modify or drop any numeric "
     "values (article numbers, penalty amounts, dates, etc.).\n"
-    "6. Output ONLY valid JSON with the following structure:\n"
+    "6. **Additionally**, generate a single **hypothetical_answer** field at "
+    "the top level. This is a HyDE-style hypothetical answer written in the "
+    "style of Persian legal text, used as the vector query for embedding "
+    "search across all relevant hubs. Write 1-3 sentences in formal Persian "
+    "legal language that directly answers the user's question as if it were "
+    "an excerpt from a legal document.\n"
+    "7. Output ONLY valid JSON with the following structure:\n"
     "```\n"
     "{\n"
     '  "reasoning": "Brief explanation of which hubs were selected and why.",\n'
+    '  "hypothetical_answer": "HyDE-style hypothetical answer in Persian legal text style.",\n'
     '  "sub_queries": {\n'
     '    "legislation": {\n'
     '      "fts_query": "keyword string or empty",\n'
@@ -123,6 +130,7 @@ SYSTEM_PROMPT: str = (
     '  "reasoning": "The question asks about a specific penalty under the law, '
     'which is primarily a legislation matter. Judicial precedent may also be '
     'relevant for how courts have applied this penalty.",\n'
+    '  "hypothetical_answer": "مجازات کلاهبرداری حسب قانون مجازات اسلامی حبس از یک تا هفت سال و پرداخت جزای نقدی معادل مال اخذ شده می‌باشد. کلاهبرداری از جمله جرایم علیه اموال محسوب می‌گردد.",\n'
     '  "sub_queries": {\n'
     '    "legislation": {\n'
     '      "fts_query": "مجازات کلاهبرداری قانون مجازات اسلامی",\n'
@@ -144,6 +152,7 @@ SYSTEM_PROMPT: str = (
     '  "reasoning": "The user explicitly asks for an advisory opinion about a '
     'specific article of the Civil Code. Both advisory_opinion and legislation '
     'are relevant.",\n'
+    '  "hypothetical_answer": "ماده 22 قانون مدنی: هر کس مال غیر را تصرف کند باید آن را به صاحبش مسترد نماید و در صورت تلف یا نقصان مسئول جبران خسارت خواهد بود.",\n'
     '  "sub_queries": {\n'
     '    "legislation": {\n'
     '      "fts_query": "ماده 22 قانون مدنی",\n'
@@ -191,10 +200,15 @@ class RouterResult:
             Only hubs with non-empty queries should be searched.
         reasoning: Brief explanation from the LLM about which hubs were
             selected and why.
+        hypothetical_answer: A HyDE-style hypothetical answer written in the
+            style of Persian legal text, used as the vector query for all
+            relevant hubs. This replaces the separate ``formulate_query()``
+            call, saving one LLM invocation per pipeline run.
     """
 
     sub_queries: dict[str, SubQuery] = field(default_factory=dict)
     reasoning: str = ""
+    hypothetical_answer: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +290,13 @@ def route_question(user_query: str) -> RouterResult:
             active_hubs,
             router_result.reasoning,
         )
+
+        # Fallback: ensure hypothetical_answer is populated (Phase 3)
+        # If the router returned an empty hypothetical_answer (e.g. parsing
+        # failed partially), fall back to the raw user query so the pipeline
+        # still has a vector query to embed.
+        if not router_result.hypothetical_answer:
+            router_result.hypothetical_answer = user_query
 
         return router_result
 
@@ -398,19 +419,36 @@ def _parse_router_response(raw_content: str) -> RouterResult:
     if not isinstance(reasoning, str):
         reasoning = ""
 
+    # Extract hypothetical_answer (HyDE — Phase 3 merge)
+    hypothetical_answer = data.get("hypothetical_answer", "")
+    if not isinstance(hypothetical_answer, str):
+        hypothetical_answer = ""
+    if len(hypothetical_answer) > SUB_QUERY_MAX_LENGTH:
+        logger.warning(
+            "_parse_router_response: hypothetical_answer exceeds %d chars, truncating",
+            SUB_QUERY_MAX_LENGTH,
+        )
+        hypothetical_answer = hypothetical_answer[:SUB_QUERY_MAX_LENGTH]
+
     # Extract sub_queries
     sub_queries_data = data.get("sub_queries")
     if sub_queries_data is None:
         logger.warning(
             "_parse_router_response: sub_queries key missing, returning empty",
         )
-        return RouterResult(reasoning=reasoning)
+        return RouterResult(
+            reasoning=reasoning,
+            hypothetical_answer=hypothetical_answer,
+        )
     if not isinstance(sub_queries_data, dict):
         logger.warning(
             "_parse_router_response: sub_queries is not a dict (%s), returning empty",
             type(sub_queries_data).__name__,
         )
-        return RouterResult(reasoning=reasoning)
+        return RouterResult(
+            reasoning=reasoning,
+            hypothetical_answer=hypothetical_answer,
+        )
 
     sub_queries: dict[str, SubQuery] = {}
     for hub in sub_queries_data:
@@ -458,6 +496,7 @@ def _parse_router_response(raw_content: str) -> RouterResult:
     return RouterResult(
         sub_queries=sub_queries,
         reasoning=reasoning,
+        hypothetical_answer=hypothetical_answer,
     )
 
 
@@ -483,4 +522,5 @@ def _all_hubs_fallback(user_query: str, reason: str) -> RouterResult:
     return RouterResult(
         sub_queries=sub_queries,
         reasoning=reason,
+        hypothetical_answer=user_query,
     )

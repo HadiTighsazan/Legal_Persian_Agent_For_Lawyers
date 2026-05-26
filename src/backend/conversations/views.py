@@ -525,18 +525,37 @@ class ConversationMessageStreamView(APIView):
                     final_sources: list = []
                     final_hub_metadata: dict | None = None
 
-                    for event_type, data in run_global_rag_query_stream(
+                    logger.info(
+                        "event_stream: Starting global_rag stream for conversation %s",
+                        conversation_id,
+                    )
+                    stream_gen = run_global_rag_query_stream(
                         question=question,
                         conversation_history=conversation_history,
                         top_k_per_hub=5,
-                    ):
-                        if event_type == "token":
+                    )
+                    logger.info(
+                        "event_stream: run_global_rag_query_stream generator created for conversation %s",
+                        conversation_id,
+                    )
+
+                    for event_type, data in stream_gen:
+                        if event_type == "progress":
+                            # Pass through progress events to the frontend (Fix 2: include reasoning)
+                            yield f"data: {json.dumps({'type': 'progress', 'status': data['status'], 'reasoning': data.get('reasoning')})}\n\n"
+                        elif event_type == "token":
                             full_content += data["content"]
                             yield f"data: {json.dumps({'type': 'token', 'content': data['content']})}\n\n"
                         elif event_type == "done":
                             final_token_usage = data.get("token_usage")
                             final_sources = data.get("sources", [])
                             final_hub_metadata = data.get("hub_metadata")
+                            logger.info(
+                                "event_stream: Global RAG done for conversation %s — %d chars, %d sources",
+                                conversation_id,
+                                len(full_content),
+                                len(final_sources),
+                            )
 
                     # Persist the assistant message after streaming completes
                     assistant_kwargs = {
@@ -551,8 +570,18 @@ class ConversationMessageStreamView(APIView):
                     assistant_message = Message.objects.create(**assistant_kwargs)
                     conversation.save()
 
+                    logger.info(
+                        "event_stream: Assistant message %s persisted for conversation %s",
+                        assistant_message.id,
+                        conversation_id,
+                    )
+
                     yield f"data: {json.dumps({'type': 'done', 'message_id': str(assistant_message.id), 'sources': final_sources, 'token_usage': final_token_usage, 'hub_metadata': final_hub_metadata})}\n\n"
                 else:
+                    logger.info(
+                        "event_stream: Starting local_rag stream for conversation %s",
+                        conversation_id,
+                    )
                     for event_type, data in run_rag_query_stream(
                         question=question,
                         document_id=str(conversation.document_id),
@@ -573,24 +602,31 @@ class ConversationMessageStreamView(APIView):
                             # Touch conversation.updated_at
                             conversation.save()
 
+                            logger.info(
+                                "event_stream: Local RAG done for conversation %s — message %s",
+                                conversation_id,
+                                assistant_message.id,
+                            )
+
                             # Send done event with message metadata
                             yield f"data: {json.dumps({'type': 'done', 'message_id': str(assistant_message.id), 'sources': data['sources'], 'token_usage': data['token_usage']})}\n\n"
 
             except (RAGServiceException, GlobalRAGServiceException) as e:
                 error_msg = str(e).lower()
+                logger.exception(
+                    "event_stream: RAGServiceException for conversation %s: %s",
+                    conversation_id,
+                    e,
+                )
                 if "rate limit" in error_msg or "429" in error_msg:
                     yield f"data: {json.dumps({'type': 'error', 'error': 'rate_limit_exceeded', 'message': 'AI provider rate limit exceeded. Please try again later.'})}\n\n"
                 else:
-                    logger.error(
-                        "RAG stream query failed for conversation %s: %s",
-                        conversation_id,
-                        e,
-                    )
                     yield f"data: {json.dumps({'type': 'error', 'error': 'rag_error', 'message': str(e)})}\n\n"
             except Exception as e:
                 logger.exception(
-                    "Unexpected error in stream for conversation %s",
+                    "event_stream: Unexpected error for conversation %s: %s",
                     conversation_id,
+                    e,
                 )
                 yield f"data: {json.dumps({'type': 'error', 'error': 'internal_error', 'message': 'An unexpected error occurred.'})}\n\n"
 
