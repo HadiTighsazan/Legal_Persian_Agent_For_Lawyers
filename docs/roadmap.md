@@ -42,9 +42,9 @@ User Uploads PDF → PyMuPDF Extraction → Legal Structural Chunking
 
 ---
 
-## Phase 2: Global RAG — پژوهشگر حقوقی 🎯 (Current Target)
+## Phase 2: Global RAG — پژوهشگر حقوقی ✅ (Completed)
 
-**Status:** 🔄 In Progress — see [`plans/plan-phase2-global-rag-refactoring.md`](../plans/plan-phase2-global-rag-refactoring.md)  
+**Status:** ✅ Completed
 **Tagline:** Ask legal questions, get answers from all three legal hubs.
 
 ### What it does
@@ -289,11 +289,11 @@ gantt
     Streaming & Citations          :done, 2025-Q1, 2025-Q2
     
     section Phase 2: Global RAG
-    JSON Ingestion + hub_type      :active, 2025-Q2, 2025-Q2
-    Multi-Hub Search               :active, 2025-Q2, 2025-Q2
-    Question Router                :active, 2025-Q2, 2025-Q2
-    Lite Multi-Hub RAG             :active, 2025-Q2, 2025-Q2
-    Full Synthesis Mode            :2025-Q2, 2025-Q3
+    JSON Ingestion + hub_type      :done, 2025-Q2, 2025-Q2
+    Multi-Hub Search               :done, 2025-Q2, 2025-Q2
+    Question Router                :done, 2025-Q2, 2025-Q2
+    Lite Multi-Hub RAG             :done, 2025-Q2, 2025-Q2
+    Full Synthesis Mode            :done, 2025-Q2, 2025-Q3
     
     section Phase 3: Case Analyzer
     Document Understanding         :2025-Q3, 2025-Q4
@@ -320,7 +320,7 @@ flowchart LR
     P3 --> P4
     
     style P1 fill:#90EE90,stroke:#333,color:#000
-    style P2 fill:#FFD700,stroke:#333,color:#000
+    style P2 fill:#90EE90,stroke:#333,color:#000
     style P3 fill:#87CEEB,stroke:#333,color:#000
     style P4 fill:#DDA0DD,stroke:#333,color:#000
 ```
@@ -342,8 +342,8 @@ flowchart LR
 | Phase | Status | Target Completion |
 |-------|--------|-------------------|
 | Phase 1: Local RAG | ✅ Completed | Done |
-| Phase 2a: Global RAG (Lite) | 🔄 In Progress | Current sprint |
-| Phase 2b: Global RAG (Full) | 📋 Planned | After Phase 2a |
+| Phase 2a: Global RAG (Lite) | ✅ Completed | Done |
+| Phase 2b: Global RAG (Full) | ✅ Completed | Done |
 | Phase 3: Case Analyzer | 🔮 Future | TBD |
 | Phase 4: Legal Drafter | 🔮 Future | TBD |
 

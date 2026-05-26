@@ -293,11 +293,17 @@ VECTOR_SEARCH_PROBES = env("VECTOR_SEARCH_PROBES")
 OPENAI_CHAT_MODEL = env("OPENAI_CHAT_MODEL", default="gpt-4o-mini")
 CHAT_MAX_TOKENS = env.int("CHAT_MAX_TOKENS", default=1000)
 
+# Partial Answer Configuration (Global RAG per-hub partial answers)
+# Lower than CHAT_MAX_TOKENS because each hub generates a focused partial
+# answer using only its own context. Tuned for Persian legal text to avoid
+# truncation while keeping per-hub responses concise.
+PARTIAL_ANSWER_MAX_TOKENS = env.int("PARTIAL_ANSWER_MAX_TOKENS", default=800)
+
 # Synthesis Configuration (Global RAG answer merging)
 # Higher than CHAT_MAX_TOKENS because the synthesis step merges 3 partial
 # answers (legislation, judicial precedent, advisory opinions) with conflict
 # detection into a comprehensive Persian legal answer.
-SYNTHESIS_MAX_TOKENS = env.int("SYNTHESIS_MAX_TOKENS", default=4000)
+SYNTHESIS_MAX_TOKENS = env.int("SYNTHESIS_MAX_TOKENS", default=3000)
 
 # RAG Configuration
 RAG_MAX_HISTORY_TURNS = env.int("RAG_MAX_HISTORY_TURNS", default=10)

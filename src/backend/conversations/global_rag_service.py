@@ -538,11 +538,12 @@ def generate_hub_partial_answer(
             },
         ]
 
-        # Call the chat provider
+        # Call the chat provider — use PARTIAL_ANSWER_MAX_TOKENS for per-hub
+        # partial answers to prevent truncation of focused Persian legal responses
         provider = get_chat_provider()
         result = provider.chat(
             messages=messages,
-            max_tokens=settings.CHAT_MAX_TOKENS,
+            max_tokens=settings.PARTIAL_ANSWER_MAX_TOKENS,
         )
 
         logger.info(
