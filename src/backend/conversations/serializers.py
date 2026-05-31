@@ -224,12 +224,12 @@ class AskQuestionSerializer(serializers.Serializer):
     )
     mode = serializers.ChoiceField(
         choices=MODE_CHOICES,
-        default="local_rag",
+        default="global_rag",
         required=False,
-        help_text="RAG mode: 'local_rag' (default) searches within the "
-                  "conversation's document; 'global_rag' searches across all "
+        help_text="RAG mode: 'global_rag' (default) searches across all "
                   "legal knowledge hubs (legislation, judicial precedent, "
-                  "advisory opinions).",
+                  "advisory opinions); 'local_rag' searches within the "
+                  "conversation's document.",
     )
 
     def validate_content(self, value: str) -> str:

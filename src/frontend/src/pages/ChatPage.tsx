@@ -205,7 +205,7 @@ export default function ChatPage() {
         {/* Chat content */}
         {conversationId ? (
           <ChatErrorBoundary>
-            <ChatWindow conversationId={conversationId} />
+            <ChatWindow conversationId={conversationId} mode="local_rag" />
           </ChatErrorBoundary>
         ) : (
           <NoConversationSelected documentId={documentId!} />

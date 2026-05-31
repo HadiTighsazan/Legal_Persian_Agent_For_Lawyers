@@ -15,16 +15,33 @@ EXPOSE 5173
 CMD ["npm", "run", "dev", "--", "--host"]
 
 # ============================================================
-# Stage 2: Build — Compile frontend assets for production
+# Stage 2: Dependencies — Install production deps only
 # ============================================================
-FROM dev AS builder
+FROM docker.arvancloud.ir/library/node:20-alpine AS deps
+
+WORKDIR /app
+COPY src/frontend/package*.json ./
+RUN npm install --no-audit --no-fund --legacy-peer-deps
+
+# ============================================================
+# Stage 3: Build — Compile frontend assets for production
+# ============================================================
+FROM deps AS builder
+
+COPY src/frontend/ .
+
+# Explicitly set production API URL — overrides any .env file
+# This ensures the built JS bundle uses /api (same-origin via nginx proxy)
+# instead of http://localhost:8000 (which would cause CORS errors).
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=/api
 
 RUN npm run build
 
 # ============================================================
-# Stage 3: Production — Serve with Nginx
+# Stage 4: Production — Serve with Nginx
 # ============================================================
-FROM nginx:alpine
+FROM nginx:alpine AS production
 
 RUN rm /etc/nginx/conf.d/default.conf
 COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf

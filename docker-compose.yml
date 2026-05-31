@@ -211,8 +211,9 @@ services:
   # Nginx Reverse Proxy
   nginx:
     build:
-      context: ./docker/nginx
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./docker/frontend/Dockerfile
+      target: production
     container_name: docuchat_nginx
     restart: unless-stopped
     depends_on:
@@ -226,7 +227,6 @@ services:
       - ./docker/nginx/ssl:/etc/nginx/ssl
       - backend_static:/static:ro
       - backend_media:/media:ro
-      - ./src/frontend/dist:/usr/share/nginx/html:ro
     networks:
       - docuchat_network
 

@@ -37,7 +37,6 @@ interface ConversationState {
   thinkingStatus: string | null;
   thinkingReasoning: string | null;
   error: string | null;
-  ragMode: RagMode;
 }
 
 interface ConversationActions {
@@ -50,7 +49,6 @@ interface ConversationActions {
   deleteConversation: (conversationId: string) => Promise<void>;
   clearActiveConversation: () => void;
   clearError: () => void;
-  setRagMode: (mode: RagMode) => void;
 }
 
 type ConversationStore = ConversationState & ConversationActions;
@@ -68,7 +66,6 @@ const initialState: ConversationState = {
   thinkingStatus: null,
   thinkingReasoning: null,
   error: null,
-  ragMode: 'local_rag',
 };
 
 // ── Store ──────────────────────────────────────────────────────────────
@@ -320,9 +317,5 @@ export const useConversationStore = create<ConversationStore>((set) => ({
 
   clearError: (): void => {
     set({ error: null });
-  },
-
-  setRagMode: (mode: RagMode): void => {
-    set({ ragMode: mode });
   },
 }));

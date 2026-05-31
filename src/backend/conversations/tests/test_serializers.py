@@ -448,11 +448,11 @@ class AskQuestionSerializerTests(TestCase):
 
     # -- Mode field tests (Phase 2a — Global RAG) ---------------------------
 
-    def test_default_mode_is_local_rag(self) -> None:
-        """Omitting ``mode`` should default to ``'local_rag'``."""
+    def test_default_mode_is_global_rag(self) -> None:
+        """Omitting ``mode`` should default to ``'global_rag'``."""
         serializer = AskQuestionSerializer(data={"content": "Test question"})
         self.assertTrue(serializer.is_valid())
-        self.assertEqual(serializer.validated_data["mode"], "local_rag")
+        self.assertEqual(serializer.validated_data["mode"], "global_rag")
 
     def test_valid_global_rag_mode(self) -> None:
         """``mode='global_rag'`` should pass validation."""

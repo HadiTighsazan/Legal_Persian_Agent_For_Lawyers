@@ -110,10 +110,11 @@ class ConversationMessageViewTests(TestCase):
     def _post_question(
         self,
         content: str = "What is this document about?",
+        mode: str = "local_rag",
         **extra,
     ):
         """POST a question to the messages endpoint."""
-        payload = {"content": content}
+        payload = {"content": content, "mode": mode}
         return self.client.post(
             self.url,
             payload,
@@ -500,18 +501,19 @@ class ConversationMessageViewGlobalRagTests(TestCase):
         self.assertIn("legislation", data["hub_metadata"])
         self.assertIn("judicial_precedent", data["hub_metadata"])
 
-    # -- 3. Default mode (no mode param) uses local_rag ---------------------
+    # -- 3. Default mode (no mode param) uses global_rag --------------------
 
-    @patch("conversations.views.run_rag_query")
-    def test_default_mode_is_local_rag(
+    @patch("conversations.views.run_global_rag_query")
+    def test_default_mode_is_global_rag(
         self,
-        mock_run_rag_query: MagicMock,
+        mock_run_global_rag: MagicMock,
     ) -> None:
-        """POST without mode parameter defaults to local_rag."""
-        mock_run_rag_query.return_value = {
-            "content": "Local RAG answer",
+        """POST without mode parameter defaults to global_rag."""
+        mock_run_global_rag.return_value = {
+            "content": "Global RAG answer",
             "sources": [],
             "token_usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            "hub_metadata": None,
             "raw_chunks": [],
         }
 
@@ -526,9 +528,7 @@ class ConversationMessageViewGlobalRagTests(TestCase):
 
         data = response.json()
         self.assertEqual(data["role"], "assistant")
-        self.assertEqual(data["content"], "Local RAG answer")
-        # hub_metadata should be null for local_rag
-        self.assertIsNone(data.get("hub_metadata"))
+        self.assertEqual(data["content"], "Global RAG answer")
 
     # -- 4. Invalid mode value -> 400 ---------------------------------------
 

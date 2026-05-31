@@ -11,7 +11,6 @@ import { Button } from '@/components/ui/button';
 import ConversationSidebar from '@/components/chat/ConversationSidebar';
 import ChatWindow from '@/components/chat/ChatWindow';
 import ChatErrorBoundary from '@/components/chat/ChatErrorBoundary';
-import ModeSelector from '@/components/rag/ModeSelector';
 import GlobalRagEmptyState from '@/components/rag/GlobalRagEmptyState';
 import { useConversationStore } from '@/stores/conversationStore';
 
@@ -134,7 +133,6 @@ export default function GlobalRagChatPage() {
             </span>
           </div>
           <div className="flex-1" />
-          <ModeSelector />
         </div>
 
         {/* ── Mobile header ─────────────────────────────────────────── */}
@@ -166,7 +164,7 @@ export default function GlobalRagChatPage() {
         {/* Chat content */}
         {conversationId ? (
           <ChatErrorBoundary>
-            <ChatWindow conversationId={conversationId} />
+            <ChatWindow conversationId={conversationId} mode="global_rag" />
           </ChatErrorBoundary>
         ) : (
           <NoConversationSelected />

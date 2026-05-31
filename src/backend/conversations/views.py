@@ -330,7 +330,7 @@ class ConversationMessageView(APIView):
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
         question = validated_data["content"]
-        mode = validated_data.get("mode", "local_rag")
+        mode = validated_data.get("mode", "global_rag")
 
         # ------------------------------------------------------------------
         # 3. Persist the user message first
@@ -489,7 +489,7 @@ class ConversationMessageStreamView(APIView):
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
         question = validated_data["content"]
-        mode = validated_data.get("mode", "local_rag")
+        mode = validated_data.get("mode", "global_rag")
 
         # 3. Persist the user message
         Message.objects.create(

@@ -6,11 +6,13 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import MessageBubble from '@/components/chat/MessageBubble';
 import MessageInput from '@/components/chat/MessageInput';
+import type { RagMode } from '@/api/conversations';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface ChatWindowProps {
   conversationId: string;
+  mode?: RagMode;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -143,7 +145,7 @@ function ThinkingIndicator({ status, reasoning }: { status: string | null; reaso
 
 // ── Main Component ─────────────────────────────────────────────────────────
 
-export default function ChatWindow({ conversationId }: ChatWindowProps) {
+export default function ChatWindow({ conversationId, mode = 'local_rag' }: ChatWindowProps) {
   const activeConversation = useConversationStore((s) => s.activeConversation);
   const isLoadingMessages = useConversationStore((s) => s.isLoadingMessages);
   const isSendingMessage = useConversationStore((s) => s.isSendingMessage);
@@ -151,7 +153,6 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
   const thinkingStatus = useConversationStore((s) => s.thinkingStatus);
   const thinkingReasoning = useConversationStore((s) => s.thinkingReasoning);
   const error = useConversationStore((s) => s.error);
-  const ragMode = useConversationStore((s) => s.ragMode);
   const loadConversation = useConversationStore((s) => s.loadConversation);
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const sendMessageStream = useConversationStore((s) => s.sendMessageStream);
@@ -177,23 +178,23 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
       lastAttemptedContent.current = content;
       // Use streaming if available, fall back to non-streaming
       try {
-        await sendMessageStream(conversationId, content, ragMode);
+        await sendMessageStream(conversationId, content, mode);
       } catch {
-        await sendMessage(conversationId, content, ragMode);
+        await sendMessage(conversationId, content, mode);
       }
     },
-    [conversationId, ragMode, sendMessageStream, sendMessage],
+    [conversationId, mode, sendMessageStream, sendMessage],
   );
 
   const handleRetry = useCallback(async () => {
     if (lastAttemptedContent.current) {
       try {
-        await sendMessageStream(conversationId, lastAttemptedContent.current, ragMode);
+        await sendMessageStream(conversationId, lastAttemptedContent.current, mode);
       } catch {
-        await sendMessage(conversationId, lastAttemptedContent.current, ragMode);
+        await sendMessage(conversationId, lastAttemptedContent.current, mode);
       }
     }
-  }, [conversationId, ragMode, sendMessageStream, sendMessage]);
+  }, [conversationId, mode, sendMessageStream, sendMessage]);
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -246,7 +247,7 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
         onSend={handleSend}
         isDisabled={isSendingMessage}
         placeholder={
-          ragMode === 'global_rag'
+          mode === 'global_rag'
             ? 'Ask a legal research question across all hubs...'
             : 'Ask a question about this document...'
         }
