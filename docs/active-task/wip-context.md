@@ -88,6 +88,15 @@ User Message
 - Existing tests: ✅ All 18 message view tests pass, all model/serializer tests pass
 - Pre-existing failure: `test_full_conversation_lifecycle` in integration tests was already failing before these changes (assertion on `sources` count)
 
+### 🔧 Fix Applied: `test_full_conversation_lifecycle` — Wrong RAG mode
+
+**Root Cause:** The test was written when the default mode was `local_rag`, but the serializer default was later changed to `"global_rag"`. The test didn't pass `"mode"` in its POST data, so it routed to the unmocked `run_global_rag_query()` instead of the mocked `run_rag_query()`, causing real LLM calls and empty sources.
+
+**Fix:** Added `"mode": "local_rag"` to both POST requests in the test (lines 122 and 152), ensuring the requests route to the mocked `run_rag_query()`.
+
+**Files changed:**
+- [`src/backend/conversations/tests/test_integration.py`](../../src/backend/conversations/tests/test_integration.py) — Lines 122 and 152
+
 ## Current State
 
 The Strategist backend is now fully implemented with real AI:

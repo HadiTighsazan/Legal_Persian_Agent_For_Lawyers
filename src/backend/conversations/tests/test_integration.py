@@ -119,7 +119,7 @@ class ConversationIntegrationTests(TestCase):
         )
         response = self.client.post(
             messages_url,
-            {"content": "What is machine learning?"},
+            {"content": "What is machine learning?", "mode": "local_rag"},
             format="json",
             **self.auth_header,
         )
@@ -149,7 +149,7 @@ class ConversationIntegrationTests(TestCase):
         # Step 6: POST second question → verify history passed to RAG
         response = self.client.post(
             messages_url,
-            {"content": "Tell me more about deep learning."},
+            {"content": "Tell me more about deep learning.", "mode": "local_rag"},
             format="json",
             **self.auth_header,
         )
