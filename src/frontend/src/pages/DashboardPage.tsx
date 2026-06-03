@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Search, ArrowRight } from 'lucide-react';
+import { Search, Scale, ArrowRight } from 'lucide-react';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -46,6 +46,31 @@ export default function DashboardPage() {
               </p>
               <Button variant="outline" size="sm" className="gap-2">
                 Start Research
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Interactive Strategist Card */}
+          <Card
+            className="cursor-pointer transition-colors hover:bg-accent/50"
+            onClick={() => navigate('/strategist')}
+          >
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Interactive Strategist
+                </CardTitle>
+                <Scale className="h-5 w-5 text-primary" />
+              </div>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-3">
+                Describe your case and get a strategic analysis with success
+                probability, risk assessment, and recommendations.
+              </p>
+              <Button variant="outline" size="sm" className="gap-2">
+                Start Analysis
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </CardContent>

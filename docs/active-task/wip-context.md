@@ -1,69 +1,84 @@
-# WIP Context — Phase 3 Task 2: Backend API Plumbing (Interactive Strategist)
+# WIP Context — Phase 3 Task 3: Frontend Navigation Skeleton (Interactive Strategist)
 
 ## What Was Just Completed
 
-### Task 2: API and Routing
+### Task 3: Frontend Shell
 
-Implemented the backend API plumbing for the Interactive Strategist mode. All existing tests (73 tests) continue to pass.
+Implemented the frontend navigation skeleton for the Interactive Strategist feature. All changes are on the frontend side.
 
 ### Changes Made
 
-#### 1. [`src/backend/conversations/strategist_service.py`](../../src/backend/conversations/strategist_service.py) — **NEW FILE**
+#### 1. [`src/frontend/src/pages/StrategistPage.tsx`](../../src/frontend/src/pages/StrategistPage.tsx) — **NEW FILE**
 
-Created `StrategistService` class with a `process_message()` method that:
-- Accepts `message` (str) and optional `conversation_history` (list[dict])
-- Yields `("token", {"content": str})` events for SSE streaming
-- Yields a `("done", {...})` event with `content`, `sources`, and `token_usage`
-- Currently returns a mock response: `"This is a mock strategist response."`
-- Real LLM logic will be added in a later iteration
+Created a full-height page component following the exact same pattern as [`GlobalRagChatPage.tsx`](../../src/frontend/src/pages/GlobalRagChatPage.tsx):
+- Full-screen layout with collapsible desktop sidebar and mobile drawer overlay
+- Uses `ConversationSidebar` with `mode="strategist"` to filter conversations
+- Uses `ChatWindow` with `mode="strategist"` for messaging
+- Empty state (`StrategistEmptyState`) with a "Start New Analysis" button that creates a strategist-mode conversation
+- Header with `Scale` icon and "Interactive Strategist" title
+- Back navigation to dashboard
 
-A module-level singleton `strategist_service` is exported for convenience.
+#### 2. [`src/frontend/src/App.tsx`](../../src/frontend/src/App.tsx)
 
-#### 2. [`src/backend/conversations/serializers.py`](../../src/backend/conversations/serializers.py)
-
-Extended `AskQuestionSerializer.MODE_CHOICES`:
-```python
-MODE_CHOICES = [
-    ("local_rag", "Local RAG — search within the conversation's document"),
-    ("global_rag", "Global RAG — search across all legal knowledge hubs"),
-    ("strategist", "Interactive Strategist — guided case analysis"),
-]
+Added two new routes (outside AppShell, same pattern as legal-research):
+```typescript
+{ path: '/strategist', element: <StrategistPage /> },
+{ path: '/strategist/:conversationId', element: <StrategistPage /> },
 ```
 
-#### 3. [`src/backend/conversations/views.py`](../../src/backend/conversations/views.py)
+#### 3. [`src/frontend/src/components/layout/Sidebar.tsx`](../../src/frontend/src/components/layout/Sidebar.tsx)
 
-**Import changes:**
-- Added `from conversations.strategist_service import strategist_service`
+- Added `Scale` to lucide-react imports
+- Added new nav item: `{ label: 'Strategist', icon: <Scale ... />, href: '/strategist' }` (placed before the disabled "Conversations" item)
+- Updated `isActive` detection to use `location.pathname.startsWith('/strategist')`
 
-**`ConversationMessageView.post()` — Strategist routing:**
-- Added `if mode == "strategist":` branch before the existing `global_rag` / `local_rag` branches
-- Collects all tokens from the `strategist_service.process_message()` generator
-- Persists the assistant message with the mock response
-- Returns 502 on strategist processing errors
+#### 4. [`src/frontend/src/pages/DashboardPage.tsx`](../../src/frontend/src/pages/DashboardPage.tsx)
 
-**`ConversationMessageStreamView.post()` — Strategist streaming:**
-- Added `if mode == "strategist":` branch in the `event_stream()` generator
-- Streams tokens from `strategist_service.process_message()` via SSE
-- Persists the assistant message after streaming completes
-- Sends `done` event with `message_id`, `sources`, and `token_usage`
+- Added `Scale` to lucide-react imports
+- Added "Interactive Strategist" quick-action card between "Legal Research" and "Document Chat" cards
+- Card navigates to `/strategist` on click
+- Description: "Describe your case and get a strategic analysis with success probability, risk assessment, and recommendations."
+- Button: "Start Analysis"
 
-**`ConversationListCreateView.get()` — Mode filter:**
-- Added optional `?mode=` query parameter to filter conversations by mode
-- Example: `GET /conversations/?mode=strategist` returns only strategist conversations
-- Works alongside the existing `?document_id=` filter
+#### 5. [`src/frontend/src/components/chat/ConversationSidebar.tsx`](../../src/frontend/src/components/chat/ConversationSidebar.tsx)
 
-### Backward Compatibility
+- Added `mode?: RagMode` prop to `ConversationSidebarProps`
+- Passes `mode` to `fetchConversations(documentId, mode)` on mount
+- Passes `mode` to `createConversation(documentId, undefined, mode)` when creating a new chat
+- This ensures each page only shows conversations matching its mode
 
-All existing endpoints remain unchanged:
-- `mode="global_rag"` (default) → routes to `run_global_rag_query()` / `run_global_rag_query_stream()`
-- `mode="local_rag"` → routes to `run_rag_query()` / `run_rag_query_stream()`
-- `GET /conversations/` without `?mode=` returns all conversations (unchanged behavior)
-- `GET /conversations/?document_id=...` still works
+#### 6. [`src/frontend/src/api/conversations.ts`](../../src/frontend/src/api/conversations.ts)
+
+- Extended `RagMode` type: `'local_rag' | 'global_rag' | 'strategist' | 'action_engine'`
+- Updated `createConversation()` to accept optional `mode?: RagMode` parameter (sent in POST body)
+- Updated `listConversations()` to accept optional `mode?: RagMode` parameter (sent as `?mode=` query param)
+
+#### 7. [`src/frontend/src/stores/conversationStore.ts`](../../src/frontend/src/stores/conversationStore.ts)
+
+- Updated `fetchConversations` signature to accept `mode?: RagMode`
+- Updated `createConversation` signature to accept `mode?: RagMode`
+- Both pass the mode through to the underlying API functions
 
 ## Current State
 
-The backend API is ready to accept `mode="strategist"` requests. The strategist service returns a mock response. The frontend can now be built to call these endpoints.
+The frontend navigation skeleton is complete:
+- `/strategist` route renders `StrategistPage` with full-height layout
+- `/strategist/:conversationId` route renders the same page with an active conversation
+- Sidebar has a "Strategist" nav item with active state detection
+- Dashboard has an "Interactive Strategist" quick-action card
+- `ConversationSidebar` filters conversations by `mode="strategist"`
+- `RagMode` type includes `'strategist'` and `'action_engine'` (ready for Phase 4)
+
+## Nginx Rebuild Required
+
+**Important:** The nginx container (`docuchat_nginx`) serves **pre-built** frontend files from the production Docker stage (`COPY --from=builder /app/dist /usr/share/nginx/html`). Unlike the Vite dev server (port 5173) which uses HMR with a volume mount, nginx does **not** have a volume mount for the built files.
+
+Therefore, after any frontend code changes, you must:
+1. `docker-compose build nginx` — rebuilds the nginx image with new frontend build
+2. `docker-compose up -d --no-deps nginx` — restarts the nginx container with the new image
+
+This has been done for the current changes. Both `localhost:5173` (Vite dev) and `localhost` (nginx) now show the updated Strategist UI.
 
 ## Next Step
 
-Proceed to **Task 3: Frontend — Strategist Page** — Create `src/frontend/src/pages/StrategistPage.tsx`, add routes, sidebar nav items, and dashboard cards.
+User will verify the UI navigation works on `localhost`. After verification, proceed to building the full `StrategistPage` with the strategist-specific chat UI and empty state.

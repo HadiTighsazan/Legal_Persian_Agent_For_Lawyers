@@ -2,7 +2,7 @@ import { apiClient, normalizeBaseUrl } from './axios';
 
 // ── TypeScript Interfaces ──────────────────────────────────────────────
 
-export type RagMode = 'local_rag' | 'global_rag';
+export type RagMode = 'local_rag' | 'global_rag' | 'strategist' | 'action_engine';
 
 export interface Conversation {
   id: string;
@@ -128,6 +128,7 @@ function handleError(error: unknown): never {
 export async function createConversation(
   documentId?: string,
   title?: string,
+  mode?: RagMode,
 ): Promise<Conversation> {
   try {
     const body: Record<string, string> = {};
@@ -136,6 +137,9 @@ export async function createConversation(
     }
     if (title !== undefined) {
       body.title = title;
+    }
+    if (mode !== undefined) {
+      body.mode = mode;
     }
     const { data } = await apiClient.post<Conversation>('conversations/', body);
     return data;
@@ -151,11 +155,15 @@ export async function createConversation(
 export async function listConversations(
   documentId?: string,
   page: number = 1,
+  mode?: RagMode,
 ): Promise<PaginatedConversations> {
   try {
     const params: Record<string, string | number> = { page };
     if (documentId !== undefined) {
       params.document_id = documentId;
+    }
+    if (mode !== undefined) {
+      params.mode = mode;
     }
     const { data } = await apiClient.get<PaginatedConversations>('conversations/', { params });
     return data;

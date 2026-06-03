@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useConversationStore } from '@/stores/conversationStore';
 import { toast } from '@/hooks/use-toast';
-import type { Conversation } from '@/api/conversations';
+import type { Conversation, RagMode } from '@/api/conversations';
 
 // ── Props ──────────────────────────────────────────────────────────────────
 
@@ -13,6 +13,7 @@ interface ConversationSidebarProps {
   documentId?: string;
   activeConversationId: string | null;
   onSelect: (conversationId: string) => void;
+  mode?: RagMode;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -239,6 +240,7 @@ export default function ConversationSidebar({
   documentId,
   activeConversationId,
   onSelect,
+  mode,
 }: ConversationSidebarProps) {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -253,14 +255,14 @@ export default function ConversationSidebar({
 
   // ── Fetch conversations on mount ────────────────────────────────────────
   useEffect(() => {
-    fetchConversations(documentId);
-  }, [documentId, fetchConversations]);
+    fetchConversations(documentId, mode);
+  }, [documentId, mode, fetchConversations]);
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
   const handleNewChat = async () => {
     try {
-      const newConv = await createConversation(documentId);
+      const newConv = await createConversation(documentId, undefined, mode);
       onSelect(newConv.id);
     } catch {
       toast({

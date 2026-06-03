@@ -40,8 +40,8 @@ interface ConversationState {
 }
 
 interface ConversationActions {
-  fetchConversations: (documentId?: string) => Promise<void>;
-  createConversation: (documentId?: string, title?: string) => Promise<Conversation>;
+  fetchConversations: (documentId?: string, mode?: RagMode) => Promise<void>;
+  createConversation: (documentId?: string, title?: string, mode?: RagMode) => Promise<Conversation>;
   loadConversation: (conversationId: string) => Promise<void>;
   sendMessage: (conversationId: string, content: string, mode?: RagMode) => Promise<void>;
   sendMessageStream: (conversationId: string, content: string, mode?: RagMode) => Promise<void>;
@@ -73,10 +73,10 @@ const initialState: ConversationState = {
 export const useConversationStore = create<ConversationStore>((set) => ({
   ...initialState,
 
-  fetchConversations: async (documentId?: string): Promise<void> => {
+  fetchConversations: async (documentId?: string, mode?: RagMode): Promise<void> => {
     set({ isLoadingConversations: true, error: null });
     try {
-      const data = await listConversations(documentId);
+      const data = await listConversations(documentId, 1, mode);
       set({ conversations: data.results, isLoadingConversations: false });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Failed to fetch conversations';
@@ -84,10 +84,10 @@ export const useConversationStore = create<ConversationStore>((set) => ({
     }
   },
 
-  createConversation: async (documentId?: string, title?: string): Promise<Conversation> => {
+  createConversation: async (documentId?: string, title?: string, mode?: RagMode): Promise<Conversation> => {
     set({ isCreatingConversation: true, error: null });
     try {
-      const newConv = await apiCreateConversation(documentId, title);
+      const newConv = await apiCreateConversation(documentId, title, mode);
       set((state) => ({
         conversations: [newConv, ...state.conversations],
         isCreatingConversation: false,

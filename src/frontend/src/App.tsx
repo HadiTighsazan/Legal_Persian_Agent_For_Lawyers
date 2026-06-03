@@ -8,6 +8,7 @@ import UploadPage from '@/pages/documents/UploadPage';
 import DocumentDetailPage from '@/pages/documents/DocumentDetailPage';
 import ChatPage from '@/pages/ChatPage';
 import GlobalRagChatPage from '@/pages/GlobalRagChatPage';
+import StrategistPage from '@/pages/StrategistPage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
 import MonitoringDocumentPicker from '@/pages/MonitoringDocumentPicker';
@@ -34,6 +35,9 @@ const router = createBrowserRouter([
       // Global RAG / Legal Research routes — outside AppShell
       { path: '/legal-research', element: <GlobalRagChatPage /> },
       { path: '/legal-research/:conversationId', element: <GlobalRagChatPage /> },
+      // Strategist routes — outside AppShell
+      { path: '/strategist', element: <StrategistPage /> },
+      { path: '/strategist/:conversationId', element: <StrategistPage /> },
       // Monitoring routes — outside AppShell (full-height layout)
       { path: '/monitoring', element: <MonitoringDocumentPicker /> },
       { path: '/monitoring/:documentId', element: <MonitoringPage /> },

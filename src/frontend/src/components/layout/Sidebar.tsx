@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Activity, LayoutDashboard, FileText, MessageSquare, Search, X } from 'lucide-react';
+import { Activity, LayoutDashboard, FileText, MessageSquare, Search, Scale, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -32,6 +32,11 @@ const navItems: NavItem[] = [
     label: 'Legal Research',
     icon: <Search className="h-5 w-5" />,
     href: '/legal-research',
+  },
+  {
+    label: 'Strategist',
+    icon: <Scale className="h-5 w-5" />,
+    href: '/strategist',
   },
   {
     label: 'Conversations',
@@ -99,6 +104,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
                 ? location.pathname.startsWith('/documents')
                 : item.href === '/legal-research'
                 ? location.pathname.startsWith('/legal-research')
+                : item.href === '/strategist'
+                ? location.pathname.startsWith('/strategist')
                 : location.pathname === item.href;
 
             return (
