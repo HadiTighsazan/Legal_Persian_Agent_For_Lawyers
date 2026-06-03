@@ -249,6 +249,8 @@ export default function ChatWindow({ conversationId, mode = 'local_rag' }: ChatW
         placeholder={
           mode === 'global_rag'
             ? 'Ask a legal research question across all hubs...'
+            : mode === 'strategist'
+            ? 'Describe your legal case or answer the strategist\'s question...'
             : 'Ask a question about this document...'
         }
       />

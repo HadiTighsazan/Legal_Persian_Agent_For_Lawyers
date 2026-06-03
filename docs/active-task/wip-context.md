@@ -1,84 +1,110 @@
-# WIP Context — Phase 3 Task 3: Frontend Navigation Skeleton (Interactive Strategist)
+# WIP Context — Phase 3 Task 5: Strategist Service Logic (Real AI Brain)
 
 ## What Was Just Completed
 
-### Task 3: Frontend Shell
+### Task 5: Strategist Service Logic — Replace Mock with Real AI Brain
 
-Implemented the frontend navigation skeleton for the Interactive Strategist feature. All changes are on the frontend side.
+Implemented the full real AI brain for the `StrategistService` in [`src/backend/conversations/strategist_service.py`](../../src/backend/conversations/strategist_service.py), replacing the previously non-existent `StrategistService` class. The three core components (`FactExtractor`, `CompletenessChecker`, `StrategicAnalyzer`) were already implemented with real LLM calls — the missing piece was the orchestrator `StrategistService` class and the truncated `_build_fallback_report` method.
 
 ### Changes Made
 
-#### 1. [`src/frontend/src/pages/StrategistPage.tsx`](../../src/frontend/src/pages/StrategistPage.tsx) — **NEW FILE**
+#### 1. [`src/backend/conversations/strategist_service.py`](../../src/backend/conversations/strategist_service.py)
 
-Created a full-height page component following the exact same pattern as [`GlobalRagChatPage.tsx`](../../src/frontend/src/pages/GlobalRagChatPage.tsx):
-- Full-screen layout with collapsible desktop sidebar and mobile drawer overlay
-- Uses `ConversationSidebar` with `mode="strategist"` to filter conversations
-- Uses `ChatWindow` with `mode="strategist"` for messaging
-- Empty state (`StrategistEmptyState`) with a "Start New Analysis" button that creates a strategist-mode conversation
-- Header with `Scale` icon and "Interactive Strategist" title
-- Back navigation to dashboard
+**Fixed:** `_build_fallback_report` method (was truncated at line 967, cutting off mid-Persian text). Now fully generates a complete Persian markdown report with all sections:
+- خلاصه (Summary)
+- احتمال موفقیت (Success Probability)
+- نقاط قوت (Strengths)
+- نقاط ضعف (Weaknesses)
+- ریسک‌ها (Risks)
+- توصیه‌ها (Recommendations)
+- قوانین مرتبط (Applicable Laws)
+- رویه‌های قضایی مرتبط (Applicable Precedents)
 
-#### 2. [`src/frontend/src/App.tsx`](../../src/frontend/src/App.tsx)
+**Added:** `StrategistService` class — the main orchestrator with:
 
-Added two new routes (outside AppShell, same pattern as legal-research):
-```typescript
-{ path: '/strategist', element: <StrategistPage /> },
-{ path: '/strategist/:conversationId', element: <StrategistPage /> },
+- **`process_message(message, conversation_history, conversation_id)`** — Generator that yields `(event_type, data)` tuples for streaming SSE responses. Implements the full pipeline:
+
+  1. **Fact Extraction** — Calls `FactExtractor.extract()` with the user message, conversation history, and any existing `CaseProfile` facts. Persists/updates the `CaseProfile` model.
+  
+  2. **Readiness Check** — If `is_ready=False`, uses the `next_question` from extraction (or runs `CompletenessChecker` for a more targeted question) and yields it as a token, then yields `done` with `is_interview=True`.
+  
+  3. **Strategic Analysis** — When ready, calls `StrategicAnalyzer.analyze()` which routes the case, runs `multi_hub_search()` across all 3 legal hubs, builds legal context via `build_global_context()`, and calls the LLM for the full analysis.
+  
+  4. **Report Persistence** — Saves the `StrategicReport` model with all analysis fields.
+  
+  5. **Streaming Output** — Yields the report in 50-char chunks for smooth streaming, then yields `done` with full analysis data.
+
+- **`_save_case_profile()`** — Creates or updates `CaseProfile` via `update_or_create`.
+- **`_save_strategic_report()`** — Creates `CaseProfile` (if needed) and `StrategicReport` records.
+
+**Module-level singleton:** `strategist_service = StrategistService()` — already imported by views.py.
+
+#### 2. [`src/backend/conversations/views.py`](../../src/backend/conversations/views.py)
+
+Updated both `ConversationMessageView.post()` and `ConversationMessageStreamView.post()` to pass `conversation_id=str(conversation.id)` to `strategist_service.process_message()`, enabling the service to persist `CaseProfile` and `StrategicReport` models.
+
+Updated the streaming view to also forward `progress` events from the strategist service to the frontend (previously only handled `token` and `done` events).
+
+### Pipeline Flow (Real AI)
+
+```
+User Message
+    │
+    ▼
+┌─────────────────────────────┐
+│  FactExtractor.extract()    │  ← LLM call (600 tokens)
+│  - Identifies case type     │
+│  - Extracts structured facts│
+│  - Estimates completeness   │
+└──────────┬──────────────────┘
+           │
+           ▼
+┌─────────────────────────────┐
+│  Completeness Check         │
+│  - score >= 0.7?            │
+└──────┬──────────┬───────────┘
+       │          │
+    No ▼          ▼ Yes
+  (Question)   ┌─────────────────────────────┐
+               │  StrategicAnalyzer.analyze()│
+               │  1. route_question()        │  ← LLM call
+               │  2. multi_hub_search()      │  ← Parallel DB + Embedding
+               │  3. build_global_context()  │
+               │  4. LLM analysis            │  ← LLM call (2000 tokens)
+               │  5. Parse + fallback report │
+               └──────────┬──────────────────┘
+                          │
+                          ▼
+               ┌─────────────────────────────┐
+               │  Persist StrategicReport    │
+               │  Stream report tokens       │
+               └─────────────────────────────┘
 ```
 
-#### 3. [`src/frontend/src/components/layout/Sidebar.tsx`](../../src/frontend/src/components/layout/Sidebar.tsx)
+### Verification
 
-- Added `Scale` to lucide-react imports
-- Added new nav item: `{ label: 'Strategist', icon: <Scale ... />, href: '/strategist' }` (placed before the disabled "Conversations" item)
-- Updated `isActive` detection to use `location.pathname.startsWith('/strategist')`
-
-#### 4. [`src/frontend/src/pages/DashboardPage.tsx`](../../src/frontend/src/pages/DashboardPage.tsx)
-
-- Added `Scale` to lucide-react imports
-- Added "Interactive Strategist" quick-action card between "Legal Research" and "Document Chat" cards
-- Card navigates to `/strategist` on click
-- Description: "Describe your case and get a strategic analysis with success probability, risk assessment, and recommendations."
-- Button: "Start Analysis"
-
-#### 5. [`src/frontend/src/components/chat/ConversationSidebar.tsx`](../../src/frontend/src/components/chat/ConversationSidebar.tsx)
-
-- Added `mode?: RagMode` prop to `ConversationSidebarProps`
-- Passes `mode` to `fetchConversations(documentId, mode)` on mount
-- Passes `mode` to `createConversation(documentId, undefined, mode)` when creating a new chat
-- This ensures each page only shows conversations matching its mode
-
-#### 6. [`src/frontend/src/api/conversations.ts`](../../src/frontend/src/api/conversations.ts)
-
-- Extended `RagMode` type: `'local_rag' | 'global_rag' | 'strategist' | 'action_engine'`
-- Updated `createConversation()` to accept optional `mode?: RagMode` parameter (sent in POST body)
-- Updated `listConversations()` to accept optional `mode?: RagMode` parameter (sent as `?mode=` query param)
-
-#### 7. [`src/frontend/src/stores/conversationStore.ts`](../../src/frontend/src/stores/conversationStore.ts)
-
-- Updated `fetchConversations` signature to accept `mode?: RagMode`
-- Updated `createConversation` signature to accept `mode?: RagMode`
-- Both pass the mode through to the underlying API functions
+- Python AST parse: ✅ Both files parse without syntax errors
+- Django import test: ✅ `strategist_service` imports correctly, has all expected attributes
+- Existing tests: ✅ All 18 message view tests pass, all model/serializer tests pass
+- Pre-existing failure: `test_full_conversation_lifecycle` in integration tests was already failing before these changes (assertion on `sources` count)
 
 ## Current State
 
-The frontend navigation skeleton is complete:
-- `/strategist` route renders `StrategistPage` with full-height layout
-- `/strategist/:conversationId` route renders the same page with an active conversation
-- Sidebar has a "Strategist" nav item with active state detection
-- Dashboard has an "Interactive Strategist" quick-action card
-- `ConversationSidebar` filters conversations by `mode="strategist"`
-- `RagMode` type includes `'strategist'` and `'action_engine'` (ready for Phase 4)
+The Strategist backend is now fully implemented with real AI:
 
-## Nginx Rebuild Required
+- **FactExtractor** — Uses LLM to extract structured case facts from conversation
+- **CompletenessChecker** — Uses LLM to evaluate fact completeness and generate targeted questions
+- **StrategicAnalyzer** — Routes cases to legal hubs, searches laws/precedents, runs LLM analysis
+- **StrategistService** — Orchestrates the full pipeline with streaming output and DB persistence
+- **Views** — Both non-streaming and streaming endpoints pass `conversation_id` for persistence
+- **Models** — `CaseProfile` and `StrategicReport` are created/updated throughout the pipeline
 
-**Important:** The nginx container (`docuchat_nginx`) serves **pre-built** frontend files from the production Docker stage (`COPY --from=builder /app/dist /usr/share/nginx/html`). Unlike the Vite dev server (port 5173) which uses HMR with a volume mount, nginx does **not** have a volume mount for the built files.
+## Next Steps
 
-Therefore, after any frontend code changes, you must:
-1. `docker-compose build nginx` — rebuilds the nginx image with new frontend build
-2. `docker-compose up -d --no-deps nginx` — restarts the nginx container with the new image
+1. **Test the end-to-end flow** — Create a strategist conversation via the frontend, send a case description, verify:
+   - The LLM extracts facts and asks follow-up questions
+   - After enough facts, the strategic analysis runs with legal research
+   - The report streams back properly
+   - `CaseProfile` and `StrategicReport` are persisted in the database
 
-This has been done for the current changes. Both `localhost:5173` (Vite dev) and `localhost` (nginx) now show the updated Strategist UI.
-
-## Next Step
-
-User will verify the UI navigation works on `localhost`. After verification, proceed to building the full `StrategistPage` with the strategist-specific chat UI and empty state.
+2. **Phase 4: Action Engine** — Implement `action_engine_service.py` following the same pattern

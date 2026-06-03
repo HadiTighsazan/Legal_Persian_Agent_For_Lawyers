@@ -11,17 +11,18 @@ import { Button } from '@/components/ui/button';
 import ConversationSidebar from '@/components/chat/ConversationSidebar';
 import ChatWindow from '@/components/chat/ChatWindow';
 import ChatErrorBoundary from '@/components/chat/ChatErrorBoundary';
+import StrategistEmptyState from '@/components/rag/StrategistEmptyState';
 import { useConversationStore } from '@/stores/conversationStore';
 
-// ── Empty State ────────────────────────────────────────────────────────────
+// ── NoConversationSelected Sub-Component ──────────────────────────────────
 
-function StrategistEmptyState() {
+function NoConversationSelected() {
   const navigate = useNavigate();
   const createConversation = useConversationStore((s) => s.createConversation);
 
-  const handleStartAnalysis = async () => {
+  const handleSend = async (content: string) => {
     try {
-      const conv = await createConversation(undefined, 'Strategist Analysis', 'strategist');
+      const conv = await createConversation(undefined, content.slice(0, 80), 'strategist');
       navigate(`/strategist/${conv.id}`, { replace: true });
     } catch {
       // Error handled by store
@@ -29,25 +30,7 @@ function StrategistEmptyState() {
   };
 
   return (
-    <div className="flex-1 flex items-center justify-center p-8">
-      <div className="max-w-md text-center space-y-6">
-        <div className="mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
-          <Scale className="h-8 w-8 text-primary" />
-        </div>
-        <h1 className="text-2xl font-bold tracking-tight">
-          Interactive Strategist
-        </h1>
-        <p className="text-muted-foreground">
-          Describe your legal case and get a structured strategic analysis with
-          success probability, risk assessment, and actionable recommendations
-          — all grounded in Iranian law and judicial precedents.
-        </p>
-        <Button size="lg" onClick={handleStartAnalysis} className="gap-2">
-          <Scale className="h-5 w-5" />
-          Start New Analysis
-        </Button>
-      </div>
-    </div>
+    <StrategistEmptyState onSend={handleSend} />
   );
 }
 
@@ -186,7 +169,7 @@ export default function StrategistPage() {
             <ChatWindow conversationId={conversationId} mode="strategist" />
           </ChatErrorBoundary>
         ) : (
-          <StrategistEmptyState />
+          <NoConversationSelected />
         )}
       </div>
     </div>

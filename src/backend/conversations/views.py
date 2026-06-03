@@ -372,13 +372,14 @@ class ConversationMessageView(APIView):
         # 6. Route to the appropriate pipeline based on mode
         # ------------------------------------------------------------------
         if mode == "strategist":
-            # Strategist mode — use the strategist service (stub for now)
+            # Strategist mode — use the strategist service with real AI brain
             try:
                 # Collect all tokens from the streaming generator
                 full_content = ""
                 for event_type, data in strategist_service.process_message(
                     message=question,
                     conversation_history=conversation_history,
+                    conversation_id=str(conversation.id),
                 ):
                     if event_type == "token":
                         full_content += data["content"]
@@ -555,7 +556,7 @@ class ConversationMessageStreamView(APIView):
         def event_stream():
             try:
                 if mode == "strategist":
-                    # Strategist mode — streaming mock response
+                    # Strategist mode — real AI brain with streaming
                     logger.info(
                         "event_stream: Starting strategist stream for conversation %s",
                         conversation_id,
@@ -567,8 +568,12 @@ class ConversationMessageStreamView(APIView):
                     for event_type, data in strategist_service.process_message(
                         message=question,
                         conversation_history=conversation_history,
+                        conversation_id=str(conversation.id),
                     ):
-                        if event_type == "token":
+                        if event_type == "progress":
+                            # Pass through progress events to the frontend
+                            yield f"data: {json.dumps({'type': 'progress', 'status': data['status']})}\n\n"
+                        elif event_type == "token":
                             full_content += data["content"]
                             yield f"data: {json.dumps({'type': 'token', 'content': data['content']})}\n\n"
                         elif event_type == "done":
