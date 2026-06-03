@@ -1,77 +1,69 @@
-# WIP Context — Phase 3 Task 1: Database Setup (Interactive Strategist)
+# WIP Context — Phase 3 Task 2: Backend API Plumbing (Interactive Strategist)
 
 ## What Was Just Completed
 
-### Task 1: Database Setup for Interactive Strategist
+### Task 2: API and Routing
 
-Added the `mode` field to the `Conversation` model and created the `CaseProfile` and `StrategicReport` models. Migrated the database successfully.
+Implemented the backend API plumbing for the Interactive Strategist mode. All existing tests (73 tests) continue to pass.
 
 ### Changes Made
 
-#### 1. [`src/backend/conversations/models.py`](../../src/backend/conversations/models.py)
+#### 1. [`src/backend/conversations/strategist_service.py`](../../src/backend/conversations/strategist_service.py) — **NEW FILE**
 
-**Added `mode` field to `Conversation`:**
+Created `StrategistService` class with a `process_message()` method that:
+- Accepts `message` (str) and optional `conversation_history` (list[dict])
+- Yields `("token", {"content": str})` events for SSE streaming
+- Yields a `("done", {...})` event with `content`, `sources`, and `token_usage`
+- Currently returns a mock response: `"This is a mock strategist response."`
+- Real LLM logic will be added in a later iteration
+
+A module-level singleton `strategist_service` is exported for convenience.
+
+#### 2. [`src/backend/conversations/serializers.py`](../../src/backend/conversations/serializers.py)
+
+Extended `AskQuestionSerializer.MODE_CHOICES`:
 ```python
-mode = models.CharField(
-    max_length=20,
-    choices=[
-        ("local_rag", "Local RAG"),
-        ("global_rag", "Global RAG / Legal Research"),
-        ("strategist", "Interactive Strategist"),
-        ("action_engine", "Action Engine"),
-    ],
-    default="global_rag",
-    null=True,
-    help_text="Conversation mode: local_rag, global_rag, strategist, or action_engine. "
-              "Null defaults to global_rag for backward compatibility.",
-)
+MODE_CHOICES = [
+    ("local_rag", "Local RAG — search within the conversation's document"),
+    ("global_rag", "Global RAG — search across all legal knowledge hubs"),
+    ("strategist", "Interactive Strategist — guided case analysis"),
+]
 ```
-- Added `models.Index(fields=['mode'])` to `Conversation.Meta.indexes`
-- Existing conversations get `null` → treated as `global_rag` (backward compatible)
 
-**Added `CaseProfile` model:**
-- `id` — UUID primary key
-- `conversation` — OneToOneField to `Conversation` (related_name="case_profile")
-- `case_type` — CharField(max_length=100), e.g., "contract_dispute", "family_law", "criminal"
-- `facts` — JSONField(default=dict), structured facts: {parties, claims, evidence, timeline, ...}
-- `completeness_score` — FloatField(default=0.0), 0.0 to 1.0
-- `is_complete` — BooleanField(default=False)
-- `created_at`, `updated_at` — auto timestamps
-- Indexes on `conversation` and `case_type`
+#### 3. [`src/backend/conversations/views.py`](../../src/backend/conversations/views.py)
 
-**Added `StrategicReport` model:**
-- `id` — UUID primary key
-- `conversation` — OneToOneField to `Conversation` (related_name="strategic_report")
-- `case_profile` — ForeignKey to `CaseProfile`
-- `success_probability` — FloatField, 0.0 to 1.0
-- `summary` — TextField
-- `strengths`, `weaknesses`, `risks`, `recommendations` — JSONField(default=list)
-- `applicable_laws` — JSONField(default=list), [{title, articles, citations}]
-- `applicable_precedents` — JSONField(default=list), [{title, number, summary}]
-- `raw_report` — TextField (full Persian markdown report)
-- `created_at` — auto timestamp
-- Indexes on `conversation` and `case_profile`
+**Import changes:**
+- Added `from conversations.strategist_service import strategist_service`
 
-**Did NOT add:** `ActionPlan` or `LegalDraft` models (deferred to Phase 4).
+**`ConversationMessageView.post()` — Strategist routing:**
+- Added `if mode == "strategist":` branch before the existing `global_rag` / `local_rag` branches
+- Collects all tokens from the `strategist_service.process_message()` generator
+- Persists the assistant message with the mock response
+- Returns 502 on strategist processing errors
 
-#### 2. Migration
+**`ConversationMessageStreamView.post()` — Strategist streaming:**
+- Added `if mode == "strategist":` branch in the `event_stream()` generator
+- Streams tokens from `strategist_service.process_message()` via SSE
+- Persists the assistant message after streaming completes
+- Sends `done` event with `message_id`, `sources`, and `token_usage`
 
-- **File:** `src/backend/conversations/migrations/0004_add_mode_caseprofile_strategicreport.py`
-- **Created:** `docker-compose exec backend python manage.py makemigrations conversations --name add_mode_caseprofile_strategicreport`
-- **Applied:** `docker-compose exec backend python manage.py migrate conversations` → OK
+**`ConversationListCreateView.get()` — Mode filter:**
+- Added optional `?mode=` query parameter to filter conversations by mode
+- Example: `GET /conversations/?mode=strategist` returns only strategist conversations
+- Works alongside the existing `?document_id=` filter
 
-#### 3. [`docs/references/database-schema.md`](../../docs/references/database-schema.md)
+### Backward Compatibility
 
-- Added `mode` column to `conversations` table documentation
-- Added `idx_conversations_mode` index
-- Added `case_profiles` table (section 9)
-- Added `strategic_reports` table (section 10)
-- Added migration 0004 documentation under Migrations section
+All existing endpoints remain unchanged:
+- `mode="global_rag"` (default) → routes to `run_global_rag_query()` / `run_global_rag_query_stream()`
+- `mode="local_rag"` → routes to `run_rag_query()` / `run_rag_query_stream()`
+- `GET /conversations/` without `?mode=` returns all conversations (unchanged behavior)
+- `GET /conversations/?document_id=...` still works
 
 ## Current State
 
-Database is migrated and ready. The `mode` field, `CaseProfile`, and `StrategicReport` models are in place.
+The backend API is ready to accept `mode="strategist"` requests. The strategist service returns a mock response. The frontend can now be built to call these endpoints.
 
 ## Next Step
 
-Proceed to **Task 2: Backend Services** — Create `src/backend/conversations/strategist_service.py` with the `StrategistService` class, implementing the guided interview → research → analysis pipeline.
+Proceed to **Task 3: Frontend — Strategist Page** — Create `src/frontend/src/pages/StrategistPage.tsx`, add routes, sidebar nav items, and dashboard cards.

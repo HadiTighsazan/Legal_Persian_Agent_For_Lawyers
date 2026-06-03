@@ -38,6 +38,7 @@ from conversations.serializers import (
     DirectQuerySerializer,
     MessageSerializer,
 )
+from conversations.strategist_service import strategist_service
 from providers.base import RateLimitError
 
 logger = logging.getLogger(__name__)
@@ -161,6 +162,11 @@ class ConversationListCreateView(APIView):
         document_id = request.query_params.get("document_id")
         if document_id:
             queryset = queryset.filter(document_id=document_id)
+
+        # Optional filter by mode (e.g., ?mode=strategist, ?mode=global_rag)
+        mode = request.query_params.get("mode")
+        if mode:
+            queryset = queryset.filter(mode=mode)
 
         # Annotate with message count and order by most recent
         queryset = queryset.annotate(
@@ -363,9 +369,39 @@ class ConversationMessageView(APIView):
             )
 
         # ------------------------------------------------------------------
-        # 6. Route to the appropriate RAG pipeline based on mode
+        # 6. Route to the appropriate pipeline based on mode
         # ------------------------------------------------------------------
-        if mode == "global_rag":
+        if mode == "strategist":
+            # Strategist mode — use the strategist service (stub for now)
+            try:
+                # Collect all tokens from the streaming generator
+                full_content = ""
+                for event_type, data in strategist_service.process_message(
+                    message=question,
+                    conversation_history=conversation_history,
+                ):
+                    if event_type == "token":
+                        full_content += data["content"]
+                    elif event_type == "done":
+                        result = {
+                            "content": data["content"],
+                            "sources": data.get("sources", []),
+                            "token_usage": data.get(
+                                "token_usage",
+                                {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                            ),
+                        }
+            except Exception as e:
+                logger.error(
+                    "Strategist processing failed for conversation %s: %s",
+                    conversation_id,
+                    e,
+                )
+                return Response(
+                    {"error": "strategist_error", "message": str(e)},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+        elif mode == "global_rag":
             try:
                 result = run_global_rag_query(
                     question=question,
@@ -422,7 +458,7 @@ class ConversationMessageView(APIView):
                 )
 
         # ------------------------------------------------------------------
-        # 6. Persist the assistant message with sources, token_usage, and hub_metadata
+        # 7. Persist the assistant message with sources, token_usage, and hub_metadata
         # ------------------------------------------------------------------
         assistant_kwargs = {
             "conversation": conversation,
@@ -436,12 +472,12 @@ class ConversationMessageView(APIView):
         assistant_message = Message.objects.create(**assistant_kwargs)
 
         # ------------------------------------------------------------------
-        # 7. Touch conversation.updated_at
+        # 8. Touch conversation.updated_at
         # ------------------------------------------------------------------
         conversation.save()  # triggers auto_now=True
 
         # ------------------------------------------------------------------
-        # 8. Return 201 Created with MessageSerializer of assistant message
+        # 9. Return 201 Created with MessageSerializer of assistant message
         # ------------------------------------------------------------------
         response_serializer = MessageSerializer(assistant_message)
         return Response(
@@ -518,7 +554,53 @@ class ConversationMessageStreamView(APIView):
         # 6. Create a streaming SSE response
         def event_stream():
             try:
-                if mode == "global_rag":
+                if mode == "strategist":
+                    # Strategist mode — streaming mock response
+                    logger.info(
+                        "event_stream: Starting strategist stream for conversation %s",
+                        conversation_id,
+                    )
+                    full_content: str = ""
+                    final_token_usage: dict | None = None
+                    final_sources: list = []
+
+                    for event_type, data in strategist_service.process_message(
+                        message=question,
+                        conversation_history=conversation_history,
+                    ):
+                        if event_type == "token":
+                            full_content += data["content"]
+                            yield f"data: {json.dumps({'type': 'token', 'content': data['content']})}\n\n"
+                        elif event_type == "done":
+                            final_token_usage = data.get(
+                                "token_usage",
+                                {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                            )
+                            final_sources = data.get("sources", [])
+                            logger.info(
+                                "event_stream: Strategist done for conversation %s — %d chars",
+                                conversation_id,
+                                len(full_content),
+                            )
+
+                    # Persist the assistant message after streaming completes
+                    assistant_message = Message.objects.create(
+                        conversation=conversation,
+                        role="assistant",
+                        content=full_content,
+                        sources=final_sources,
+                        token_usage=final_token_usage,
+                    )
+                    conversation.save()
+
+                    logger.info(
+                        "event_stream: Strategist assistant message %s persisted for conversation %s",
+                        assistant_message.id,
+                        conversation_id,
+                    )
+
+                    yield f"data: {json.dumps({'type': 'done', 'message_id': str(assistant_message.id), 'sources': final_sources, 'token_usage': final_token_usage})}\n\n"
+                elif mode == "global_rag":
                     # Global RAG with streaming synthesis
                     full_content: str = ""
                     final_token_usage: dict | None = None

@@ -214,6 +214,7 @@ class AskQuestionSerializer(serializers.Serializer):
     MODE_CHOICES = [
         ("local_rag", "Local RAG — search within the conversation's document"),
         ("global_rag", "Global RAG — search across all legal knowledge hubs"),
+        ("strategist", "Interactive Strategist — guided case analysis"),
     ]
 
     content = serializers.CharField(
