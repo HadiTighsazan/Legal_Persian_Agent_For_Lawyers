@@ -1,51 +1,77 @@
-# WIP Context — Login Connection Error Fix
+# WIP Context — Phase 3 Task 1: Database Setup (Interactive Strategist)
 
 ## What Was Just Completed
 
-Implemented the fix for the login connection error. The root cause was that the production frontend build (served by nginx at `http://localhost`) had `VITE_API_URL=http://localhost:8000` hardcoded in the JS bundle, causing cross-origin requests that failed CORS preflight.
+### Task 1: Database Setup for Interactive Strategist
+
+Added the `mode` field to the `Conversation` model and created the `CaseProfile` and `StrategicReport` models. Migrated the database successfully.
 
 ### Changes Made
 
-#### 1. [`docker/frontend/Dockerfile`](../../docker/frontend/Dockerfile) — Refactored builder stage
+#### 1. [`src/backend/conversations/models.py`](../../src/backend/conversations/models.py)
 
-**Problem:** The `builder` stage inherited from `dev` (`FROM dev AS builder`), which copies the entire `src/frontend/` directory including `.env.development`. When `npm run build` ran, Vite read `.env.development` and used `VITE_API_URL=http://localhost:8000`.
-
-**Fix:** Refactored into 4 stages:
-- **`dev`** — Unchanged, for `npm run dev` (hot-reload)
-- **`deps`** — NEW stage: installs production dependencies only (clean `node:20-alpine`, no source copy)
-- **`builder`** — Now inherits from `deps` (not `dev`), copies `src/frontend/`, and explicitly sets `ARG VITE_API_URL=/api` + `ENV VITE_API_URL=/api` to override any `.env` file
-- **`production`** — Unchanged, serves via nginx
-
-#### 2. [`docker-compose.yml`](../../docker-compose.yml) — Updated nginx service
-
-**Problem:** The nginx service built from `./docker/nginx` context with its own Dockerfile, and mounted `./src/frontend/dist` as a host volume. This meant:
-1. The nginx Dockerfile didn't have access to the frontend builder stage
-2. The host's `dist/` (which was stale from May 26) was served, not the image's built-in dist
-
-**Fix:** Changed nginx service to:
-- Build from project root context (`.`)
-- Use `dockerfile: ./docker/frontend/Dockerfile` with `target: production`
-- Removed the `./src/frontend/dist:/usr/share/nginx/html:ro` volume mount (the dist is now baked into the image)
-
-Now the nginx container gets the frontend assets directly from the multi-stage build, with `VITE_API_URL=/api` baked in.
-
-### Request Flow After Fix
-
+**Added `mode` field to `Conversation`:**
+```python
+mode = models.CharField(
+    max_length=20,
+    choices=[
+        ("local_rag", "Local RAG"),
+        ("global_rag", "Global RAG / Legal Research"),
+        ("strategist", "Interactive Strategist"),
+        ("action_engine", "Action Engine"),
+    ],
+    default="global_rag",
+    null=True,
+    help_text="Conversation mode: local_rag, global_rag, strategist, or action_engine. "
+              "Null defaults to global_rag for backward compatibility.",
+)
 ```
-Browser → nginx :80 → /api/auth/login/ → proxy_pass http://backend/ → Django
-                                              ^ strips /api prefix
-Same-origin request (http://localhost → http://localhost), no CORS needed
-```
+- Added `models.Index(fields=['mode'])` to `Conversation.Meta.indexes`
+- Existing conversations get `null` → treated as `global_rag` (backward compatible)
+
+**Added `CaseProfile` model:**
+- `id` — UUID primary key
+- `conversation` — OneToOneField to `Conversation` (related_name="case_profile")
+- `case_type` — CharField(max_length=100), e.g., "contract_dispute", "family_law", "criminal"
+- `facts` — JSONField(default=dict), structured facts: {parties, claims, evidence, timeline, ...}
+- `completeness_score` — FloatField(default=0.0), 0.0 to 1.0
+- `is_complete` — BooleanField(default=False)
+- `created_at`, `updated_at` — auto timestamps
+- Indexes on `conversation` and `case_type`
+
+**Added `StrategicReport` model:**
+- `id` — UUID primary key
+- `conversation` — OneToOneField to `Conversation` (related_name="strategic_report")
+- `case_profile` — ForeignKey to `CaseProfile`
+- `success_probability` — FloatField, 0.0 to 1.0
+- `summary` — TextField
+- `strengths`, `weaknesses`, `risks`, `recommendations` — JSONField(default=list)
+- `applicable_laws` — JSONField(default=list), [{title, articles, citations}]
+- `applicable_precedents` — JSONField(default=list), [{title, number, summary}]
+- `raw_report` — TextField (full Persian markdown report)
+- `created_at` — auto timestamp
+- Indexes on `conversation` and `case_profile`
+
+**Did NOT add:** `ActionPlan` or `LegalDraft` models (deferred to Phase 4).
+
+#### 2. Migration
+
+- **File:** `src/backend/conversations/migrations/0004_add_mode_caseprofile_strategicreport.py`
+- **Created:** `docker-compose exec backend python manage.py makemigrations conversations --name add_mode_caseprofile_strategicreport`
+- **Applied:** `docker-compose exec backend python manage.py migrate conversations` → OK
+
+#### 3. [`docs/references/database-schema.md`](../../docs/references/database-schema.md)
+
+- Added `mode` column to `conversations` table documentation
+- Added `idx_conversations_mode` index
+- Added `case_profiles` table (section 9)
+- Added `strategic_reports` table (section 10)
+- Added migration 0004 documentation under Migrations section
 
 ## Current State
 
-All code changes are complete. The fix needs to be built and verified.
+Database is migrated and ready. The `mode` field, `CaseProfile`, and `StrategicReport` models are in place.
 
 ## Next Step
 
-Rebuild and verify:
-1. `docker-compose build nginx` (rebuilds frontend with correct VITE_API_URL)
-2. `docker-compose up -d nginx` (restarts nginx)
-3. Open `http://localhost` in browser
-4. Try to log in with invalid credentials → should show "Invalid email or password"
-5. Check browser DevTools → Network tab → verify request goes to `/api/auth/login/`
+Proceed to **Task 2: Backend Services** — Create `src/backend/conversations/strategist_service.py` with the `StrategistService` class, implementing the guided interview → research → analysis pipeline.

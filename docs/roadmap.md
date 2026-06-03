@@ -117,160 +117,219 @@ User Question
 
 ---
 
-## Phase 3: Case Analyzer — تحلیل‌گر پرونده 🔮 (Future)
+## Phase 3: Interactive Strategist — استراتژیست تعاملی 🔮 (Next)
 
 **Status:** 📋 Planned  
-**Tagline:** Upload a case file, get a legal analysis with cross-references.
+**Tagline:** Describe your case, get a strategic analysis with success probability.
 
 ### What it does
-Combines Phase 1 (Local RAG on user's document) with Phase 2 (Global RAG on legal databases) to analyze a user's case file against the entire legal corpus. The user uploads a legal document (e.g., a court petition, a contract, a judgment) and the system:
+An **AI-powered legal strategist** that conducts a guided interview with the user to gather case facts, then analyzes the strength of the case against the existing legal database. Unlike the original "Case Analyzer" concept (which required uploading a document), this phase works purely through conversation — critical because many real-world case files are handwritten, scanned, or illegible.
 
-1. **Analyzes the document** — extracts key legal claims, parties, subject matter, cited laws
-2. **Cross-references with legal databases** — finds relevant laws, precedents, and advisory opinions
-3. **Identifies conflicts** — spots contradictions between the document's claims and established law
-4. **Generates a legal analysis report** — structured output with findings, risks, and recommendations
+The user describes their legal situation in natural language, and the system:
 
-### Example Use Cases
-- **Contract review**: "Analyze this contract and identify clauses that conflict with Iranian labor law"
-- **Petition analysis**: "Check if this court petition's arguments are supported by recent judicial precedents"
-- **Risk assessment**: "Identify legal risks in this real estate agreement based on current laws and precedents"
+1. **Interviews the user** — asks targeted questions to fill gaps in facts (parties, subject matter, timeline, evidence, jurisdiction)
+2. **Researches the legal landscape** — queries all 3 legal hubs for relevant laws, precedents, and advisory opinions
+3. **Analyzes success probability** — evaluates strengths, weaknesses, risks, and chances of success
+4. **Delivers a structured strategic report** — actionable insights with citations
 
-### Technical Architecture (Proposed)
+### Example Interaction Flow
 ```
-User Uploads Case Document (PDF)
+User: "من یک قرارداد اجاره با مستاجر بستم و الان ۶ ماه است که اجاره را پرداخت نکرده"
+
+System: "برای تحلیل دقیق پرونده، لطفاً اطلاعات زیر را تکمیل کنید:
+  1. آیا قرارداد اجاره به صورت رسمی در دفترخانه ثبت شده یا عادی است؟
+  2. آیا در قرارداد شرط فسخ یا تخلیه در صورت عدم پرداخت پیش‌بینی شده؟
+  3. آیا اخطار رسمی به مستاجر ارسال کرده‌اید؟"
+
+User: "قرارداد عادی است و شرط تخلیه دارد. اخطار رسمی ندادم"
+
+System: [Researching all 3 hubs...]
+  ─────────────────────────────────────────────
+  📋 تحلیل پرونده اجاره
+  
+  ⚖️ قوانین مرتبط: مواد ۴۹۴ و ۴۹۵ قانون مدنی، قانون روابط موجر و مستاجر
+  📜 آرای وحدت رویه مرتبط: رأی شماره ۷۴۲
+  💡 شانس موفقیت: ۶۵٪
+  🔴 ریسک‌ها: عدم اخطار رسمی می‌تواند روند را طولانی کند
+  🟢 نقاط قوت: وجود شرط تخلیه در قرارداد
+  📌 توصیه: ابتدا اخطار رسمی ارسال کنید، سپس دادخواست تخلیه بدید
+```
+
+### Technical Architecture
+```
+User Describes Case (Natural Language)
     │
     ▼
-┌──────────────────────────────┐
-│  Phase 1: Document Analysis  │
-│  - Extract text + structure  │
-│  - Identify legal entities   │
-│  - Extract claims/citations  │
-│  - Classify case type        │
-└──────────┬───────────────────┘
-           │
-           ▼
-┌──────────────────────────────┐
-│  Phase 2: Cross-Reference    │
-│  - Query all 3 legal hubs    │
-│  - Find relevant laws        │
-│  - Find matching precedents  │
-│  - Find applicable opinions  │
-└──────────┬───────────────────┘
-           │
-           ▼
-┌──────────────────────────────┐
-│  Phase 3: Conflict Detection │
-│  - Compare doc claims vs law │
-│  - Identify contradictions   │
-│  - Flag missing citations    │
-│  - Assess legal risks        │
-└──────────┬───────────────────┘
-           │
-           ▼
-┌──────────────────────────────┐
-│  Phase 4: Report Generation  │
-│  - Structured legal analysis │
-│  - Risk scoring per clause   │
-│  - Recommended actions       │
-│  - Supporting citations      │
-└──────────────────────────────┘
+┌──────────────────────────────────┐
+│  Phase 1: Fact-Finding Interview │
+│  - LLM drives conversation       │
+│  - Asks targeted questions       │
+│  - Extracts structured facts     │
+│  - Detects knowledge gaps        │
+│  - Confirms completeness         │
+└──────────────┬───────────────────┘
+               │
+               ▼
+┌──────────────────────────────────┐
+│  Phase 2: Legal Research         │
+│  - Query all 3 legal hubs        │  ← Reuses existing multi_hub_search()
+│  - Find governing laws           │
+│  - Find matching precedents      │
+│  - Find applicable opinions      │
+└──────────────┬───────────────────┘
+               │
+               ▼
+┌──────────────────────────────────┐
+│  Phase 3: Strategic Analysis     │
+│  - Evaluate success probability  │
+│  - Identify strengths/weaknesses │
+│  - Detect legal risks            │
+│  - Assess evidence gaps          │
+└──────────────┬───────────────────┘
+               │
+               ▼
+┌──────────────────────────────────┐
+│  Phase 4: Report Generation      │
+│  - Structured strategic report   │
+│  - Risk scoring                  │
+│  - Recommended actions           │
+│  - Supporting citations          │
+└──────────────────────────────────┘
 ```
 
 ### Key Capabilities
-- **Document understanding**: Extract legal entities, claims, cited laws from user's document
-- **Multi-directional cross-reference**: Document → Law, Law → Precedent, Precedent → Document
-- **Conflict detection engine**: Rule-based + LLM analysis of contradictions
-- **Structured report output**: JSON/Markdown report with sections, risk levels, citations
-- **Conversational follow-up**: User can ask clarifying questions about the analysis
+- **LLM-driven interview**: The system asks questions, not the user. It guides the fact-gathering process.
+- **Structured fact extraction**: Extracts entities, dates, claims, and evidence from conversation into a structured case profile.
+- **Completeness detection**: Identifies missing critical facts and prompts the user to provide them.
+- **Multi-hub legal research**: Reuses Phase 2's `multi_hub_search()` to find relevant laws, precedents, and opinions.
+- **Success probability scoring**: LLM-based evaluation with explicit reasoning and citation support.
+- **Structured strategic report**: Persian-language report with sections: summary, applicable laws, precedents, risk analysis, recommendations.
+- **Conversational follow-up**: User can ask clarifying questions about the analysis.
 
 ### Data Model Changes (Estimated)
-- `CaseAnalysis` model — stores analysis results, linked to Document + Conversation
-- `LegalEntity` model — extracted entities (parties, laws, courts, dates)
-- `ConflictReport` model — detected conflicts with severity levels
+- `Conversation.mode` — new field to distinguish conversation types: `"strategist"`, `"action_engine"`, `"global_rag"`, `"local_rag"`
+- `CaseProfile` model — stores structured extracted facts (parties, claims, evidence, timeline)
+- `StrategicReport` model — stores the generated analysis report with scores and citations
 
 ### Dependencies
-- Phase 2 (Global RAG) must be complete and stable
-- LLM with strong Persian legal reasoning capability
-- Entity extraction pipeline for Persian legal documents
+- Phase 2 (Global RAG) — complete and stable ✅
+- LLM with strong Persian legal reasoning and structured output capability
+- Prompt engineering for guided legal interview flow
 
 ---
 
-## Phase 4: Legal Drafter — تولیدکننده اسناد حقوقی 🔮 (Future)
+## Phase 4: Action Engine — موتور اقدام 🔮 (Future)
 
 **Status:** 📋 Planned  
-**Tagline:** Generate legal documents with AI, grounded in Iranian law.
+**Tagline:** Describe your goal, get a step-by-step legal roadmap and drafted documents.
 
 ### What it does
-An AI-powered legal document drafting assistant that generates contracts, petitions, and other legal documents based on user requirements, grounded in the actual text of Iranian laws and judicial precedents.
+An **AI-powered legal action engine** that generates practical, actionable legal roadmaps and drafts targeted legal texts (e.g., statements of claim, petition clauses, legal notices) grounded in Iranian law and judicial precedents.
 
-### Example Use Cases
-- **Contract drafting**: "Draft an employment contract compliant with Iranian labor law for a software engineer"
-- **Petition drafting**: "Write a petition for annulment of a administrative decision based on دیوان عدالت اداری precedent"
-- **Legal memo drafting**: "Prepare a legal memorandum on the statute of limitations for fraud claims"
-- **Document customization**: "Add a force majeure clause to this contract compliant with Iranian civil code"
+The user describes their legal objective, and the system:
 
-### Technical Architecture (Proposed)
+1. **Clarifies the objective** — asks targeted questions to understand what the user wants to achieve
+2. **Researches the legal pathway** — queries all 3 legal hubs to find the correct procedures, required documents, and legal basis
+3. **Generates a step-by-step roadmap** — practical guide with timelines, required actions, and procedural steps
+4. **Drafts targeted legal texts** — generates specific clauses, petition sections, or legal notices with citations
+
+### Example Interaction Flow
 ```
-User Requirements (Natural Language)
+User: "می‌خواهم علیه شرکت X به خاطر نقض قرارداد شکایت کنم. قرارداد ما مبلغ ۵۰۰ میلیون تومان است"
+
+System: "برای تهیه نقشه راه و پیش‌نویس دادخواست، لطفاً تکمیل کنید:
+  1. قرارداد شما کتبی است یا شفاهی؟
+  2. در قرارداد شرط داوری پیش‌بینی شده؟
+  3. چه مدتی از نقض قرارداد می‌گذرد؟"
+
+User: "قرارداد کتبی است. شرط داوری ندارد. ۲ ماه از نقض گذشته"
+
+System: [Researching all 3 hubs...]
+  ─────────────────────────────────────────────
+  🗺️ نقشه راه اقدام حقوقی
+  
+  مرحله ۱: ارسال اخطار رسمی (ظرف ۱ هفته)
+  مرحله ۲: تهیه دادخواست به شورای حل اختلاف یا دادگاه عمومی
+  مرحله ۳: ارائه دلایل و مستندات
+  مرحله ۴: پیگیری تا صدور رأی
+  
+  📄 پیش‌نویس دادخواست:
+  ┌─────────────────────────────┐
+  │  متن دادخواست به همراه     │
+  │  استناد به مواد قانونی و   │
+  │  آرای وحدت رویه...         │
+  └─────────────────────────────┘
+  
+  ⚖️ مستندات قانونی:
+  - ماده ۱۰ و ۲۱۹ قانون مدنی
+  - رأی وحدت رویه شماره ...
+```
+
+### Technical Architecture
+```
+User Describes Legal Objective
     │
     ▼
-┌──────────────────────────────┐
-│  Phase 1: Requirements       │
-│  Analysis                    │
-│  - Parse user intent         │
-│  - Identify document type    │
-│  - Extract key parameters    │
-│  - Determine legal domain    │
-└──────────┬───────────────────┘
-           │
-           ▼
-┌──────────────────────────────┐
-│  Phase 2: Legal Research     │
-│  - Query all 3 legal hubs    │
-│  - Find governing laws       │
-│  - Find template precedents  │
-│  - Identify mandatory clauses│
-└──────────┬───────────────────┘
-           │
-           ▼
-┌──────────────────────────────┐
-│  Phase 3: Draft Generation   │
-│  - Generate document outline │
-│  - Draft each section        │
-│  - Cite supporting laws      │
-│  - Apply legal formatting    │
-└──────────┬───────────────────┘
-           │
-           ▼
-┌──────────────────────────────┐
-│  Phase 4: Review & Validate  │
-│  - Check legal compliance    │
-│  - Verify citations          │
-│  - Flag missing elements     │
-│  - Suggest alternatives      │
-└──────────┬───────────────────┘
-           │
-           ▼
-    Draft Document + Legal Review Notes
+┌──────────────────────────────────┐
+│  Phase 1: Objective Clarification│
+│  - Parse user's legal goal       │
+│  - Identify document type needed │
+│  - Ask clarifying questions      │
+│  - Extract key parameters        │
+└──────────────┬───────────────────┘
+               │
+               ▼
+┌──────────────────────────────────┐
+│  Phase 2: Legal Research         │
+│  - Query all 3 legal hubs        │  ← Reuses existing multi_hub_search()
+│  - Find governing laws           │
+│  - Find procedural requirements  │
+│  - Find template precedents      │
+│  - Identify mandatory clauses    │
+└──────────────┬───────────────────┘
+               │
+               ▼
+┌──────────────────────────────────┐
+│  Phase 3: Roadmap Generation     │
+│  - Generate step-by-step guide   │
+│  - Identify required documents   │
+│  - Estimate timeline             │
+│  - Flag potential obstacles      │
+└──────────────┬───────────────────┘
+               │
+               ▼
+┌──────────────────────────────────┐
+│  Phase 4: Legal Text Drafting    │
+│  - Draft petition / claim        │
+│  - Draft legal notices           │
+│  - Draft contract clauses        │
+│  - Cite supporting laws          │
+│  - Apply Persian legal format    │
+└──────────────┬───────────────────┘
+               │
+               ▼
+    Roadmap + Drafted Documents + Legal Citations
 ```
 
 ### Key Capabilities
-- **Template-based generation**: Pre-defined templates for common document types (contracts, petitions, memos)
-- **Legal compliance checking**: Auto-verify that generated clauses comply with relevant laws
-- **Citation grounding**: Every clause cites the specific law article or precedent it's based on
+- **Objective-driven interview**: Clarifies what the user wants to achieve before drafting
+- **Procedural roadmap**: Step-by-step guide with practical actions, timelines, and required documents
+- **Legal text generation**: Drafts specific legal texts (petitions, notices, clauses) with proper Persian legal formatting
+- **Citation grounding**: Every clause and step cites the specific law article or precedent it's based on
+- **Multi-hub research**: Reuses Phase 2's `multi_hub_search()` for comprehensive legal research
 - **Iterative refinement**: User can request modifications, and the system re-drafts with updated research
-- **Export formats**: PDF, DOCX, plain text with proper Persian legal formatting
+- **Export-ready output**: Structured output that can be copied or exported for use in legal proceedings
 
 ### Data Model Changes (Estimated)
-- `DocumentTemplate` model — pre-defined legal document templates with variable slots
-- `DraftSession` model — tracks the drafting process, user edits, version history
-- `LegalClause` model — reusable clause library with legal metadata
+- `ActionPlan` model — stores the generated roadmap with steps, timelines, and required actions
+- `LegalDraft` model — stores drafted legal texts with version history
+- `DraftClause` model — individual clauses with legal metadata and citations
 
 ### Dependencies
-- Phase 2 (Global RAG) must be complete and stable
-- Phase 3 (Case Analyzer) provides the document understanding foundation
-- Template engine for legal document generation
+- Phase 2 (Global RAG) — complete and stable ✅
+- Phase 3 (Interactive Strategist) — provides the interview pattern and structured analysis foundation
 - LLM with strong Persian legal drafting capability
+- Prompt engineering for procedural roadmap generation
 
 ---
 
@@ -295,17 +354,17 @@ gantt
     Lite Multi-Hub RAG             :done, 2025-Q2, 2025-Q2
     Full Synthesis Mode            :done, 2025-Q2, 2025-Q3
     
-    section Phase 3: Case Analyzer
-    Document Understanding         :2025-Q3, 2025-Q4
-    Cross-Reference Engine         :2025-Q3, 2025-Q4
-    Conflict Detection             :2025-Q4, 2025-Q4
-    Report Generation              :2025-Q4, 2026-Q1
+    section Phase 3: Interactive Strategist
+    Fact-Finding Interview Engine  :2025-Q3, 2025-Q4
+    Strategic Analysis Pipeline    :2025-Q3, 2025-Q4
+    Report Generation              :2025-Q4, 2025-Q4
+    Frontend Strategist Page       :2025-Q4, 2025-Q4
     
-    section Phase 4: Legal Drafter
-    Template System                :2026-Q1, 2026-Q2
-    Draft Generation               :2026-Q1, 2026-Q2
-    Legal Compliance Check         :2026-Q2, 2026-Q3
-    Export & Iteration             :2026-Q2, 2026-Q3
+    section Phase 4: Action Engine
+    Objective Clarification        :2025-Q4, 2026-Q1
+    Procedural Roadmap Gen         :2025-Q4, 2026-Q1
+    Legal Text Drafting            :2026-Q1, 2026-Q2
+    Frontend Action Engine Page    :2026-Q1, 2026-Q2
 ```
 
 ---
@@ -315,14 +374,51 @@ gantt
 ```mermaid
 flowchart LR
     P1[Phase 1: Local RAG] --> P2[Phase 2: Global RAG]
-    P2 --> P3[Phase 3: Case Analyzer]
-    P2 --> P4[Phase 4: Legal Drafter]
-    P3 --> P4
+    P2 --> P3[Phase 3: Interactive Strategist]
+    P2 --> P4[Phase 4: Action Engine]
+    P3 -.->|foundation| P4
     
     style P1 fill:#90EE90,stroke:#333,color:#000
     style P2 fill:#90EE90,stroke:#333,color:#000
     style P3 fill:#87CEEB,stroke:#333,color:#000
     style P4 fill:#DDA0DD,stroke:#333,color:#000
+```
+
+---
+
+## Frontend Navigation Map
+
+```mermaid
+flowchart TD
+    subgraph Sidebar
+        D[Dashboard]
+        Doc[Documents]
+        LR[Legal Research]
+        S[Strategist]
+        AE[Action Engine]
+        M[Monitoring]
+    end
+    
+    subgraph Routes
+        dash[/dashboard]
+        docs[/documents]
+        lr[/legal-research]
+        strat[/strategist]
+        act[/action-engine]
+        mon[/monitoring]
+    end
+    
+    D --> dash
+    Doc --> docs
+    LR --> lr
+    S --> strat
+    AE --> act
+    M --> mon
+    
+    style S fill:#87CEEB,stroke:#333,color:#000
+    style AE fill:#DDA0DD,stroke:#333,color:#000
+    style strat fill:#87CEEB,stroke:#333,color:#000
+    style act fill:#DDA0DD,stroke:#333,color:#000
 ```
 
 ---
@@ -334,6 +430,8 @@ flowchart LR
 3. **Data Sovereignty**: All legal reference data is stored in PostgreSQL/pgvector — no external API dependencies for retrieval.
 4. **Persian-First**: All prompts, citations, and outputs are designed for Persian legal language and formatting.
 5. **Citation Integrity**: Every answer must cite its sources at the document level (not just file level) for legal verifiability.
+6. **Conversation-Driven UX**: Phases 3 and 4 are purely conversational — no document upload required, making them accessible even when case files are handwritten or illegible.
+7. **Separate Frontend Destinations**: Each major feature (Document Chat, Legal Research, Strategist, Action Engine) has its own dedicated page and sidebar entry for clear user navigation.
 
 ---
 
@@ -344,7 +442,8 @@ flowchart LR
 | Phase 1: Local RAG | ✅ Completed | Done |
 | Phase 2a: Global RAG (Lite) | ✅ Completed | Done |
 | Phase 2b: Global RAG (Full) | ✅ Completed | Done |
-| Phase 3: Case Analyzer | 🔮 Future | TBD |
-| Phase 4: Legal Drafter | 🔮 Future | TBD |
+| Phase 3: Interactive Strategist | 🔮 Planned | TBD |
+| Phase 4: Action Engine | 🔮 Planned | TBD |
 
 For detailed implementation plan of Phase 2, see [`plans/plan-phase2-global-rag-refactoring.md`](../plans/plan-phase2-global-rag-refactoring.md).
+For detailed implementation plan of Phases 3 & 4, see [`plans/plan-phase3-4-strategist-action-engine.md`](../plans/plan-phase3-4-strategist-action-engine.md).
