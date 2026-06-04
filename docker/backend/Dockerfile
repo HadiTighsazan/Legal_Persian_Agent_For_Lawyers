@@ -29,9 +29,9 @@ RUN sed -i 's|deb.debian.org/debian|mirror.arvancloud.ir/debian|g' /etc/apt/sour
 # Set working directory
 WORKDIR /app
 
-# Configure Runflare PyPI mirror with official PyPI as fallback
-RUN pip config set global.index-url https://mirror-pypi.runflare.com/simple && \
-pip config set global.trusted-host mirror-pypi.runflare.com
+# Configure Liara PyPI mirror
+RUN pip config set global.index-url https://package-mirror.liara.ir/repository/pypi/simple && \
+    pip config set global.trusted-host package-mirror.liara.ir
 
 
 # Copy requirements file

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Generator
 
@@ -57,16 +58,16 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Max tokens for fact extraction LLM calls
-_FACT_EXTRACTION_MAX_TOKENS: int = 600
+_FACT_EXTRACTION_MAX_TOKENS: int = 1024
 
 # Max tokens for question generation LLM calls
 _QUESTION_MAX_TOKENS: int = 300
 
 # Max tokens for strategic analysis LLM calls
-_ANALYSIS_MAX_TOKENS: int = 2000
+_ANALYSIS_MAX_TOKENS: int = 8192
 
 # Max tokens for report generation LLM calls
-_REPORT_MAX_TOKENS: int = 3000
+_REPORT_MAX_TOKENS: int = 8192
 
 # Completeness threshold — when score >= this, the case is ready for analysis
 _COMPLETENESS_THRESHOLD: float = 0.7
@@ -619,6 +620,10 @@ class StrategicAnalyzer:
             case_type,
             len(facts),
         )
+        logger.debug(
+            "StrategicAnalyzer.analyze: Case description: %s",
+            case_description,
+        )
 
         # ------------------------------------------------------------------
         # Step 1: Route the case to relevant legal hubs
@@ -633,6 +638,13 @@ class StrategicAnalyzer:
                 "StrategicAnalyzer.analyze: Router identified active hubs: %s",
                 active_hubs,
             )
+            # Log per-hub query details for debugging
+            for hub, sq in router_result.sub_queries.items():
+                logger.debug(
+                    "StrategicAnalyzer.analyze: Hub '%s' — "
+                    "fts_query=%.120s, vector_query=%.120s",
+                    hub, sq.fts_query or "", sq.vector_query or "",
+                )
         except Exception as e:
             logger.exception(
                 "StrategicAnalyzer.analyze: Question routing failed: %s", e
@@ -671,7 +683,15 @@ class StrategicAnalyzer:
             )
             hub_results = {}
 
-        # Build legal context from retrieved chunks
+        # Filter chunks by relevance to case type
+        for hub_type, hub_data in hub_results.items():
+            chunks = hub_data.get("chunks", [])
+            if chunks:
+                hub_data["chunks"] = self._filter_relevant_chunks(
+                    chunks, case_type,
+                )
+
+        # Build legal context from filtered chunks
         legal_context = build_global_context(hub_results)
 
         # Collect all chunks for citation extraction
@@ -753,26 +773,180 @@ class StrategicAnalyzer:
                 ),
             )
 
+    def _filter_relevant_chunks(
+        self,
+        all_chunks: list[dict[str, Any]],
+        case_type: str,
+    ) -> list[dict[str, Any]]:
+        """Filter chunks by relevance to the case type.
+
+        Removes chunks that are clearly irrelevant to avoid confusing the LLM.
+        Keeps chunks that contain case-type-specific keywords OR have a
+        relevance_score >= 0.5.
+
+        Args:
+            all_chunks: List of chunk dicts, each with 'content' and
+                        'relevance_score' keys.
+            case_type: The case type identifier (e.g. 'contract_dispute').
+
+        Returns:
+            Filtered list of relevant chunks.
+        """
+        case_keywords: dict[str, list[str]] = {
+            "contract_dispute": [
+                "قرارداد", "اجاره", "موجر", "مستاجر", "تخلیه", "اجاره بها",
+                "فسخ", "انقضا", "مدت", "عقد", "التزام", "تعهد", "ماده",
+            ],
+            "family_law": [
+                "طلاق", "مهریه", "نفقه", "حضانت", "ازدواج", "نکاح",
+                "رجوع", "تمکین", "شوهر", "زوجه", "زوج",
+            ],
+            "criminal": [
+                "مجازات", "جرم", "کیفر", "حبس", "جزای نقدی", "شکایت",
+                "بزه", "دادرسی", "تحقیقات", "قاضی", "دادگاه",
+            ],
+            "civil": [
+                "مسئولیت مدنی", "خسارت", "ضمان", "عقد", "قرارداد",
+                "تعهد", "الزام", "تحویل", "مبیع", "ثمن",
+            ],
+            "labour": [
+                "کارگر", "کارفرما", "حقوق", "مزایا", "بیمه", "بازنشستگی",
+                "اخطار", "فسخ قرارداد کار", "پایان کار",
+            ],
+            "inheritance": [
+                "ارث", "وصیت", "وارث", "ترکه", "سهم", "حصه",
+                "طبقه", "فرزند", "همسر", "والدین",
+            ],
+            "property": [
+                "ملک", "زمین", "آپارتمان", "سند", "ثبت", "حدود",
+                "تصرف", "منافع", "عین", "ملکی",
+            ],
+        }
+
+        keywords = case_keywords.get(case_type, [])
+        if not keywords:
+            return all_chunks
+
+        filtered: list[dict[str, Any]] = []
+        for chunk in all_chunks:
+            content = chunk.get("content", "")
+            score = chunk.get("relevance_score", 0.0)
+
+            # Check if chunk contains any relevant keywords
+            has_keyword = any(kw in content for kw in keywords)
+
+            # Keep chunks with high relevance scores even without keywords
+            # (they may contain semantically relevant content)
+            if has_keyword or score >= 0.5:
+                filtered.append(chunk)
+            else:
+                logger.debug(
+                    "_filter_relevant_chunks: Filtered out chunk "
+                    "(score=%.4f, no relevant keywords): %.100s",
+                    score, content,
+                )
+
+        logger.info(
+            "_filter_relevant_chunks: Filtered %d/%d chunks for case_type=%s",
+            len(all_chunks) - len(filtered),
+            len(all_chunks),
+            case_type,
+        )
+
+        return filtered
+
     def _build_case_description(
         self,
         case_type: str,
         facts: dict[str, Any],
     ) -> str:
-        """Build a natural language case description from structured facts.
+        """Build a fluent Persian legal case description for semantic search.
+
+        Produces a natural language description optimized for embedding similarity
+        with legal documents in the knowledge base, rather than a JSON dump.
 
         Args:
-            case_type: The case type identifier.
+            case_type: The case type identifier (e.g. 'contract_dispute').
             facts: The structured facts dict.
 
         Returns:
-            A natural language description of the case.
+            A Persian natural language description of the case, with fields
+            separated by `` | ``.
         """
-        parts = [f"Case Type: {case_type}"]
-        parts.append(
-            "Facts:\n"
-            + json.dumps(facts, ensure_ascii=False, indent=2)
-        )
-        return "\n\n".join(parts)
+        # Map case_type to Persian labels
+        case_type_labels = {
+            "contract_dispute": "اختلافات قراردادی",
+            "family_law": "دعاوی خانواده",
+            "criminal": "دعاوی کیفری",
+            "civil": "دعاوی حقوقی",
+            "labour": "دعاوی کار و کارگری",
+            "inheritance": "دعاوی ارث",
+            "property": "دعاوی ملکی",
+            "other": "سایر",
+        }
+
+        parts = [f"پرونده {case_type_labels.get(case_type, case_type)}"]
+
+        # Add parties
+        parties = facts.get("parties", {})
+        if parties:
+            if isinstance(parties, dict):
+                party_str = " و ".join(
+                    f"{k}: {v}" for k, v in parties.items()
+                )
+                parts.append(f"طرفین دعوا: {party_str}")
+            elif isinstance(parties, str):
+                parts.append(f"طرفین دعوا: {parties}")
+
+        # Add claims
+        claims = facts.get("claims", "")
+        if claims:
+            parts.append(f"خواسته: {claims}")
+
+        # Add amount (format with commas for readability)
+        amount = facts.get("amount")
+        if amount:
+            try:
+                amount_val = float(amount)
+                if amount_val == int(amount_val):
+                    amount_str = f"{int(amount_val):,}"
+                else:
+                    amount_str = str(amount)
+                parts.append(f"مبلغ: {amount_str} تومان")
+            except (ValueError, TypeError):
+                parts.append(f"مبلغ: {amount}")
+
+        # Add timeline
+        timeline = facts.get("timeline", "")
+        if timeline:
+            parts.append(f"زمان‌بندی: {timeline}")
+
+        # Add jurisdiction
+        jurisdiction = facts.get("jurisdiction", "")
+        if jurisdiction:
+            parts.append(f"مرجع قضایی: {jurisdiction}")
+
+        # Add evidence
+        evidence = facts.get("evidence", "")
+        if evidence:
+            parts.append(f"ادله و مدارک: {evidence}")
+
+        # Add current status
+        current_status = facts.get("current_status", "")
+        if current_status:
+            parts.append(f"وضعیت فعلی: {current_status}")
+
+        # Add any remaining keys as key-value strings
+        known_keys = {
+            "parties", "claims", "amount", "timeline",
+            "jurisdiction", "evidence", "current_status",
+        }
+        for key, value in facts.items():
+            if key not in known_keys:
+                if isinstance(value, str) and value:
+                    parts.append(f"{key}: {value}")
+
+        return " | ".join(parts)
 
     def _build_analysis_prompt(
         self,
@@ -795,7 +969,9 @@ class StrategicAnalyzer:
         prompt_parts: list[str] = [
             "## Case Information\n",
             f"**Case Type:** {case_type}\n",
-            "**Extracted Facts:**\n"
+            "**Case Description (Persian):**\n"
+            f"{case_description}\n",
+            "**Extracted Facts (JSON):**\n"
             + json.dumps(facts, ensure_ascii=False, indent=2),
         ]
 
@@ -803,7 +979,13 @@ class StrategicAnalyzer:
             prompt_parts.extend([
                 "\n## Retrieved Legal Context\n",
                 "The following legal information was retrieved from Persian "
-                "legal knowledge hubs. Use this to ground your analysis:\n",
+                "legal knowledge hubs. Use this to ground your analysis.\n"
+                "\n"
+                "**IMPORTANT — Context Relevance Check:**\n"
+                "If the retrieved legal context is not relevant to the case, "
+                "ignore it and base your analysis on general legal principles. "
+                "Do NOT cite laws or precedents that are not relevant to the "
+                "case facts.\n",
                 legal_context,
             ])
         else:
@@ -824,92 +1006,345 @@ class StrategicAnalyzer:
 
         return "\n".join(prompt_parts)
 
+    # ------------------------------------------------------------------
+    # JSON Parsing — delegates to module-level functions
+    # ------------------------------------------------------------------
+
     def _parse_analysis_response(
         self, raw_content: str
     ) -> AnalysisResult:
         """Parse the LLM JSON response for strategic analysis.
 
-        Args:
-            raw_content: The raw string from the chat provider.
-
-        Returns:
-            An :class:`AnalysisResult`.
+        Delegates to the module-level :func:`parse_analysis_response`.
         """
-        cleaned = raw_content.strip()
+        return parse_analysis_response(raw_content)
 
-        # Strip markdown code fences
-        if cleaned.startswith("```"):
-            first_newline = cleaned.find("\n")
-            if first_newline != -1:
-                cleaned = cleaned[first_newline + 1:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3].strip()
-            elif "```" in cleaned:
-                cleaned = cleaned[: cleaned.rfind("```")].strip()
 
-        try:
-            data = json.loads(cleaned)
-        except json.JSONDecodeError:
+# ---------------------------------------------------------------------------
+# Module-level JSON Parsing Functions
+# ---------------------------------------------------------------------------
+# These are module-level so they can be used by both StrategicAnalyzer
+# (via delegation) and StrategistService (via wrapper methods).
+
+
+def _extract_json_from_fence(raw_content: str) -> str | None:
+    """Extract JSON from markdown code fences using regex.
+
+    Handles:
+    - ```json\\n{...}\\n```
+    - ```\\n{...}\\n```
+    - ```json\\n{...}\\n``` (with trailing whitespace)
+    - {json} without any fences
+    - Truncated responses where the closing ``` is missing
+    """
+    # Pattern 1: Content inside ```json or ``` fences
+    # Uses (?:```|$) to handle truncated responses missing the closing fence
+    fence_pattern = r'```(?:json)?\s*\n(.*?)(?:```|$)'
+    match = re.search(fence_pattern, raw_content, re.DOTALL)
+    if match:
+        extracted = match.group(1).strip()
+        if extracted:
+            return extracted
+
+    # Pattern 2: If raw content starts with ```json or ``` but regex failed,
+    # manually strip the fence prefix and try to parse the rest
+    stripped = raw_content.strip()
+    for prefix in ('```json\n', '```\n', '```json', '```'):
+        if stripped.startswith(prefix):
+            after_fence = stripped[len(prefix):].strip()
+            if after_fence:
+                return after_fence
+
+    # Pattern 3: Try to find a top-level JSON object/array directly
+    if stripped.startswith('{') or stripped.startswith('['):
+        return stripped
+
+    return None
+
+
+def _repair_json(text: str) -> str:
+    """Attempt to repair common JSON issues from LLM output.
+
+    Fixes:
+    - Trailing commas before ``]`` or ``}``
+    - Best-effort single-quote to double-quote replacement for keys
+    """
+    # 1. Remove trailing commas before ] or }
+    text = re.sub(r',\s*([\]}])', r'\1', text)
+
+    # 2. Best-effort: replace single quotes with double quotes
+    #    Only targets patterns like '{key}': or '{string_value}'
+    #    This is a heuristic and may not cover all edge cases.
+    text = re.sub(r"(?<!\\)'", '"', text)
+
+    return text
+
+
+def _extract_fields_via_regex(text: str) -> dict | None:
+    """Extract structured fields using regex as last-resort fallback.
+
+    Attempts to pull all structured fields from arbitrary text when JSON
+    parsing has failed entirely. Uses ``re.DOTALL`` for multi-line values
+    and handles Persian text with newlines and quotes.
+    """
+    result: dict[str, Any] = {}
+
+    # --- Scalar fields ---
+    prob = re.search(r'"success_probability"\s*:\s*([0-9.]+)', text)
+    if prob:
+        result["success_probability"] = float(prob.group(1))
+
+    # Multi-line summary: match until the next field or closing brace
+    summary = re.search(
+        r'"summary"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        text,
+        re.DOTALL,
+    )
+    if summary:
+        result["summary"] = summary.group(1).strip()
+
+    # --- Array fields ---
+    for field in ("strengths", "weaknesses", "risks", "recommendations"):
+        arr = re.search(
+            rf'"{field}"\s*:\s*\[(.*?)\]',
+            text,
+            re.DOTALL,
+        )
+        if arr:
+            items = re.findall(r'"((?:[^"\\]|\\.)*)"', arr.group(1))
+            if items:
+                result[field] = [item.strip() for item in items]
+
+    # --- raw_report (multi-line markdown string) ---
+    raw_report = re.search(
+        r'"raw_report"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        text,
+        re.DOTALL,
+    )
+    if raw_report:
+        result["raw_report"] = raw_report.group(1).strip()
+
+    return result if result else None
+
+
+def _build_error_result(raw_content: str) -> AnalysisResult:
+    """Build an ``AnalysisResult`` with an error report when parsing fails.
+
+    Returns a result with ``success_probability=0.0`` and a Persian
+    ``raw_report`` explaining the parsing failure.
+    """
+    logger.error(
+        "_parse_analysis_response: All parsing strategies failed. "
+        "Full raw_content=%s",
+        raw_content,
+    )
+
+    error_report = (
+        "# گزارش تحلیل استراتژیک\n\n"
+        "## خطا در پردازش\n\n"
+        "متأسفانه در پردازش پاسخ تحلیل استراتژیک خطایی رخ داد. "
+        "لطفاً دوباره تلاش کنید.\n\n"
+        "### جزئیات فنی\n\n"
+        "سیستم قادر به تجزیه پاسخ دریافتی از مدل زبانی نبود. "
+        "این مشکل معمولاً موقتی است و با تلاش مجدد برطرف می‌شود.\n"
+    )
+
+    return AnalysisResult(
+        success_probability=0.0,
+        summary="خطا در پردازش تحلیل استراتژیک",
+        raw_report=error_report,
+    )
+
+
+def parse_analysis_response(raw_content: str) -> AnalysisResult:
+    """Parse the LLM JSON response for strategic analysis.
+
+    Uses a multi-strategy pipeline with graceful degradation:
+
+    1. Extract JSON from markdown code fences (``_extract_json_from_fence``)
+    2. Try ``json.loads`` → ``json.loads(strict=False)``
+    3. Repair common LLM JSON issues (``_repair_json``) and retry
+    4. If fence extraction returned None, try to find any ``{...}`` block
+       in the raw content using a lenient regex
+    5. Regex-based field extraction (``_extract_fields_via_regex``) on
+       the raw content as last resort
+    6. Build error result (``_build_error_result``) if all strategies fail
+
+    Args:
+        raw_content: The raw string from the chat provider.
+
+    Returns:
+        An :class:`AnalysisResult`.
+    """
+    # ------------------------------------------------------------------
+    # Stage 1: Extract JSON from markdown code fences
+    # ------------------------------------------------------------------
+    json_str = _extract_json_from_fence(raw_content)
+    data: dict[str, Any] | None = None
+    strategy: str = ""
+
+    if json_str is not None:
+        # ------------------------------------------------------------------
+        # Stage 2: Try json.loads (strict) → json.loads (non-strict)
+        # ------------------------------------------------------------------
+        for parser, label in [
+            (json.loads, "json.loads"),
+            (lambda s: json.loads(s, strict=False), "json.loads(strict=False)"),
+        ]:
             try:
-                data = json.loads(cleaned, strict=False)
+                data = parser(json_str)
+                strategy = label
+                break
             except json.JSONDecodeError:
-                logger.warning(
-                    "_parse_analysis_response: Invalid JSON, raw=%.200s",
-                    raw_content,
-                )
-                return AnalysisResult()
+                continue
 
-        success_probability = data.get("success_probability", 0.0)
-        if not isinstance(success_probability, (int, float)):
-            success_probability = 0.0
-        success_probability = max(0.0, min(1.0, float(success_probability)))
-
-        summary = data.get("summary", "")
-        if not isinstance(summary, str):
-            summary = ""
-
-        strengths = data.get("strengths", [])
-        if not isinstance(strengths, list):
-            strengths = []
-
-        weaknesses = data.get("weaknesses", [])
-        if not isinstance(weaknesses, list):
-            weaknesses = []
-
-        risks = data.get("risks", [])
-        if not isinstance(risks, list):
-            risks = []
-
-        recommendations = data.get("recommendations", [])
-        if not isinstance(recommendations, list):
-            recommendations = []
-
-        applicable_laws = data.get("applicable_laws", [])
-        if not isinstance(applicable_laws, list):
-            applicable_laws = []
-
-        applicable_precedents = data.get("applicable_precedents", [])
-        if not isinstance(applicable_precedents, list):
-            applicable_precedents = []
-
-        raw_report = data.get("raw_report", "")
-        if not isinstance(raw_report, str):
-            raw_report = ""
-
-        # If no raw_report was provided, build one from the structured fields
-        if not raw_report:
-            raw_report = self._build_fallback_report(
-                success_probability=success_probability,
-                summary=summary,
-                strengths=strengths,
-                weaknesses=weaknesses,
-                risks=risks,
-                recommendations=recommendations,
-                applicable_laws=applicable_laws,
-                applicable_precedents=applicable_precedents,
+        # ------------------------------------------------------------------
+        # Stage 3: Repair and retry
+        # ------------------------------------------------------------------
+        if data is None:
+            logger.warning(
+                "_parse_analysis_response [stage=repair]: "
+                "json.loads failed, attempting repair"
             )
+            try:
+                repaired = _repair_json(json_str)
+                data = json.loads(repaired)
+                strategy = "repair_json"
+            except json.JSONDecodeError:
+                pass
 
-        return AnalysisResult(
+        # ------------------------------------------------------------------
+        # Stage 4: Regex-based field extraction on extracted JSON string
+        # ------------------------------------------------------------------
+        if data is None:
+            logger.warning(
+                "_parse_analysis_response [stage=regex]: "
+                "JSON parsing failed, attempting regex on extracted content"
+            )
+            data = _extract_fields_via_regex(json_str)
+            if data is not None:
+                strategy = "regex_fallback"
+    else:
+        logger.warning(
+            "_parse_analysis_response [stage=extract]: "
+            "No JSON found in response via fence extraction"
+        )
+
+    # ------------------------------------------------------------------
+    # Stage 5: If fence extraction failed, try lenient {…} block search
+    # directly on the raw content
+    # ------------------------------------------------------------------
+    if data is None:
+        logger.warning(
+            "_parse_analysis_response [stage=brace_search]: "
+            "Attempting lenient {…} block extraction on raw content"
+        )
+        brace_match = re.search(r'\{.*\}', raw_content, re.DOTALL)
+        if brace_match:
+            candidate = brace_match.group(0)
+            # Try to parse the brace block as JSON
+            for parser, label in [
+                (json.loads, "brace_json.loads"),
+                (lambda s: json.loads(s, strict=False), "brace_json.loads(strict=False)"),
+            ]:
+                try:
+                    data = parser(candidate)
+                    strategy = label
+                    break
+                except json.JSONDecodeError:
+                    continue
+            # If still no data, try repair on the brace block
+            if data is None:
+                try:
+                    repaired = _repair_json(candidate)
+                    data = json.loads(repaired)
+                    strategy = "brace_repair_json"
+                except json.JSONDecodeError:
+                    pass
+            # If still no data, try regex extraction on the brace block
+            if data is None:
+                data = _extract_fields_via_regex(candidate)
+                if data is not None:
+                    strategy = "brace_regex_fallback"
+
+    # ------------------------------------------------------------------
+    # Stage 6: Regex-based field extraction directly on raw content
+    # (absolute last resort before error result)
+    # ------------------------------------------------------------------
+    if data is None:
+        logger.warning(
+            "_parse_analysis_response [stage=raw_regex]: "
+            "Attempting regex extraction directly on raw content"
+        )
+        data = _extract_fields_via_regex(raw_content)
+        if data is not None:
+            strategy = "raw_regex_fallback"
+
+    # ------------------------------------------------------------------
+    # Stage 7: If all strategies failed, return error result
+    # ------------------------------------------------------------------
+    if data is None:
+        logger.warning(
+            "_parse_analysis_response [stage=final]: "
+            "All parsing strategies failed"
+        )
+        return _build_error_result(raw_content)
+
+    # Log which strategy succeeded
+    logger.info(
+        "_parse_analysis_response: Parsing succeeded via %s",
+        strategy,
+    )
+
+    # ------------------------------------------------------------------
+    # Extract structured fields from parsed data
+    # ------------------------------------------------------------------
+    success_probability = data.get("success_probability", 0.0)
+    if not isinstance(success_probability, (int, float)):
+        success_probability = 0.0
+    success_probability = max(0.0, min(1.0, float(success_probability)))
+
+    summary = data.get("summary", "")
+    if not isinstance(summary, str):
+        summary = ""
+
+    strengths = data.get("strengths", [])
+    if not isinstance(strengths, list):
+        strengths = []
+
+    weaknesses = data.get("weaknesses", [])
+    if not isinstance(weaknesses, list):
+        weaknesses = []
+
+    risks = data.get("risks", [])
+    if not isinstance(risks, list):
+        risks = []
+
+    recommendations = data.get("recommendations", [])
+    if not isinstance(recommendations, list):
+        recommendations = []
+
+    applicable_laws = data.get("applicable_laws", [])
+    if not isinstance(applicable_laws, list):
+        applicable_laws = []
+
+    applicable_precedents = data.get("applicable_precedents", [])
+    if not isinstance(applicable_precedents, list):
+        applicable_precedents = []
+
+    raw_report = data.get("raw_report", "")
+    if not isinstance(raw_report, str):
+        raw_report = ""
+
+    # If no raw_report was provided, build one from the structured fields
+    if not raw_report:
+        logger.info(
+            "parse_analysis_response: raw_report missing — "
+            "building fallback report from structured fields "
+            "(strategy=%s)",
+            strategy,
+        )
+        raw_report = _build_fallback_report(
             success_probability=success_probability,
             summary=summary,
             strengths=strengths,
@@ -918,98 +1353,116 @@ class StrategicAnalyzer:
             recommendations=recommendations,
             applicable_laws=applicable_laws,
             applicable_precedents=applicable_precedents,
-            raw_report=raw_report,
+        )
+    else:
+        logger.info(
+            "parse_analysis_response: raw_report successfully extracted "
+            "(%d chars, strategy=%s)",
+            len(raw_report),
+            strategy,
         )
 
-    def _build_fallback_report(
-        self,
-        success_probability: float,
-        summary: str,
-        strengths: list[str],
-        weaknesses: list[str],
-        risks: list[str],
-        recommendations: list[str],
-        applicable_laws: list[dict[str, Any]],
-        applicable_precedents: list[dict[str, Any]],
-    ) -> str:
-        """Build a Persian markdown report from structured fields.
+    return AnalysisResult(
+        success_probability=success_probability,
+        summary=summary,
+        strengths=strengths,
+        weaknesses=weaknesses,
+        risks=risks,
+        recommendations=recommendations,
+        applicable_laws=applicable_laws,
+        applicable_precedents=applicable_precedents,
+        raw_report=raw_report,
+    )
 
-        Used when the LLM didn't return a ``raw_report`` field.
 
-        Args:
-            success_probability: 0.0–1.0 success probability.
-            summary: Persian summary text.
-            strengths: List of strengths.
-            weaknesses: List of weaknesses.
-            risks: List of risks.
-            recommendations: List of recommendations.
-            applicable_laws: List of applicable law dicts.
-            applicable_precedents: List of applicable precedent dicts.
+def _build_fallback_report(
+    success_probability: float,
+    summary: str,
+    strengths: list[str],
+    weaknesses: list[str],
+    risks: list[str],
+    recommendations: list[str],
+    applicable_laws: list[dict[str, Any]],
+    applicable_precedents: list[dict[str, Any]],
+) -> str:
+    """Build a Persian markdown report from structured fields.
 
-        Returns:
-            A Persian markdown report string.
-        """
-        lines = [
-            "# گزارش تحلیل استراتژیک\n",
-            "## خلاصه",
-            summary,
-            "",
-            f"**احتمال موفقیت:** {success_probability * 100:.0f}%\n",
-        ]
+    Used when the LLM didn't return a ``raw_report`` field.
 
-        if strengths:
-            lines.append("## نقاط قوت")
-            for s in strengths:
-                lines.append(f"- {s}")
-            lines.append("")
+    Args:
+        success_probability: 0.0–1.0 success probability.
+        summary: Persian summary text.
+        strengths: List of strengths.
+        weaknesses: List of weaknesses.
+        risks: List of risks.
+        recommendations: List of recommendations.
+        applicable_laws: List of applicable law dicts.
+        applicable_precedents: List of applicable precedent dicts.
 
-        if weaknesses:
-            lines.append("## نقاط ضعف")
-            for w in weaknesses:
-                lines.append(f"- {w}")
-            lines.append("")
+    Returns:
+        A Persian markdown report string.
+    """
+    lines = [
+        "# گزارش تحلیل استراتژیک\n",
+        "## خلاصه",
+        summary,
+        "",
+        f"**احتمال موفقیت:** {success_probability * 100:.0f}%\n",
+    ]
 
-        if risks:
-            lines.append("## ریسک‌ها")
-            for r in risks:
-                lines.append(f"- {r}")
-            lines.append("")
+    if strengths:
+        lines.append("## نقاط قوت")
+        for s in strengths:
+            lines.append(f"- {s}")
+        lines.append("")
 
-        if recommendations:
-            lines.append("## توصیه‌ها")
-            for rec in recommendations:
-                lines.append(f"- {rec}")
-            lines.append("")
+    if weaknesses:
+        lines.append("## نقاط ضعف")
+        for w in weaknesses:
+            lines.append(f"- {w}")
+        lines.append("")
 
-        if applicable_laws:
-            lines.append("## قوانین مرتبط")
-            for law in applicable_laws:
-                title = law.get("title", "")
-                articles = law.get("articles", "")
-                citations = law.get("citations", "")
-                line_parts = [f"- **{title}**"]
-                if articles:
-                    line_parts.append(f" — {articles}")
-                if citations:
-                    line_parts.append(f" ({citations})")
-                lines.append("".join(line_parts))
-            lines.append("")
+    if risks:
+        lines.append("## ریسک‌ها")
+        for r in risks:
+            lines.append(f"- {r}")
+        lines.append("")
 
-        if applicable_precedents:
-            lines.append("## رویه‌های قضایی مرتبط")
-            for prec in applicable_precedents:
-                title = prec.get("title", "")
-                number = prec.get("number", "")
-                summary = prec.get("summary", "")
-                line_parts = [f"- **{title}**"]
-                if number:
-                    line_parts.append(f" (شماره {number})")
-                if summary:
-                    line_parts.append(f": {summary}")
-                lines.append("".join(line_parts))
-            lines.append("")
+    if recommendations:
+        lines.append("## توصیه‌ها")
+        for rec in recommendations:
+            lines.append(f"- {rec}")
+        lines.append("")
 
-        return "\n".join(lines)
+    if applicable_laws:
+        lines.append("## قوانین مرتبط")
+        for law in applicable_laws:
+            title = law.get("title", "")
+            articles = law.get("articles", "")
+            citations = law.get("citations", "")
+            line_parts = [f"- **{title}**"]
+            if articles:
+                line_parts.append(f" — {articles}")
+            if citations:
+                line_parts.append(f" ({citations})")
+            lines.append("".join(line_parts))
+        lines.append("")
+
+    if applicable_precedents:
+        lines.append("## رویه‌های قضایی مرتبط")
+        for prec in applicable_precedents:
+            title = prec.get("title", "")
+            number = prec.get("number", "")
+            summary = prec.get("summary", "")
+            line_parts = [f"- **{title}**"]
+            if number:
+                line_parts.append(f" (شماره {number})")
+            if summary:
+                line_parts.append(f": {summary}")
+            lines.append("".join(line_parts))
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -1036,6 +1489,49 @@ class StrategistService:
     - :class:`CaseProfile` is created/updated after each fact extraction.
     - :class:`StrategicReport` is created after analysis completes.
     """
+
+    # ------------------------------------------------------------------
+    # JSON Parsing Wrappers
+    # ------------------------------------------------------------------
+    # These delegate to module-level functions so they can be tested
+    # via the StrategistService interface.
+
+    def _extract_json_from_fence(self, raw_content: str) -> str | None:
+        """Extract JSON from markdown code fences.
+
+        Delegates to :func:`_extract_json_from_fence`.
+        """
+        return _extract_json_from_fence(raw_content)
+
+    def _repair_json(self, text: str) -> str:
+        """Repair common JSON issues.
+
+        Delegates to :func:`_repair_json`.
+        """
+        return _repair_json(text)
+
+    def _extract_fields_via_regex(self, text: str) -> dict | None:
+        """Extract fields via regex fallback.
+
+        Delegates to :func:`_extract_fields_via_regex`.
+        """
+        return _extract_fields_via_regex(text)
+
+    def _build_error_result(self, raw_content: str) -> AnalysisResult:
+        """Build an error result when parsing fails.
+
+        Delegates to :func:`_build_error_result`.
+        """
+        return _build_error_result(raw_content)
+
+    def _parse_analysis_response(
+        self, raw_content: str
+    ) -> AnalysisResult:
+        """Parse the LLM JSON response for strategic analysis.
+
+        Delegates to :func:`parse_analysis_response`.
+        """
+        return parse_analysis_response(raw_content)
 
     def __init__(self) -> None:
         self._fact_extractor = FactExtractor()
@@ -1308,19 +1804,21 @@ class StrategistService:
                 defaults=case_profile_data,
             )
 
-            # Create the StrategicReport
-            report = StrategicReport.objects.create(
+            # Create or update the StrategicReport (handles retry idempotency)
+            report, created = StrategicReport.objects.update_or_create(
                 conversation_id=conversation_id,
-                case_profile=profile,
-                success_probability=analysis_result.success_probability,
-                summary=analysis_result.summary,
-                strengths=analysis_result.strengths,
-                weaknesses=analysis_result.weaknesses,
-                risks=analysis_result.risks,
-                recommendations=analysis_result.recommendations,
-                applicable_laws=analysis_result.applicable_laws,
-                applicable_precedents=analysis_result.applicable_precedents,
-                raw_report=analysis_result.raw_report,
+                defaults={
+                    "case_profile": profile,
+                    "success_probability": analysis_result.success_probability,
+                    "summary": analysis_result.summary,
+                    "strengths": analysis_result.strengths,
+                    "weaknesses": analysis_result.weaknesses,
+                    "risks": analysis_result.risks,
+                    "recommendations": analysis_result.recommendations,
+                    "applicable_laws": analysis_result.applicable_laws,
+                    "applicable_precedents": analysis_result.applicable_precedents,
+                    "raw_report": analysis_result.raw_report,
+                },
             )
             logger.info(
                 "StrategistService: StrategicReport %s created for conv=%s",

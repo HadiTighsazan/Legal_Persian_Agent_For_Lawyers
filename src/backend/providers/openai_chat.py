@@ -28,10 +28,14 @@ class OpenAIChatProvider(BaseChatProvider):
         # OpenAI client has no connect timeout, which can cause
         # worker processes to hang indefinitely (e.g., when Docker
         # DNS cannot resolve the API hostname).
+        #
+        # The read timeout is set high (180s) because strategic analysis
+        # calls use _ANALYSIS_MAX_TOKENS=8192 and DeepSeek can take
+        # 60-90+ seconds to generate long Persian legal reports.
         http_client = Client(
             timeout=Timeout(
                 connect=10.0,   # Max seconds to wait for connection
-                read=30.0,      # Max seconds to wait for response
+                read=180.0,     # Max seconds to wait for response (high for long strategic analysis)
                 write=30.0,     # Max seconds to send request
                 pool=10.0,      # Max seconds to wait for connection pool
             ),
