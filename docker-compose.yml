@@ -4,6 +4,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/backend/Dockerfile
+      args:
+        HOST_IP: 192.168.1.112
     container_name: docuchat_test
     profiles:
       - test  # Only starts with --profile test
@@ -13,6 +15,13 @@ services:
       redis:
         condition: service_healthy
     environment:
+      # Proxy via V2Ray on host
+      HTTP_PROXY: http://host.docker.internal:10808
+      HTTPS_PROXY: http://host.docker.internal:10808
+      http_proxy: http://host.docker.internal:10808
+      https_proxy: http://host.docker.internal:10808
+      NO_PROXY: localhost,127.0.0.1,postgres,redis,host.docker.internal
+      no_proxy: localhost,127.0.0.1,postgres,redis,host.docker.internal
       DATABASE_URL: ${DATABASE_URL:-postgresql://docuchat_user:changeme@postgres:5432/docuchat_db}
       DJANGO_SETTINGS_MODULE: config.settings
       DJANGO_DEBUG: "True"
@@ -67,6 +76,8 @@ services:
     build:
       context: .
       dockerfile: ./docker/backend/Dockerfile
+      args:
+        HOST_IP: 192.168.1.112
     image: docuchat_backend
     container_name: docuchat_backend
     restart: unless-stopped
@@ -78,6 +89,13 @@ services:
       redis:
         condition: service_healthy
     environment:
+      # Proxy via V2Ray on host
+      HTTP_PROXY: http://host.docker.internal:10808
+      HTTPS_PROXY: http://host.docker.internal:10808
+      http_proxy: http://host.docker.internal:10808
+      https_proxy: http://host.docker.internal:10808
+      NO_PROXY: localhost,127.0.0.1,postgres,redis,host.docker.internal
+      no_proxy: localhost,127.0.0.1,postgres,redis,host.docker.internal
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
@@ -136,6 +154,13 @@ services:
       redis:
         condition: service_healthy
     environment:
+      # Proxy via V2Ray on host
+      HTTP_PROXY: http://host.docker.internal:10808
+      HTTPS_PROXY: http://host.docker.internal:10808
+      http_proxy: http://host.docker.internal:10808
+      https_proxy: http://host.docker.internal:10808
+      NO_PROXY: localhost,127.0.0.1,postgres,redis,host.docker.internal
+      no_proxy: localhost,127.0.0.1,postgres,redis,host.docker.internal
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
@@ -183,6 +208,13 @@ services:
       redis:
         condition: service_healthy
     environment:
+      # Proxy via V2Ray on host
+      HTTP_PROXY: http://host.docker.internal:10808
+      HTTPS_PROXY: http://host.docker.internal:10808
+      http_proxy: http://host.docker.internal:10808
+      https_proxy: http://host.docker.internal:10808
+      NO_PROXY: localhost,127.0.0.1,postgres,redis,host.docker.internal
+      no_proxy: localhost,127.0.0.1,postgres,redis,host.docker.internal
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}

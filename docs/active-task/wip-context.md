@@ -126,3 +126,49 @@ Three new logging points:
 1. Restart backend: `docker-compose restart backend`
 2. Run the diagnostic script again: `docker-compose exec backend python scripts/diag_step_rental_case.py`
 3. Run the full backend test suite to ensure no regressions: `docker-compose exec backend pytest`
+
+---
+
+## Proxy Configuration via V2Ray (Added 2026-06-05)
+
+### What Was Done
+Configured all Docker services to route HTTP/HTTPS package downloads through the V2Ray proxy running on the host at `http://127.0.0.1:10808`.
+
+### Files Modified
+
+#### [`docker/backend/Dockerfile`](docker/backend/Dockerfile)
+- **Removed** Iranian Debian mirror overrides (`sed` commands replacing `deb.debian.org` with `mirror.arvancloud.ir`)
+- **Removed** Liara PyPI mirror configuration (`pip config set global.index-url ...`)
+- **Added** `ARG HOST_IP=host.docker.internal` at the top level (before `FROM`) and again after `FROM` to make it available in the build stage
+- **Added** `HTTP_PROXY`/`HTTPS_PROXY` (both uppercase and lowercase) set to `http://${HOST_IP}:10808` as `ENV` at the top of the Dockerfile
+  - At **build time**: `HOST_IP` is passed via `--build-arg` (e.g., `192.168.1.112`) so proxy works during `apt-get` and `pip install`
+  - At **runtime**: `HOST_IP` defaults to `host.docker.internal` which resolves via `extra_hosts` in docker-compose.yml
+
+#### [`docker/frontend/Dockerfile`](docker/frontend/Dockerfile)
+- **Added** `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env vars to both the `dev` and `deps` stages (where `npm install` runs)
+- Ensures `npm install` downloads packages through the V2Ray proxy
+
+#### [`docker-compose.yml`](docker-compose.yml)
+- **Added** proxy env vars (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) to 4 services:
+  - `test` — for pytest runs that may make outbound HTTP calls
+  - `backend` — for Django runtime API calls (OpenAI, Gemini, etc.)
+  - `celery_worker` — for Celery tasks that call external APIs
+  - `celery_beat` — for scheduled tasks
+- `NO_PROXY` includes `localhost,127.0.0.1,postgres,redis,host.docker.internal` to ensure internal Docker networking is never proxied
+- The `nginx` and `frontend` services do **not** need proxy env vars at runtime (nginx serves static files, frontend dev server runs in browser)
+
+### Important Notes
+- After these changes, you **must rebuild** the images for the proxy to take effect during build time:
+  ```bash
+  docker-compose build --no-cache backend
+  ```
+  (The `celery_worker` and `celery_beat` use `image: docuchat_backend`, so they get updated automatically.)
+- For runtime proxy (already handled via `docker-compose.yml` env vars), a simple restart suffices:
+  ```bash
+  docker-compose up -d backend celery_worker celery_beat
+  ```
+- If V2Ray is not running, builds will fail because `apt-get` and `pip` won't be able to reach external repositories. Always ensure V2Ray is active before building.
+- **Build-time fix:** `host.docker.internal` does NOT resolve during `docker build`. The `ARG HOST_IP` mechanism passes your host LAN IP (`192.168.1.112`) at build time so the proxy works. If your IP changes, update the `args` in `docker-compose.yml` or pass it dynamically:
+  ```bash
+  docker-compose build --no-cache --build-arg HOST_IP=192.168.1.112 backend
+  ```

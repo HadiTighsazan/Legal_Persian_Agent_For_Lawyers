@@ -3,6 +3,15 @@
 # ============================================================
 FROM docker.arvancloud.ir/library/node:20-alpine AS dev
 
+# Proxy environment variables for npm install
+# host.docker.internal resolves to the host machine from within the container
+ENV HTTP_PROXY=http://host.docker.internal:10808
+ENV HTTPS_PROXY=http://host.docker.internal:10808
+ENV http_proxy=http://host.docker.internal:10808
+ENV https_proxy=http://host.docker.internal:10808
+ENV NO_PROXY=localhost,127.0.0.1
+ENV no_proxy=localhost,127.0.0.1
+
 WORKDIR /app
 COPY src/frontend/package*.json ./
 
@@ -18,6 +27,14 @@ CMD ["npm", "run", "dev", "--", "--host"]
 # Stage 2: Dependencies — Install production deps only
 # ============================================================
 FROM docker.arvancloud.ir/library/node:20-alpine AS deps
+
+# Proxy environment variables for npm install
+ENV HTTP_PROXY=http://host.docker.internal:10808
+ENV HTTPS_PROXY=http://host.docker.internal:10808
+ENV http_proxy=http://host.docker.internal:10808
+ENV https_proxy=http://host.docker.internal:10808
+ENV NO_PROXY=localhost,127.0.0.1
+ENV no_proxy=localhost,127.0.0.1
 
 WORKDIR /app
 COPY src/frontend/package*.json ./
