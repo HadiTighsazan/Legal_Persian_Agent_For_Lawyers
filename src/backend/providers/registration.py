@@ -13,10 +13,12 @@ from providers.registry import register_chat_provider, register_embedding_provid
 from providers.gemini_embedding import GeminiEmbeddingProvider
 from providers.openai_embedding import OpenAIEmbeddingProvider
 from providers.ollama_embedding import OllamaEmbeddingProvider
+from providers.openrouter_embedding import OpenRouterEmbeddingProvider
 
 register_embedding_provider("google", GeminiEmbeddingProvider)
 register_embedding_provider("openai", OpenAIEmbeddingProvider)
 register_embedding_provider("ollama", OllamaEmbeddingProvider)
+register_embedding_provider("openrouter", OpenRouterEmbeddingProvider)
 
 # ---------------------------------------------------------------------------
 # Chat providers

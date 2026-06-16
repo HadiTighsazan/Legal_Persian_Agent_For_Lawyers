@@ -1,174 +1,63 @@
-# WIP Context — Strategist RAG Retrieval Fix (Steps 1-5) + max_tokens Fix
+# WIP Context — OpenRouter Embedding Provider + Database Cleanup
 
 ## What Was Just Completed
 
-### Step 1: Rewrote `_build_case_description` (Root Cause #1 fix)
+### Phase 1: Created OpenRouter Embedding Provider
 
-**File:** [`src/backend/conversations/strategist_service.py:757`](src/backend/conversations/strategist_service.py:757)
+**Files Created:**
+- [`src/backend/providers/openrouter_embedding.py`](src/backend/providers/openrouter_embedding.py) — New `OpenRouterEmbeddingProvider` class that uses `openai.OpenAI(api_key=..., base_url=...)` pointed at `https://openrouter.ai/api/v1`. Implements `embed()`, `embed_batch()`, `embed_query()`, and `dimensions` property.
 
-Replaced the JSON-dump implementation with a fluent Persian natural language legal description generator.
+**Files Modified:**
+- [`src/backend/config/settings.py`](src/backend/config/settings.py) — Added `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `OPENROUTER_EMBEDDING_MODEL` settings (both `env()` defaults and assignments).
+- [`src/backend/providers/registration.py`](src/backend/providers/registration.py) — Imported and registered `OpenRouterEmbeddingProvider` as `"openrouter"`.
+- [`docker-compose.yml`](docker-compose.yml) — Added OpenRouter env vars to `test`, `backend`, `celery_worker`, `celery_beat` services.
+- [`.env.example`](.env.example) — Added OpenRouter configuration section.
 
-**Changes:**
-- Added `case_type_labels` mapping (e.g., `contract_dispute` → `اختلافات قراردادی`)
-- Extracts known fields in order: `parties`, `claims`, `amount`, `timeline`, `jurisdiction`, `evidence`, `current_status`
-- Formats `amount` with comma separators for readability (e.g., `۶۰,۰۰۰,۰۰۰ تومان`)
-- Handles `parties` as both `dict` and `str`
-- Any remaining unknown keys are appended as `key: value` strings
-- All parts joined with ` | ` separator
-
-**Example output:**
-```
-پرونده اختلافات قراردادی | طرفین دعوا: موجر: کاربر و مستاجر: نامشخص | خواسته: عدم پرداخت اجاره و تخلیه | مبلغ: ۶۰,۰۰۰,۰۰۰ تومان | زمان‌بندی: قرارداد یک‌ساله از ۱۴۰۳/۰۳/۰۱ تا ۱۴۰۴/۰۳/۰۱ | مرجع قضایی: تهران | ادله و مدارک: قرارداد کتبی عادی
-```
-
-### Step 2: Added `_filter_relevant_chunks` (Root Cause #2 fix)
-
-**File:** [`src/backend/conversations/strategist_service.py:765`](src/backend/conversations/strategist_service.py:765)
-
-Added a new method that filters retrieved chunks by relevance to the case type before passing them to the LLM.
+### Phase 2: Cleaned Up Dirty Database & Fixed Mount Path
 
 **Changes:**
-- New `_filter_relevant_chunks(self, all_chunks, case_type)` method at line 765
-- Defines `case_keywords` dict with Persian legal keywords for 7 case types: `contract_dispute`, `family_law`, `criminal`, `civil`, `labour`, `inheritance`, `property`
-- Keeps a chunk if its `content` contains any relevant keyword OR if its `relevance_score` >= 0.5
-- `logger.debug` for each dropped chunk (with score and first 100 chars of content)
-- `logger.info` for total filtered count per case type
-- If no keywords defined for a case type, returns all chunks unchanged
+- Fixed chunked_datasets mount path: `C:/Users/starlap/Desktop/chunked_datasets` → `C:/Users/starlap/Desktop/Developer_Tools/chunked_datasets` (both backend and celery_worker services)
+- Stopped all containers (`docker-compose down`)
+- Removed dirty PostgreSQL volume (`docker volume rm docuchat_postgres_data`)
+- Created `.env` with OpenRouter API key and `EMBEDDING_PROVIDER=openrouter`
+- Restarted all containers (`docker-compose up -d`)
 
-**Integration at call site (line 675):**
-- Before building `legal_context` and collecting `all_chunks`, iterates over each hub in `hub_results` and applies `_filter_relevant_chunks` per-hub
-- This ensures both `build_global_context()` and the citation extraction only see relevant chunks
+### Phase 3: Imported and Re-embedded All Chunked Datasets
 
-### Step 3: Updated `_build_analysis_prompt` (Root Cause #3 fix)
-
-**File:** [`src/backend/conversations/strategist_service.py:951`](src/backend/conversations/strategist_service.py:951)
-
-**Changes:**
-- Added `**Case Description (Persian):**` section — injects the natural language case description so the LLM understands the case facts clearly in fluent Persian
-- Added `**IMPORTANT — Context Relevance Check:**` instruction block:
-  > "If the retrieved legal context is not relevant to the case, ignore it and base your analysis on general legal principles. Do NOT cite laws or precedents that are not relevant to the case facts."
-- The JSON facts are still included as `**Extracted Facts (JSON):**` for structured data access
-
-### Step 4: Added diagnostic logging
-
-**File:** [`src/backend/conversations/strategist_service.py`](src/backend/conversations/strategist_service.py)
-
-Three new logging points:
-
-1. **Case description output** (line 623, `logger.debug`): Logs the full Persian case description produced by `_build_case_description`
-2. **Router query details** (line 642, `logger.debug`): Logs per-hub `fts_query` and `vector_query` (truncated to 120 chars) for debugging routing quality
-3. **raw_report extraction status** (lines 1341-1362, `logger.info`): Logs whether `raw_report` was successfully extracted (with char count and strategy) or if the fallback `_build_fallback_report` was triggered
-
-### Step 5: Created diagnostic test script
-
-**File:** [`scripts/diag_step_rental_case.py`](scripts/diag_step_rental_case.py) (new)
-**Also copied to:** [`src/backend/scripts/diag_step_rental_case.py`](src/backend/scripts/diag_step_rental_case.py) (for Docker container access)
-
-A runnable diagnostic script that tests the full pipeline for a rental dispute case:
-
-1. **Builds case description** — Uses the updated `_build_case_description` with realistic rental facts (موجر, مستاجر, اجاره, تخلیه)
-2. **Routes the question** — Calls `route_question()` and prints active hubs, FTS/vector queries, and router reasoning
-3. **Runs multi-hub search** — Calls `multi_hub_search()` and prints chunks per hub with relevance scores
-4. **Verifies rental law retrieval** — Checks if chunks contain keywords like "قانون روابط موجر و مستأجر", "موجر", "مستاجر", "اجاره", "تخلیه"
-5. **Manual Persian legal queries** — Tests 5 manual queries about rental law to verify the knowledge base has relevant content
-
-**Usage:**
+**Import Summary:**
 ```
-docker-compose exec backend python scripts/diag_step_rental_case.py
+Files processed:     6
+Documents created:   3072
+Chunks created:      18927
+Chunks embedded:     18927
+Skipped:             2 (empty text chunks)
 ```
 
-**File:** [`src/backend/conversations/strategist_service.py`](src/backend/conversations/strategist_service.py)
+**All 6 JSON files were processed** (matching the 6 files in `C:\Users\starlap\Desktop\Developer_Tools\chunked_datasets`):
 
-Three new logging points:
+| Folder | File | Embedded |
+|--------|------|----------|
+| هاب قوانین مصوب | chunks_قانون_مجازات_اسلامی.json | ✅ |
+| هاب قوانین مصوب | chunks_قوانین_مهم.json | ✅ |
+| هاب رویه های قضایی | chunks_آرای_هیئت_عمومی_دیوان_عدالت_اداری.json | ✅ |
+| هاب رویه های قضایی | chunks_آرای_وحدت_رویه.json | ✅ |
+| هاب نظریات مشورتی و رویه عملی | chunks_مشروح_نشست_های_قضایی.json | ✅ |
+| هاب نظریات مشورتی و رویه عملی | chunks_نظرات_مشورتی.json | ✅ |
 
-1. **Case description output** (line 623, `logger.debug`): Logs the full Persian case description produced by `_build_case_description`
-2. **Router query details** (line 642, `logger.debug`): Logs per-hub `fts_query` and `vector_query` (truncated to 120 chars) for debugging routing quality
-3. **raw_report extraction status** (lines 1341-1362, `logger.info`): Logs whether `raw_report` was successfully extracted (with char count and strategy) or if the fallback `_build_fallback_report` was triggered
+**Embeddings generated via OpenRouter API** (`bge-m3` model, 1024-dim vectors) — 0 chunks with missing embeddings.
 
-### Step 6: Increased max_tokens for Router & Fact Extraction
+### Current State
 
-**Files:**
-- [`src/backend/config/settings.py:316`](src/backend/config/settings.py:316)
-- [`src/backend/conversations/strategist_service.py:61`](src/backend/conversations/strategist_service.py:61)
-
-**Changes:**
-1. **`QUERY_FORMULATION_MAX_TOKENS`**: `150` → `1024` — prevents router LLM responses from being truncated mid-JSON (was causing `Unterminated string` parse errors)
-2. **`QUERY_FORMULATION_TIMEOUT`**: `5` → `15` seconds — increased to accommodate longer generation time for 1024 tokens
-3. **`_FACT_EXTRACTION_MAX_TOKENS`**: `600` → `1024` — ensures fact extraction LLM calls have enough room for complete Persian legal text output
-
-**Rationale:** The diagnostic script revealed `_parse_router_response` was failing with "Unterminated string" because the LLM response was cut off at 150 tokens. Increasing to 1024 gives deepseek-chat enough room to complete its JSON output. The analysis LLM calls (`_ANALYSIS_MAX_TOKENS = 8192`) were already sufficient.
-
-## Current State of Code
-
-### File: `src/backend/conversations/strategist_service.py`
-- **Lines 765-845**: `_filter_relevant_chunks` — chunk relevance filtering by case type keywords + score threshold.
-- **Lines 675-681**: Integration of `_filter_relevant_chunks` per-hub before building legal context.
-- **Lines 857-948**: `_build_case_description` — rewritten to produce fluent Persian legal description instead of JSON dump.
-- **Lines 951-1007**: `_build_analysis_prompt` — updated with Persian case description section and context relevance check instructions.
-- **Lines 614-626**: Diagnostic logging for case description output (DEBUG) and router query details (DEBUG).
-- **Lines 1339-1362**: Diagnostic logging for raw_report extraction vs fallback (INFO).
-- **Lines 61**: `_FACT_EXTRACTION_MAX_TOKENS = 1024` (was 600)
-- **Lines 66-70**: Token constants — `_ANALYSIS_MAX_TOKENS = 8192`, `_REPORT_MAX_TOKENS = 8192`.
-- **Lines 1009-1041**: `_extract_json_from_fence` — handles truncated responses (missing closing ```).
-- **Lines 1062-1106**: `_extract_fields_via_regex` — `re.DOTALL`, array extraction, `raw_report` extraction.
-- **Lines 1138-1341**: `parse_analysis_response` — 7-stage graceful degradation pipeline.
-- **Lines 1792-1839**: `_save_strategic_report` — uses `update_or_create()` for idempotent retries.
-
-### File: `scripts/diag_step_rental_case.py` (new)
-- Runnable diagnostic script for the rental dispute pipeline.
-- Tests: case description generation, routing, multi-hub search, rental law keyword verification, and 5 manual Persian legal queries.
-
-### File: `src/backend/conversations/tests/test_strategist_parsing.py`
-- 40 tests across 8 test classes, all passing.
-- Covers fence extraction, JSON repair, regex fallback, error result, multi-strategy pipeline, truncated responses, Persian text with newlines/quotes, and DB idempotency.
+- **Embedding provider:** `openrouter` (bge-m3 via OpenRouter API)
+- **Chat provider:** `openai` (uses OpenRouter base URL for chat as well, via `CHAT_API_KEY` and `CHAT_BASE_URL`)
+- **Database:** Fresh PostgreSQL with all 18,927 chunks embedded
+- **All containers healthy:** postgres, redis, backend, celery_worker, celery_beat, frontend, nginx
 
 ## Next Steps
-1. Restart backend: `docker-compose restart backend`
-2. Run the diagnostic script again: `docker-compose exec backend python scripts/diag_step_rental_case.py`
-3. Run the full backend test suite to ensure no regressions: `docker-compose exec backend pytest`
 
----
+1. Verify the system works by running the backend test suite: `docker-compose exec backend pytest`
+2. Or test the RAG pipeline by sending a query via the frontend
 
-## Proxy Configuration via V2Ray (Added 2026-06-05)
+## Reference Doc Changes
 
-### What Was Done
-Configured all Docker services to route HTTP/HTTPS package downloads through the V2Ray proxy running on the host at `http://127.0.0.1:10808`.
-
-### Files Modified
-
-#### [`docker/backend/Dockerfile`](docker/backend/Dockerfile)
-- **Removed** Iranian Debian mirror overrides (`sed` commands replacing `deb.debian.org` with `mirror.arvancloud.ir`)
-- **Removed** Liara PyPI mirror configuration (`pip config set global.index-url ...`)
-- **Added** `ARG HOST_IP=host.docker.internal` at the top level (before `FROM`) and again after `FROM` to make it available in the build stage
-- **Added** `HTTP_PROXY`/`HTTPS_PROXY` (both uppercase and lowercase) set to `http://${HOST_IP}:10808` as `ENV` at the top of the Dockerfile
-  - At **build time**: `HOST_IP` is passed via `--build-arg` (e.g., `192.168.1.112`) so proxy works during `apt-get` and `pip install`
-  - At **runtime**: `HOST_IP` defaults to `host.docker.internal` which resolves via `extra_hosts` in docker-compose.yml
-
-#### [`docker/frontend/Dockerfile`](docker/frontend/Dockerfile)
-- **Added** `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env vars to both the `dev` and `deps` stages (where `npm install` runs)
-- Ensures `npm install` downloads packages through the V2Ray proxy
-
-#### [`docker-compose.yml`](docker-compose.yml)
-- **Added** proxy env vars (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) to 4 services:
-  - `test` — for pytest runs that may make outbound HTTP calls
-  - `backend` — for Django runtime API calls (OpenAI, Gemini, etc.)
-  - `celery_worker` — for Celery tasks that call external APIs
-  - `celery_beat` — for scheduled tasks
-- `NO_PROXY` includes `localhost,127.0.0.1,postgres,redis,host.docker.internal` to ensure internal Docker networking is never proxied
-- The `nginx` and `frontend` services do **not** need proxy env vars at runtime (nginx serves static files, frontend dev server runs in browser)
-
-### Important Notes
-- After these changes, you **must rebuild** the images for the proxy to take effect during build time:
-  ```bash
-  docker-compose build --no-cache backend
-  ```
-  (The `celery_worker` and `celery_beat` use `image: docuchat_backend`, so they get updated automatically.)
-- For runtime proxy (already handled via `docker-compose.yml` env vars), a simple restart suffices:
-  ```bash
-  docker-compose up -d backend celery_worker celery_beat
-  ```
-- If V2Ray is not running, builds will fail because `apt-get` and `pip` won't be able to reach external repositories. Always ensure V2Ray is active before building.
-- **Build-time fix:** `host.docker.internal` does NOT resolve during `docker build`. The `ARG HOST_IP` mechanism passes your host LAN IP (`192.168.1.112`) at build time so the proxy works. If your IP changes, update the `args` in `docker-compose.yml` or pass it dynamically:
-  ```bash
-  docker-compose build --no-cache --build-arg HOST_IP=192.168.1.112 backend
-  ```
+**No changes to database schema or API endpoints.** The OpenRouter provider follows the same pattern as existing providers and uses existing settings infrastructure (only new env vars added).

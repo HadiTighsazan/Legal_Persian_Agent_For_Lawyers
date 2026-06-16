@@ -38,6 +38,10 @@ env = environ.Env(
     OLLAMA_EMBEDDING_MODEL=(str, 'bge-m3'),
     EMBEDDING_DIMENSION=(int, 1024),
     VECTOR_SEARCH_PROBES=(int, 10),
+    # OpenRouter Embedding Configuration
+    OPENROUTER_API_KEY=(str, ''),
+    OPENROUTER_BASE_URL=(str, 'https://openrouter.ai/api/v1'),
+    OPENROUTER_EMBEDDING_MODEL=(str, 'bge-m3'),
 )
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -283,6 +287,11 @@ OLLAMA_EMBEDDING_MODEL = env('OLLAMA_EMBEDDING_MODEL', default='bge-m3')
 EMBEDDING_DIMENSION = env('EMBEDDING_DIMENSION', default=1024)
 GEMINI_CHAT_MODEL = env('GEMINI_CHAT_MODEL', default='gemini-2.0-flash')
 OLLAMA_CHAT_MODEL = env('OLLAMA_CHAT_MODEL', default='llama3')
+
+# OpenRouter Embedding Configuration
+OPENROUTER_API_KEY = env('OPENROUTER_API_KEY', default='')
+OPENROUTER_BASE_URL = env('OPENROUTER_BASE_URL', default='https://openrouter.ai/api/v1')
+OPENROUTER_EMBEDDING_MODEL = env('OPENROUTER_EMBEDDING_MODEL', default='bge-m3')
 
 # Chat API Configuration (OpenAI-compatible: OpenAI, DeepSeek, Together, etc.)
 CHAT_API_KEY = env('CHAT_API_KEY', default='')
