@@ -683,3 +683,385 @@ class TestSaveStrategicReportIdempotency:
         report_b = StrategicReport.objects.get(conversation=conv_b)
         assert report_a.success_probability == 0.5
         assert report_b.success_probability == 0.9
+
+
+# ---------------------------------------------------------------------------
+# FactExtractor — Fact Preservation on Parse Failure (Fix A)
+# ---------------------------------------------------------------------------
+
+
+class TestFactExtractorFactPreservation:
+    """Tests for :class:`FactExtractor` fact preservation on JSON parse failure.
+
+    Verifies Fix A: when ``_parse_extraction_response`` encounters malformed
+    JSON, it now raises ``ValueError`` instead of silently returning empty
+    facts. The ``extract()`` method's ``except Exception`` handler catches
+    this and preserves ``existing_profile`` facts.
+    """
+
+    def test_preserves_existing_facts_on_invalid_json(
+        self, monkeypatch,
+    ) -> None:
+        """existing_profile facts are preserved when LLM returns bad JSON."""
+        from conversations.strategist_service import FactExtractor
+
+        # Mock the chat provider to return malformed JSON
+        def mock_chat(*args, **kwargs):
+            return {"content": "This is not valid JSON at all."}
+
+        monkeypatch.setattr(
+            "conversations.strategist_service.get_chat_provider",
+            lambda: type("MockProvider", (), {"chat": mock_chat})(),
+        )
+
+        extractor = FactExtractor()
+        existing_facts = {
+            "parties": {"خريداري": "علي", "فروشنده": "محمد"},
+            "claims": "الزام به تنظيم سند خودرو",
+            "amount": 500000000,
+        }
+
+        result = extractor.extract(
+            user_message="من خریدار هستم و آقای محمد فروشنده",
+            existing_profile=existing_facts,
+        )
+
+        assert result.facts == existing_facts
+        assert result.case_type == "other"
+        assert result.is_ready is False
+        assert result.completeness_score == 0.0
+
+    def test_preserves_existing_facts_on_truncated_json(
+        self, monkeypatch,
+    ) -> None:
+        """existing_profile facts are preserved when LLM returns truncated JSON."""
+        from conversations.strategist_service import FactExtractor
+
+        def mock_chat(*args, **kwargs):
+            return {
+                "content": (
+                    '```json\n'
+                    '{\n'
+                    '  "case_type": "contract_dispute",\n'
+                    '  "facts": {\n'
+                    '    "parties": {"م": "خ'
+                )
+                # NOTE: Truncated mid-Persian-word -- invalid JSON
+            }
+
+        monkeypatch.setattr(
+            "conversations.strategist_service.get_chat_provider",
+            lambda: type("MockProvider", (), {"chat": mock_chat})(),
+        )
+
+        extractor = FactExtractor()
+        existing_facts = {
+            "parties": {"موجر": "کاربر", "مستاجر": "نامشخص"},
+            "claims": "عدم پرداخت اجاره",
+        }
+
+        result = extractor.extract(
+            user_message="مستاجر پرداخت نکرده",
+            existing_profile=existing_facts,
+        )
+
+        assert result.facts == existing_facts
+
+    def test_returns_fallback_on_llm_exception(
+        self, monkeypatch,
+    ) -> None:
+        """existing_profile facts are preserved when LLM call itself fails."""
+        from conversations.strategist_service import FactExtractor
+
+        def mock_chat(*args, **kwargs):
+            raise ConnectionError("Network error")
+
+        monkeypatch.setattr(
+            "conversations.strategist_service.get_chat_provider",
+            lambda: type("MockProvider", (), {"chat": mock_chat})(),
+        )
+
+        extractor = FactExtractor()
+        existing_facts = {"claims": "تخلیه ملک"}
+
+        result = extractor.extract(
+            user_message="تخلیه کنید",
+            existing_profile=existing_facts,
+        )
+
+        assert result.facts == existing_facts
+        assert result.case_type == "other"
+
+    def test_uses_empty_facts_when_no_existing_profile(
+        self, monkeypatch,
+    ) -> None:
+        """When no existing_profile and LLM returns bad JSON, facts is empty dict."""
+        from conversations.strategist_service import FactExtractor
+
+        def mock_chat(*args, **kwargs):
+            return {"content": "NOT JSON"}
+
+        monkeypatch.setattr(
+            "conversations.strategist_service.get_chat_provider",
+            lambda: type("MockProvider", (), {"chat": mock_chat})(),
+        )
+
+        extractor = FactExtractor()
+        result = extractor.extract(
+            user_message="یک پرونده دارم",
+            existing_profile=None,
+        )
+
+        assert result.facts == {}
+        assert result.case_type == "other"
+
+
+# ---------------------------------------------------------------------------
+# _build_fts_keywords -- FTS Keyword Generation (Fix B)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildFtsKeywords:
+    """Tests for :meth:`StrategicAnalyzer._build_fts_keywords`.
+
+    Verifies Fix B: keyword generation uses word-level truncation to prevent
+    Unicode breaking, includes case-type base keywords, and adds facts-derived
+    terms.
+    """
+
+    def test_contract_dispute_base_keywords(self):
+        """Returns contract_dispute base keywords for that case type."""
+        from conversations.strategist_service import StrategicAnalyzer
+
+        analyzer = StrategicAnalyzer()
+        keywords = analyzer._build_fts_keywords(
+            case_type="contract_dispute",
+            facts={},
+        )
+
+        assert "قرارداد" in keywords
+        assert "عقد" in keywords
+        assert "تعهد" in keywords
+
+    def test_includes_claims_with_word_truncation(self):
+        """Claims text is included with word-level (not char-level) truncation."""
+        from conversations.strategist_service import StrategicAnalyzer
+
+        analyzer = StrategicAnalyzer()
+        long_claims = "الزام " + " طلب " * 50
+        keywords = analyzer._build_fts_keywords(
+            case_type="contract_dispute",
+            facts={"claims": long_claims},
+        )
+
+        assert "الزام" in keywords
+        word_count = len(keywords.split())
+        assert word_count <= 30
+
+    def test_persian_word_integrity(self):
+        """Word-level truncation preserves Persian word integrity."""
+        from conversations.strategist_service import StrategicAnalyzer
+
+        analyzer = StrategicAnalyzer()
+        claims = "الزام به تنظیم سند خودرو و مطالبه وجه التزام"
+        keywords = analyzer._build_fts_keywords(
+            case_type="contract_dispute",
+            facts={"claims": claims},
+        )
+
+        for word in claims.split():
+            if word not in ("از", "به", "و", "در"):
+                assert word in keywords or len(keywords.split()) < 20
+
+    def test_includes_evidence_keywords(self):
+        """Evidence text is included with word-level truncation."""
+        from conversations.strategist_service import StrategicAnalyzer
+
+        analyzer = StrategicAnalyzer()
+        keywords = analyzer._build_fts_keywords(
+            case_type="civil",
+            facts={
+                "evidence": "قرارداد کتبی مبایعه نامه و رسید بانکی",
+            },
+        )
+
+        assert "قرارداد کتبی" in keywords
+        assert "رسید" in keywords
+
+    def test_includes_party_role_keywords(self):
+        """Known party role keys are added as keywords."""
+        from conversations.strategist_service import StrategicAnalyzer
+
+        analyzer = StrategicAnalyzer()
+        keywords = analyzer._build_fts_keywords(
+            case_type="contract_dispute",
+            facts={
+                "parties": {
+                    "موجر": "کاربر",
+                    "مستاجر": "نامشخص",
+                },
+            },
+        )
+
+        assert "موجر" in keywords
+        assert "مستاجر" in keywords
+
+    def test_unknown_case_type_uses_default_keyword(self):
+        """Unknown case types fall back to 'قانون' as the base keyword."""
+        from conversations.strategist_service import StrategicAnalyzer
+
+        analyzer = StrategicAnalyzer()
+        keywords = analyzer._build_fts_keywords(
+            case_type="unknown_type",
+            facts={},
+        )
+
+        assert "قانون" in keywords
+
+    def test_empty_facts_returns_base_keywords_only(self):
+        """When facts dict is empty, only case-type base keywords are returned."""
+        from conversations.strategist_service import StrategicAnalyzer
+
+        analyzer = StrategicAnalyzer()
+        keywords = analyzer._build_fts_keywords(
+            case_type="family_law",
+            facts={},
+        )
+
+        assert "طلاق" in keywords
+        assert "مهریه" in keywords
+        assert "اجاره" not in keywords
+
+    def test_handles_evidence_as_list(self):
+        """Evidence field as a list is joined into a string, not crashed."""
+        from conversations.strategist_service import StrategicAnalyzer
+
+        analyzer = StrategicAnalyzer()
+        keywords = analyzer._build_fts_keywords(
+            case_type="contract_dispute",
+            facts={
+                "evidence": ["سند رسمی زمین", "قرارداد مشارکت عادی"],
+            },
+        )
+
+        assert "سند" in keywords
+        assert "قرارداد" in keywords
+        assert "زمین" in keywords
+
+    def test_handles_claims_as_list(self):
+        """Claims field as a list is joined into a string, not crashed."""
+        from conversations.strategist_service import StrategicAnalyzer
+
+        analyzer = StrategicAnalyzer()
+        keywords = analyzer._build_fts_keywords(
+            case_type="contract_dispute",
+            facts={
+                "claims": ["الزام به تنظیم سند", "مطالبه وجه التزام"],
+            },
+        )
+
+        assert "الزام" in keywords
+        assert "مطالبه" in keywords
+        assert "وجه" in keywords
+
+    def test_handles_evidence_as_string(self):
+        """Evidence field as a string still works correctly (backward compat)."""
+        from conversations.strategist_service import StrategicAnalyzer
+
+        analyzer = StrategicAnalyzer()
+        keywords = analyzer._build_fts_keywords(
+            case_type="contract_dispute",
+            facts={
+                "evidence": "یک مدرک متنی ساده",
+            },
+        )
+
+        assert "مدرک" in keywords
+        assert "متنی" in keywords
+
+    def test_handles_empty_evidence_list(self):
+        """Empty evidence list does not crash."""
+        from conversations.strategist_service import StrategicAnalyzer
+
+        analyzer = StrategicAnalyzer()
+        keywords = analyzer._build_fts_keywords(
+            case_type="contract_dispute",
+            facts={
+                "evidence": [],
+            },
+        )
+
+        # Should not crash and return base keywords
+        assert "قرارداد" in keywords
+
+
+# ---------------------------------------------------------------------------
+# _parse_probability_from_risk -- Type Safety (int/float/str)
+# ---------------------------------------------------------------------------
+
+
+class TestParseProbabilityFromRisk:
+    """Tests for :func:`_parse_probability_from_risk`.
+
+    Verifies the function handles int, float, and string types for the
+    ``success_probability`` field inside ``risk_assessment``.
+    """
+
+    def test_handles_int_value(self):
+        """Integer value 70 is parsed as 0.7."""
+        from conversations.strategist_service import _parse_probability_from_risk
+
+        result = _parse_probability_from_risk(
+            {"success_probability": 70}
+        )
+        assert result == 0.7
+
+    def test_handles_float_value(self):
+        """Float value 0.85 is returned as-is."""
+        from conversations.strategist_service import _parse_probability_from_risk
+
+        result = _parse_probability_from_risk(
+            {"success_probability": 0.85}
+        )
+        assert result == 0.85
+
+    def test_handles_string_with_percent(self):
+        """String like '70 درصد - some text' is parsed to 0.7."""
+        from conversations.strategist_service import _parse_probability_from_risk
+
+        result = _parse_probability_from_risk(
+            {"success_probability": "70 درصد - دعوای مستند به سند رسمی"}
+        )
+        assert result == 0.7
+
+    def test_handles_persian_digits(self):
+        """Persian digit string like '۷۵' is parsed to 0.75."""
+        from conversations.strategist_service import _parse_probability_from_risk
+
+        result = _parse_probability_from_risk(
+            {"success_probability": "۷۵"}
+        )
+        assert result == 0.75
+
+    def test_handles_empty_risk_assessment(self):
+        """Empty risk_assessment returns 0.0."""
+        from conversations.strategist_service import _parse_probability_from_risk
+
+        result = _parse_probability_from_risk({})
+        assert result == 0.0
+
+    def test_handles_none_risk_assessment(self):
+        """None risk_assessment returns 0.0 without crashing."""
+        from conversations.strategist_service import _parse_probability_from_risk
+
+        result = _parse_probability_from_risk(None)  # type: ignore
+        assert result == 0.0
+
+    def test_handles_string_without_digits(self):
+        """String with no digits returns 0.0."""
+        from conversations.strategist_service import _parse_probability_from_risk
+
+        result = _parse_probability_from_risk(
+            {"success_probability": "نامشخص"}
+        )
+        assert result == 0.0

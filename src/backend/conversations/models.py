@@ -106,8 +106,9 @@ class StrategicReport(models.Model):
     """
     Generated strategic analysis report from the Interactive Strategist.
 
-    Contains success probability, strengths/weaknesses, risks,
-    recommendations, and citations to applicable laws and precedents.
+    Contains NEW structured fields from the comprehensive Persian system
+    prompt (missing_facts, civil_pathway, criminal_pathway, etc.) plus
+    LEGACY fields kept for backward compatibility with existing reports.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     conversation = models.OneToOneField(
@@ -117,6 +118,38 @@ class StrategicReport(models.Model):
         CaseProfile, on_delete=models.CASCADE,
         help_text="The case profile this report was generated from",
     )
+
+    # --- New structured fields (from comprehensive Persian prompt) ---
+    missing_facts = models.JSONField(
+        default=list, blank=True,
+        help_text="List of information gaps identified in the case",
+    )
+    civil_pathway = models.TextField(
+        blank=True, default="",
+        help_text="Complete civil/legal pathway analysis",
+    )
+    criminal_pathway = models.TextField(
+        blank=True, default="",
+        help_text="Complete criminal pathway analysis",
+    )
+    pathways_relation = models.TextField(
+        blank=True, default="",
+        help_text="How civil and criminal pathways interact",
+    )
+    risk_assessment = models.JSONField(
+        default=dict, blank=True,
+        help_text="{strengths, weaknesses, success_probability}",
+    )
+    strategic_recommendation = models.TextField(
+        blank=True, default="",
+        help_text="Recommended next action",
+    )
+    sources_used = models.JSONField(
+        default=list, blank=True,
+        help_text="List of source citations used in the analysis",
+    )
+
+    # --- Legacy fields (kept for backward compatibility) ---
     success_probability = models.FloatField(
         help_text="0.0 to 1.0 — estimated likelihood of success",
     )
