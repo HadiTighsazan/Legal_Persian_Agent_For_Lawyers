@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { PlusIcon, Trash2, Pencil, MessageSquare, Check, X, Loader2 } from 'lucide-react';
+import { PlusIcon, Trash2, Pencil, MessageSquare, Check, X, Loader2, History } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,9 +28,9 @@ function formatRelativeTime(dateString: string): string {
   const diffDays = Math.floor(diffHours / 24);
 
   if (diffSeconds < 60) return 'just now';
-  if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes !== 1 ? 's' : ''} ago`;
-  if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
-  if (diffDays < 30) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+  if (diffMinutes < 60) return `${diffMinutes}m`;
+  if (diffHours < 24) return `${diffHours}h`;
+  if (diffDays < 30) return `${diffDays}d`;
   return new Date(dateString).toLocaleDateString();
 }
 
@@ -38,11 +38,11 @@ function formatRelativeTime(dateString: string): string {
 
 function ConversationSkeleton() {
   return (
-    <>
-      <div className="h-10 rounded-md bg-muted animate-pulse" />
-      <div className="h-10 rounded-md bg-muted animate-pulse" />
-      <div className="h-10 rounded-md bg-muted animate-pulse" />
-    </>
+    <div className="space-y-1 px-2">
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="h-10 rounded-lg bg-muted/60 shimmer" />
+      ))}
+    </div>
   );
 }
 
@@ -51,9 +51,9 @@ function ConversationSkeleton() {
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center h-full text-sm text-muted-foreground p-4 text-center">
-      <MessageSquare className="h-8 w-8 mb-2 opacity-40" />
+      <History className="h-8 w-8 mb-2 opacity-30" />
       <p>No conversations yet.</p>
-      <p className="mt-1">Start a new chat to begin.</p>
+      <p className="mt-1 text-xs text-muted-foreground/60">Start a new chat to begin.</p>
     </div>
   );
 }
@@ -129,14 +129,14 @@ function ConversationItem({
     return (
       <div
         className={cn(
-          'flex items-center justify-between rounded-md px-3 py-2 text-sm',
-          isActive ? 'bg-primary/10' : 'hover:bg-accent',
+          'flex items-center justify-between rounded-lg px-3 py-2 text-sm',
+          isActive ? 'bg-primary/8' : 'hover:bg-muted/50',
         )}
       >
-        <div className="text-xs text-muted-foreground flex items-center gap-1 w-full">
-          <span>Delete?</span>
+        <span className="text-xs text-muted-foreground">Delete this chat?</span>
+        <div className="flex items-center gap-1.5">
           <button
-            className="font-medium text-destructive hover:underline ml-auto"
+            className="text-xs font-medium text-destructive hover:text-destructive/80 transition-colors"
             onClick={(e) => {
               e.stopPropagation();
               onConfirmDelete(conversation.id);
@@ -144,9 +144,9 @@ function ConversationItem({
           >
             Yes
           </button>
-          <span className="text-muted-foreground">/</span>
+          <span className="text-muted-foreground/40">/</span>
           <button
-            className="font-medium hover:underline"
+            className="text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
             onClick={(e) => {
               e.stopPropagation();
               onCancelDelete();
@@ -162,10 +162,10 @@ function ConversationItem({
   return (
     <div
       className={cn(
-        'flex items-center justify-between rounded-md px-3 py-2 text-sm cursor-pointer group',
+        'group flex items-center justify-between rounded-lg px-3 py-2 text-sm cursor-pointer transition-all duration-150',
         isActive
-          ? 'bg-primary/10 text-primary border-l-2 border-primary'
-          : 'hover:bg-accent',
+          ? 'bg-primary/8 text-foreground font-medium'
+          : 'hover:bg-muted/50 text-muted-foreground hover:text-foreground',
       )}
       role="button"
       aria-label={`Conversation: ${conversation.title || 'Untitled Chat'}`}
@@ -202,32 +202,35 @@ function ConversationItem({
         </div>
       ) : (
         <>
-          <span className="truncate flex-1">
-            {conversation.title || 'Untitled Chat'}
-          </span>
-          <span className="text-xs text-muted-foreground shrink-0 ml-2">
-            {formatRelativeTime(conversation.updated_at)}
-          </span>
-          <button
-            className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRenameStart(conversation.id);
-            }}
-            aria-label={`Rename conversation ${conversation.title || 'Untitled Chat'}`}
-          >
-            <Pencil className="h-4 w-4 text-muted-foreground hover:text-foreground" />
-          </button>
-          <button
-            className="ml-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDeleteClick(conversation.id);
-            }}
-            aria-label={`Delete conversation ${conversation.title || 'Untitled Chat'}`}
-          >
-            <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-          </button>
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-50" />
+            <span className="truncate">{conversation.title || 'Untitled Chat'}</span>
+          </div>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <span className="text-[10px] text-muted-foreground/40 mr-1">
+              {formatRelativeTime(conversation.updated_at)}
+            </span>
+            <button
+              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted/80"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRenameStart(conversation.id);
+              }}
+              aria-label={`Rename conversation ${conversation.title || 'Untitled Chat'}`}
+            >
+              <Pencil className="h-3 w-3 text-muted-foreground/60 hover:text-foreground" />
+            </button>
+            <button
+              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted/80"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeleteClick(conversation.id);
+              }}
+              aria-label={`Delete conversation ${conversation.title || 'Untitled Chat'}`}
+            >
+              <Trash2 className="h-3 w-3 text-muted-foreground/60 hover:text-destructive" />
+            </button>
+          </div>
         </>
       )}
     </div>
@@ -326,14 +329,14 @@ export default function ConversationSidebar({
       aria-label="Conversations"
     >
       {/* Header */}
-      <div className="p-4 border-b space-y-3">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+      <div className="p-3 border-b border-border/60 space-y-2">
+        <h2 className="text-xs font-semibold text-muted-foreground/60 uppercase tracking-wider px-1">
           Conversations
         </h2>
         <Button
           variant="outline"
           size="sm"
-          className="w-full justify-start gap-2"
+          className="w-full justify-start gap-2 rounded-lg border-border/60 hover:bg-muted/50"
           onClick={handleNewChat}
           disabled={isCreatingConversation}
           aria-label="Create new conversation"
@@ -348,7 +351,7 @@ export default function ConversationSidebar({
       </div>
 
       {/* List */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-1">
+      <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
         {isLoadingConversations ? (
           <ConversationSkeleton />
         ) : conversations.length === 0 ? (

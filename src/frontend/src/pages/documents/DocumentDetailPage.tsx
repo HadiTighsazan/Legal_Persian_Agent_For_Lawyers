@@ -47,18 +47,18 @@ function formatDate(isoString: string): string {
 function DetailSkeleton() {
   return (
     <div className="space-y-6 animate-pulse">
-      <div className="h-5 w-32 rounded bg-muted" />
+      <div className="h-5 w-32 rounded-lg bg-muted/60 shimmer" />
       <div className="space-y-2">
-        <div className="h-8 w-3/4 rounded bg-muted" />
-        <div className="h-5 w-1/2 rounded bg-muted" />
+        <div className="h-8 w-3/4 rounded-lg bg-muted/60 shimmer" />
+        <div className="h-5 w-1/2 rounded-lg bg-muted/60 shimmer" />
       </div>
-      <Card>
+      <Card className="border-border/60">
         <CardContent className="p-5">
           <div className="grid grid-cols-2 gap-4">
-            <div className="h-4 w-20 rounded bg-muted" />
-            <div className="h-4 w-16 rounded bg-muted" />
-            <div className="h-4 w-32 rounded bg-muted" />
-            <div className="h-5 w-24 rounded-full bg-muted" />
+            <div className="h-4 w-20 rounded bg-muted/60 shimmer" />
+            <div className="h-4 w-16 rounded bg-muted/60 shimmer" />
+            <div className="h-4 w-32 rounded bg-muted/60 shimmer" />
+            <div className="h-5 w-24 rounded-full bg-muted/60 shimmer" />
           </div>
         </CardContent>
       </Card>
@@ -79,10 +79,6 @@ export default function DocumentDetailPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   // ── Processing status polling ──────────────────────────────────────────
-  // Polling is enabled when the document has been loaded and its
-  // processing_status is not in a terminal state (completed/failed).
-  // The useProcessingStatus hook also stops polling internally when the
-  // computed status from ProcessingTask records reaches a terminal state.
   const shouldPoll =
     !isLoading &&
     document !== null &&
@@ -118,11 +114,6 @@ export default function DocumentDetailPage() {
   }, [fetchDocument]);
 
   // ── Re-fetch document when processing pipeline reaches a terminal state ─
-  // The useProcessingStatus hook polls GET /documents/{id}/processing-status/
-  // which returns the pipeline-granular status (processing_status). When that
-  // reaches "completed" or "failed", we re-fetch the full document to get the
-  // updated document.status (upload lifecycle), which controls visibility of
-  // action buttons like "Chat with Document".
   useEffect(() => {
     if (
       statusData &&
@@ -158,7 +149,6 @@ export default function DocumentDetailPage() {
     if (!documentId) return;
     try {
       await triggerProcessing(documentId);
-      // Refetch document to update processing_status
       fetchDocument();
     } catch (err: unknown) {
       const message =
@@ -170,7 +160,6 @@ export default function DocumentDetailPage() {
   };
 
   const handleRetry = async (_taskId: string) => {
-    // Retry by re-triggering processing
     await handleStartProcessing();
   };
 
@@ -202,7 +191,7 @@ export default function DocumentDetailPage() {
           Back to Documents
         </Button>
 
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="rounded-xl border-destructive/20">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Error</AlertTitle>
           <AlertDescription className="mt-1">
@@ -210,7 +199,7 @@ export default function DocumentDetailPage() {
             <Button
               variant="outline"
               size="sm"
-              className="mt-3"
+              className="mt-3 rounded-lg"
               onClick={fetchDocument}
             >
               Try Again
@@ -230,13 +219,13 @@ export default function DocumentDetailPage() {
           Back to Documents
         </Button>
 
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
-          <FileText className="mb-4 h-12 w-12 text-muted-foreground" />
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-16 text-center">
+          <FileText className="mb-4 h-12 w-12 text-muted-foreground/30" />
           <h3 className="text-lg font-semibold">Document not found</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 text-sm text-muted-foreground/70">
             The document you're looking for doesn't exist or has been removed.
           </p>
-          <Button className="mt-4" onClick={handleBack}>
+          <Button className="mt-4 rounded-lg" onClick={handleBack}>
             Go to Documents
           </Button>
         </div>
@@ -245,11 +234,6 @@ export default function DocumentDetailPage() {
   }
 
   // ── Render: Data ───────────────────────────────────────────────────────
-  // Two status fields serve different purposes:
-  //   - `document.status`           → upload lifecycle (uploaded → processing → completed / failed)
-  //   - `document.processing_status` → pipeline granular status (pending → processing → completed / failed)
-  // We use `document.status` for action-button visibility (e.g. "Start Processing",
-  // "Chat with Document") and `processing_status` for the ProcessingStatusPanel display.
   const processingStatus = document.processing_status ?? 'pending';
 
   return (
@@ -262,43 +246,43 @@ export default function DocumentDetailPage() {
 
       {/* ── Title + filename ─────────────────────────────────────────── */}
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">{document.title}</h1>
-        <p className="mt-1 text-muted-foreground">
+        <h1 className="text-2xl font-bold tracking-tight">{document.title}</h1>
+        <p className="mt-1 text-sm text-muted-foreground/70">
           {document.original_filename}
         </p>
       </div>
 
       {/* ── Metadata section ─────────────────────────────────────────── */}
-      <Card>
+      <Card className="border-border/60">
         <CardContent className="p-5">
           <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-4">
             <div>
-              <span className="text-muted-foreground">Size:</span>{" "}
+              <span className="text-muted-foreground/60">Size:</span>{" "}
               <span className="font-medium">
                 {formatFileSize(document.file_size)}
               </span>
             </div>
             <div>
-              <span className="text-muted-foreground">Pages:</span>{" "}
+              <span className="text-muted-foreground/60">Pages:</span>{" "}
               <span className="font-medium">
                 {document.total_pages !== null ? document.total_pages : "—"}
               </span>
             </div>
             <div>
-              <span className="text-muted-foreground">Uploaded:</span>{" "}
+              <span className="text-muted-foreground/60">Uploaded:</span>{" "}
               <span className="font-medium">
                 {formatDate(document.created_at)}
               </span>
             </div>
             <div>
-              <span className="text-muted-foreground">Status:</span>{" "}
+              <span className="text-muted-foreground/60">Status:</span>{" "}
               <StatusBadge status={processingStatus} />
             </div>
           </div>
 
           {/* ── Error message on document ────────────────────────────── */}
           {document.error_message && (
-            <p className="mt-3 text-sm text-red-600">
+            <p className="mt-3 text-sm text-red-600/80">
               {document.error_message}
             </p>
           )}
@@ -322,7 +306,7 @@ export default function DocumentDetailPage() {
       {/* ── Action buttons ───────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-3">
         {document.status === 'completed' && (
-          <Button onClick={handleStartChat}>
+          <Button onClick={handleStartChat} className="rounded-lg">
             <MessageSquare className="mr-2 h-4 w-4" />
             Chat with Document
           </Button>
@@ -331,6 +315,7 @@ export default function DocumentDetailPage() {
         <Button
           variant="destructive"
           onClick={handleDeleteClick}
+          className="rounded-lg"
         >
           <Trash2 className="mr-2 h-4 w-4" />
           Delete

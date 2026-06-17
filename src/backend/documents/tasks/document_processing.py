@@ -1005,11 +1005,34 @@ def extract_text_from_pdf(self, document_id: str) -> str:
             # Store placeholder text (will be replaced if VLM succeeds)
             page_results.append(f"[PAGE {page_num + 1}]\n{text}")
 
+            # ── Report PASS 1 progress (PyMuPDF extraction) ──────────────
+            # Progress is calculated as a fraction of total pages.
+            # After this pass, if garbled pages exist, progress will be
+            # recalculated below to reflect the REAL total work
+            # (non-garbled pages via PyMuPDF + garbled pages via VLM).
+            try:
+                page_progress = int((page_num + 1) / num_pages * 100)
+                processing_task.progress = page_progress
+                processing_task.save(update_fields=["progress"])
+            except Exception:
+                pass  # Non-critical — don't fail extraction if progress save fails
+
         # ------------------------------------------------------------------
         # PASS 2: Batch-process all garbled pages via VLM (single API call
         # per batch of 4 pages — much faster than sequential per-page calls).
         # ------------------------------------------------------------------
+        non_garbled_count = num_pages - len(garbled_page_indices)
+
         if garbled_page_indices and vision_enabled:
+            # Recalculate progress to reflect REAL total work:
+            # non-garbled pages (PyMuPDF, already done) + garbled pages (VLM, pending).
+            # This "drops" progress from 100% to the true % of completed work.
+            try:
+                real_progress = int(non_garbled_count / num_pages * 100)
+                processing_task.progress = real_progress
+                processing_task.save(update_fields=["progress"])
+            except Exception:
+                pass
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
             try:
@@ -1026,6 +1049,9 @@ def extract_text_from_pdf(self, document_id: str) -> str:
                 # Process garbled pages in parallel using ThreadPoolExecutor.
                 # VLM API calls are I/O-bound (HTTP requests), so threading
                 # provides near-linear speedup: 16 pages / 4 workers = 4 rounds.
+                completed_vlm = 0
+                total_garbled = len(garbled_page_indices)
+
                 with ThreadPoolExecutor(max_workers=4) as executor:
                     futures = {
                         executor.submit(
@@ -1040,6 +1066,18 @@ def extract_text_from_pdf(self, document_id: str) -> str:
                         page_idx = futures[future]
                         vl_result = future.result()
                         page_num_1based = page_idx + 1
+                        completed_vlm += 1
+
+                        # ── Report PASS 2 progress (VLM garbled pages) ────
+                        # Progress = (non_garbled via PyMuPDF + completed via VLM) / total pages
+                        try:
+                            vlm_progress = int(
+                                (non_garbled_count + completed_vlm) / num_pages * 100
+                            )
+                            processing_task.progress = vlm_progress
+                            processing_task.save(update_fields=["progress"])
+                        except Exception:
+                            pass
 
                         if vl_result.text and len(vl_result.text.strip()) > 10:
                             vl_text = vl_result.text
@@ -1190,10 +1228,11 @@ def extract_text_from_pdf(self, document_id: str) -> str:
             num_pages,
         )
 
-        # Mark the ProcessingTask as completed.
+        # Mark the ProcessingTask as completed with final progress.
         processing_task.status = "completed"
+        processing_task.progress = 100
         processing_task.completed_at = timezone.now()
-        processing_task.save(update_fields=["status", "completed_at"])
+        processing_task.save(update_fields=["status", "progress", "completed_at"])
 
         log_milestone(
             logger, document_id, "Extraction complete",

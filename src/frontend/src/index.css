@@ -4,48 +4,84 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* ── Background: warm off-white ─────────────────────────────────── */
+    --background: 40 23% 97%;           /* #F7F5F2 */
+    --foreground: 220 15% 16%;          /* #23262B */
+
+    /* ── Cards: clean white ─────────────────────────────────────────── */
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 220 15% 16%;
+
+    /* ── Popover ────────────────────────────────────────────────────── */
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
-    --radius: 0.5rem;
+    --popover-foreground: 220 15% 16%;
+
+    /* ── Primary: warm, soft blue (like Claude's accent) ────────────── */
+    --primary: 220 70% 52%;             /* #4A7CF7 */
+    --primary-foreground: 0 0% 100%;
+
+    /* ── Secondary: soft warm gray ──────────────────────────────────── */
+    --secondary: 40 15% 94%;            /* #F0EEEB */
+    --secondary-foreground: 220 15% 24%;
+
+    /* ── Muted: subtle warm ─────────────────────────────────────────── */
+    --muted: 40 12% 92%;               /* #EAE8E5 */
+    --muted-foreground: 220 8% 54%;    /* #82868D */
+
+    /* ── Accent: soft lavender-blue ─────────────────────────────────── */
+    --accent: 220 40% 96%;             /* #F0F4FF */
+    --accent-foreground: 220 70% 40%;
+
+    /* ── Destructive: clean red ─────────────────────────────────────── */
+    --destructive: 0 75% 58%;           /* #E65353 */
+    --destructive-foreground: 0 0% 100%;
+
+    /* ── Borders & Inputs ───────────────────────────────────────────── */
+    --border: 40 12% 88%;              /* #E0DEDB */
+    --input: 40 12% 88%;
+    --ring: 220 70% 52%;
+
+    /* ── Sizing ─────────────────────────────────────────────────────── */
+    --radius: 0.75rem;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
+    /* ── Background: deep dark ──────────────────────────────────────── */
+    --background: 220 15% 10%;          /* #15171C */
+    --foreground: 220 10% 92%;          /* #E8EAED */
+
+    /* ── Cards ──────────────────────────────────────────────────────── */
+    --card: 220 15% 13%;                /* #1C1E24 */
+    --card-foreground: 220 10% 92%;
+
+    /* ── Popover ────────────────────────────────────────────────────── */
+    --popover: 220 15% 13%;
+    --popover-foreground: 220 10% 92%;
+
+    /* ── Primary: warm blue glow ────────────────────────────────────── */
+    --primary: 220 70% 55%;             /* #5A8AFF */
+    --primary-foreground: 0 0% 100%;
+
+    /* ── Secondary ──────────────────────────────────────────────────── */
+    --secondary: 220 12% 20%;           /* #2D3037 */
+    --secondary-foreground: 220 10% 88%;
+
+    /* ── Muted ──────────────────────────────────────────────────────── */
+    --muted: 220 10% 18%;              /* #26292E */
+    --muted-foreground: 220 8% 60%;    /* #8E9299 */
+
+    /* ── Accent ─────────────────────────────────────────────────────── */
+    --accent: 220 30% 20%;             /* #232D3E */
+    --accent-foreground: 220 60% 80%;
+
+    /* ── Destructive ────────────────────────────────────────────────── */
+    --destructive: 0 70% 45%;           /* #C23B3B */
+    --destructive-foreground: 0 0% 100%;
+
+    /* ── Borders ────────────────────────────────────────────────────── */
+    --border: 220 12% 22%;
+    --input: 220 12% 22%;
+    --ring: 220 70% 55%;
   }
 }
 
@@ -53,8 +89,159 @@
   * {
     @apply border-border;
   }
+
+  /* ── Scrollbar ──────────────────────────────────────────────────────── */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.3);
+    border-radius: 3px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.5);
+  }
+
+  /* ── Selection ──────────────────────────────────────────────────────── */
+  ::selection {
+    background-color: hsl(var(--primary) / 0.15);
+    color: hsl(var(--foreground));
+  }
+
+  /* ── Body ────────────────────────────────────────────────────────────── */
   body {
-    @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1, "cv11" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* ── Smooth scrolling ───────────────────────────────────────────────── */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* ── Focus ring ──────────────────────────────────────────────────────── */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* ── Links ────────────────────────────────────────────────────────────── */
+  a {
+    @apply text-primary transition-colors hover:text-primary/80;
+  }
+
+  /* ── Prose overrides for markdown content ───────────────────────────── */
+  .prose {
+    --tw-prose-body: hsl(var(--foreground));
+    --tw-prose-headings: hsl(var(--foreground));
+    --tw-prose-bold: hsl(var(--foreground));
+    --tw-prose-links: hsl(var(--primary));
+    --tw-prose-code: hsl(var(--foreground));
+    --tw-prose-pre-bg: hsl(var(--muted));
+    --tw-prose-quotes: hsl(var(--muted-foreground));
+    --tw-prose-quote-borders: hsl(var(--border));
+  }
+
+  .prose code {
+    @apply bg-muted/50 px-1.5 py-0.5 rounded text-sm font-normal;
+  }
+
+  .prose pre {
+    @apply border border-border;
+  }
+}
+
+/* ── Chat-specific prose (narrower containers) ──────────────────────────── */
+@layer components {
+  .prose-chat {
+    @apply prose prose-sm max-w-none;
+  }
+
+  .prose-chat p {
+    @apply leading-relaxed mb-3 last:mb-0;
+  }
+
+  .prose-chat ul, .prose-chat ol {
+    @apply my-2 pl-5;
+  }
+
+  .prose-chat li {
+    @apply mb-1 last:mb-0;
+  }
+
+  /* ── Thinking indicator animation ───────────────────────────────────── */
+  .thinking-dot {
+    @apply inline-block w-1.5 h-1.5 rounded-full bg-current;
+    animation: thinking-pulse 1.4s ease-in-out infinite;
+  }
+
+  .thinking-dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .thinking-dot:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+
+  @keyframes thinking-pulse {
+    0%, 80%, 100% {
+      opacity: 0.3;
+      transform: scale(0.85);
+    }
+    40% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  /* ── Skeleton shimmer ────────────────────────────────────────────────── */
+  .shimmer {
+    @apply relative overflow-hidden;
+  }
+
+  .shimmer::after {
+    content: '';
+    @apply absolute inset-0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--muted-foreground) / 0.08),
+      transparent
+    );
+    animation: shimmer 2s infinite;
+  }
+
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+
+  /* ── Message fade-in ────────────────────────────────────────────────── */
+  @keyframes message-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-message-in {
+    animation: message-in 0.25s ease-out;
   }
 }

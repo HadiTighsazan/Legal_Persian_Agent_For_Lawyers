@@ -40,7 +40,7 @@ export default function DocumentCard({ document }: DocumentCardProps) {
 
   return (
     <Card
-      className="cursor-pointer transition-shadow hover:shadow-md"
+      className="cursor-pointer transition-all duration-200 hover:shadow-md hover:border-primary/20 border-border/60"
       onClick={handleClick}
     >
       <CardContent className="p-5">
@@ -49,7 +49,7 @@ export default function DocumentCard({ document }: DocumentCardProps) {
             <h3 className="truncate text-base font-semibold text-foreground">
               {document.title}
             </h3>
-            <p className="mt-0.5 truncate text-sm text-muted-foreground">
+            <p className="mt-0.5 truncate text-sm text-muted-foreground/70">
               {document.original_filename}
             </p>
           </div>
@@ -58,17 +58,17 @@ export default function DocumentCard({ document }: DocumentCardProps) {
 
         <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           <div>
-            <span className="text-muted-foreground">Size:</span>{" "}
+            <span className="text-muted-foreground/60">Size:</span>{" "}
             <span className="font-medium">{formatFileSize(document.file_size)}</span>
           </div>
           <div>
-            <span className="text-muted-foreground">Pages:</span>{" "}
+            <span className="text-muted-foreground/60">Pages:</span>{" "}
             <span className="font-medium">
               {document.total_pages !== null ? document.total_pages : "—"}
             </span>
           </div>
           <div className="col-span-2">
-            <span className="text-muted-foreground">Uploaded:</span>{" "}
+            <span className="text-muted-foreground/60">Uploaded:</span>{" "}
             <span className="font-medium">{formatDate(document.created_at)}</span>
           </div>
         </div>

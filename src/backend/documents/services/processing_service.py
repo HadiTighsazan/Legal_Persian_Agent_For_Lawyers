@@ -73,15 +73,18 @@ def heal_task_from_celery(task: ProcessingTask) -> None:
 
 
 def _task_progress(task: ProcessingTask) -> int:
-    """Return the progress percentage for a single task."""
-    if task.status == "completed":
-        return 100
-    elif task.status == "failed":
-        return 0
-    elif task.status == "running":
+    """Return the progress percentage for a single task.
+
+    For completed or running tasks, returns the actual stored ``task.progress``
+    (set by the worker during per-step updates). This lets the frontend see
+    real-time progress (e.g., "page 5 of 25" = 20%) even if the final
+    completion save sets progress=100.
+
+    For failed/pending/cancelled, returns 0.
+    """
+    if task.status in ("completed", "running"):
         return task.progress
-    else:  # pending or cancelled
-        return 0
+    return 0  # failed, pending, cancelled
 
 
 def build_task_data(tasks: list[ProcessingTask]) -> list[dict[str, Any]]:

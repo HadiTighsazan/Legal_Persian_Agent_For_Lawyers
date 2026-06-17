@@ -83,42 +83,56 @@ export default function MessageInput({
   const showCharCounter = value.length > CHAR_COUNTER_THRESHOLD;
 
   return (
-    <div className="flex items-end gap-2 border-t bg-background p-4">
-      <div className="relative flex-1">
-        <Textarea
-          ref={textareaRef}
-          value={value}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          placeholder={isDisabled ? 'Waiting for response...' : placeholder}
-          disabled={isDisabled}
-          rows={1}
+    <div className="border-t border-border/60 bg-background/80 backdrop-blur-sm px-4 py-3">
+      <div className="relative mx-auto max-w-3xl">
+        <div
           className={cn(
-            'min-h-[40px] resize-none py-2 pr-12 text-sm',
-            'scrollbar-thin',
+            'flex items-end gap-2 rounded-2xl border bg-card px-4 py-2 shadow-sm transition-all duration-200',
+            value.trim().length > 0
+              ? 'border-primary/30 shadow-md ring-1 ring-primary/10'
+              : 'border-border/60 hover:border-border',
+            isDisabled && 'opacity-60',
           )}
-          aria-label="Ask a question"
-        />
+        >
+          <Textarea
+            ref={textareaRef}
+            value={value}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            placeholder={isDisabled ? 'Waiting for response...' : placeholder}
+            disabled={isDisabled}
+            rows={1}
+            className={cn(
+              'min-h-[24px] resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0',
+              'scrollbar-thin placeholder:text-muted-foreground/40',
+            )}
+            aria-label="Ask a question"
+          />
+          <Button
+            onClick={handleSubmit}
+            disabled={isEmpty || isDisabled}
+            size="icon"
+            className={cn(
+              'shrink-0 rounded-xl transition-all duration-200',
+              !isEmpty && !isDisabled && 'bg-primary hover:bg-primary/90 shadow-sm',
+            )}
+            aria-label={isDisabled ? 'Waiting for response' : 'Send message'}
+          >
+            {isDisabled ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <SendHorizontal className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+
         {/* Character counter */}
         {showCharCounter && (
-          <div className="absolute bottom-1 right-3 text-[10px] text-muted-foreground/60 pointer-events-none select-none">
+          <div className="absolute -bottom-5 right-1 text-[10px] text-muted-foreground/50 select-none">
             {value.length.toLocaleString()} / {MAX_CHARS.toLocaleString()}
           </div>
         )}
       </div>
-      <Button
-        onClick={handleSubmit}
-        disabled={isEmpty || isDisabled}
-        size="icon"
-        className="shrink-0"
-        aria-label={isDisabled ? 'Waiting for response' : 'Send message'}
-      >
-        {isDisabled ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <SendHorizontal className="h-4 w-4" />
-        )}
-      </Button>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import {
   listConversations,
   createConversation as apiCreateConversation,
@@ -22,6 +23,27 @@ function generateTempId(): string {
   } catch {
     return 'temp-' + Date.now().toString() + '-' + Math.random().toString(36).slice(2, 9);
   }
+}
+
+/**
+ * Derive a conversation title from the first user message.
+ * Takes the first ~50 characters, truncated at a word boundary.
+ * Returns null if the message is empty.
+ */
+function deriveTitleFromMessage(content: string): string | null {
+  const trimmed = content.trim();
+  if (!trimmed) return null;
+
+  const maxLen = 50;
+  if (trimmed.length <= maxLen) return trimmed;
+
+  // Truncate at the last space before maxLen
+  const truncated = trimmed.slice(0, maxLen);
+  const lastSpace = truncated.lastIndexOf(' ');
+  if (lastSpace > 20) {
+    return truncated.slice(0, lastSpace) + '...';
+  }
+  return truncated + '...';
 }
 
 // ── State & Actions Types ──────────────────────────────────────────────
@@ -51,6 +73,13 @@ interface ConversationActions {
   clearError: () => void;
 }
 
+// ── Persisted State ────────────────────────────────────────────────────
+// Only these fields survive page reload:
+interface PersistedConversationState {
+  conversations: Conversation[];
+  activeConversation: ConversationDetail | null;
+}
+
 type ConversationStore = ConversationState & ConversationActions;
 
 // ── Initial State ──────────────────────────────────────────────────────
@@ -70,252 +99,285 @@ const initialState: ConversationState = {
 
 // ── Store ──────────────────────────────────────────────────────────────
 
-export const useConversationStore = create<ConversationStore>((set) => ({
-  ...initialState,
+export const useConversationStore = create<ConversationStore>()(
+  persist(
+    (set) => ({
+      ...initialState,
 
-  fetchConversations: async (documentId?: string, mode?: RagMode): Promise<void> => {
-    set({ isLoadingConversations: true, error: null });
-    try {
-      const data = await listConversations(documentId, 1, mode);
-      set({ conversations: data.results, isLoadingConversations: false });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Failed to fetch conversations';
-      set({ error: message, isLoadingConversations: false });
-    }
-  },
+      fetchConversations: async (documentId?: string, mode?: RagMode): Promise<void> => {
+        set({ isLoadingConversations: true, error: null });
+        try {
+          const data = await listConversations(documentId, 1, mode);
+          set({ conversations: data.results, isLoadingConversations: false });
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : 'Failed to fetch conversations';
+          set({ error: message, isLoadingConversations: false });
+        }
+      },
 
-  createConversation: async (documentId?: string, title?: string, mode?: RagMode): Promise<Conversation> => {
-    set({ isCreatingConversation: true, error: null });
-    try {
-      const newConv = await apiCreateConversation(documentId, title, mode);
-      set((state) => ({
-        conversations: [newConv, ...state.conversations],
-        isCreatingConversation: false,
-      }));
-      return newConv;
-    } catch (error: unknown) {
-      set({ isCreatingConversation: false });
-      throw error;
-    }
-  },
+      createConversation: async (documentId?: string, title?: string, mode?: RagMode): Promise<Conversation> => {
+        set({ isCreatingConversation: true, error: null });
+        try {
+          const newConv = await apiCreateConversation(documentId, title, mode);
+          set((state) => ({
+            conversations: [newConv, ...state.conversations],
+            isCreatingConversation: false,
+          }));
+          return newConv;
+        } catch (error: unknown) {
+          set({ isCreatingConversation: false });
+          throw error;
+        }
+      },
 
-  loadConversation: async (conversationId: string): Promise<void> => {
-    set({ isLoadingMessages: true, error: null });
-    try {
-      const data = await getConversation(conversationId);
-      set({ activeConversation: data, isLoadingMessages: false });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Failed to load conversation';
-      set({ error: message, isLoadingMessages: false });
-    }
-  },
+      loadConversation: async (conversationId: string): Promise<void> => {
+        set({ isLoadingMessages: true, error: null });
+        try {
+          const data = await getConversation(conversationId);
+          set({ activeConversation: data, isLoadingMessages: false });
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : 'Failed to load conversation';
+          set({ error: message, isLoadingMessages: false });
+        }
+      },
 
-  sendMessage: async (conversationId: string, content: string, mode?: RagMode): Promise<void> => {
-    const tempId = generateTempId();
+      sendMessage: async (conversationId: string, content: string, mode?: RagMode): Promise<void> => {
+        const tempId = generateTempId();
+        const needsTitle = deriveTitleFromMessage(content);
 
-    const optimisticMessage: Message = {
-      id: tempId,
-      role: 'user',
-      content,
-      sources: [],
-      token_usage: null,
-      created_at: new Date().toISOString(),
-    };
+        const optimisticMessage: Message = {
+          id: tempId,
+          role: 'user',
+          content,
+          sources: [],
+          token_usage: null,
+          created_at: new Date().toISOString(),
+        };
 
-    set((state) => ({
-      isSendingMessage: true,
-      thinkingStatus: 'Processing your request...',
-      thinkingReasoning: null,
-      error: null,
-      activeConversation: state.activeConversation
-        ? {
-            ...state.activeConversation,
-            messages: [...state.activeConversation.messages, optimisticMessage],
-          }
-        : null,
-    }));
+        set((state) => ({
+          isSendingMessage: true,
+          thinkingStatus: 'Processing your request...',
+          thinkingReasoning: null,
+          error: null,
+          activeConversation: state.activeConversation
+            ? {
+                ...state.activeConversation,
+                messages: [...state.activeConversation.messages, optimisticMessage],
+              }
+            : null,
+        }));
 
-    try {
-      const assistantMessage = await apiSendMessage(conversationId, content, mode);
+        try {
+          const assistantMessage = await apiSendMessage(conversationId, content, mode);
 
-      set((state) => ({
-        isSendingMessage: false,
-        thinkingStatus: null,
-        thinkingReasoning: null,
-        activeConversation: state.activeConversation
-          ? {
-              ...state.activeConversation,
-              messages: [...state.activeConversation.messages, assistantMessage],
-            }
-          : null,
-      }));
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Failed to send message';
-
-      set((state) => ({
-        isSendingMessage: false,
-        thinkingStatus: null,
-        thinkingReasoning: null,
-        error: message,
-        activeConversation: state.activeConversation
-          ? {
-              ...state.activeConversation,
-              messages: state.activeConversation.messages.filter((m) => m.id !== tempId),
-            }
-          : null,
-      }));
-    }
-  },
-
-  sendMessageStream: async (conversationId: string, content: string, mode?: RagMode): Promise<void> => {
-    const tempId = generateTempId();
-    const tempAssistantId = 'temp-assistant-' + crypto.randomUUID();
-
-    const optimisticMessage: Message = {
-      id: tempId,
-      role: 'user',
-      content,
-      sources: [],
-      token_usage: null,
-      created_at: new Date().toISOString(),
-    };
-
-    const tempAssistantMessage: Message = {
-      id: tempAssistantId,
-      role: 'assistant',
-      content: '',
-      sources: [],
-      token_usage: null,
-      created_at: new Date().toISOString(),
-    };
-
-    set((state) => ({
-      isSendingMessage: true,
-      streamingContent: '',
-      thinkingStatus: null,
-      thinkingReasoning: null,
-      error: null,
-      activeConversation: state.activeConversation
-        ? {
-            ...state.activeConversation,
-            messages: [...state.activeConversation.messages, optimisticMessage, tempAssistantMessage],
-          }
-        : null,
-    }));
-
-    return new Promise<void>((resolve, reject) => {
-      apiSendMessageStream(
-        conversationId,
-        content,
-        // onToken
-        (token: string) => {
-          set((state) => {
-            const newStreamingContent = state.streamingContent + token;
-            return {
-              streamingContent: newStreamingContent,
-              activeConversation: state.activeConversation
-                ? {
-                    ...state.activeConversation,
-                    messages: state.activeConversation.messages.map((msg) =>
-                      msg.id === tempAssistantId
-                        ? { ...msg, content: newStreamingContent }
-                        : msg,
-                    ),
-                  }
-                : null,
-            };
-          });
-        },
-        // onDone
-        (data: { message_id: string; sources: MessageSource[]; token_usage: TokenUsage }) => {
           set((state) => ({
             isSendingMessage: false,
-            streamingContent: '',
             thinkingStatus: null,
             thinkingReasoning: null,
             activeConversation: state.activeConversation
               ? {
                   ...state.activeConversation,
-                  messages: state.activeConversation.messages.map((msg) =>
-                    msg.id === tempAssistantId
-                      ? {
-                          ...msg,
-                          id: data.message_id,
-                          sources: data.sources,
-                          token_usage: data.token_usage,
-                        }
-                      : msg,
-                  ),
+                  messages: [...state.activeConversation.messages, assistantMessage],
                 }
               : null,
           }));
-          resolve();
-        },
-        // onError
-        (error: Error) => {
+
+          // ── Auto-rename untitled conversations after first message ──
+          if (needsTitle) {
+            const st = useConversationStore.getState();
+            const conv = st.activeConversation;
+            if (conv && (!conv.title || conv.title.trim() === '')) {
+              st.renameConversation(conversationId, needsTitle);
+            }
+          }
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : 'Failed to send message';
+
           set((state) => ({
             isSendingMessage: false,
-            streamingContent: '',
             thinkingStatus: null,
             thinkingReasoning: null,
-            error: error.message,
+            error: message,
             activeConversation: state.activeConversation
               ? {
                   ...state.activeConversation,
-                  messages: state.activeConversation.messages.filter(
-                    (m) => m.id !== tempAssistantId && m.id !== tempId,
-                  ),
+                  messages: state.activeConversation.messages.filter((m) => m.id !== tempId),
                 }
               : null,
           }));
-          reject(error);
-        },
-        mode,
-        // onProgress
-        (status: string, reasoning?: string) => {
-          set({ thinkingStatus: status, thinkingReasoning: reasoning ?? null });
-        },
-      );
-    });
-  },
+        }
+      },
 
-  renameConversation: async (conversationId: string, title: string): Promise<void> => {
-    try {
-      const updated = await apiRenameConversation(conversationId, title);
-      set((state) => ({
-        conversations: state.conversations.map((c) =>
-          c.id === conversationId ? { ...c, title: updated.title } : c,
-        ),
-        activeConversation:
-          state.activeConversation?.id === conversationId
-            ? { ...state.activeConversation, title: updated.title }
-            : state.activeConversation,
-      }));
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Failed to rename conversation';
-      set({ error: message });
-    }
-  },
+      sendMessageStream: async (conversationId: string, content: string, mode?: RagMode): Promise<void> => {
+        const tempId = generateTempId();
+        const tempAssistantId = 'temp-assistant-' + crypto.randomUUID();
+        const needsTitle = deriveTitleFromMessage(content);
 
-  deleteConversation: async (conversationId: string): Promise<void> => {
-    try {
-      await apiDeleteConversation(conversationId);
-      set((state) => ({
-        conversations: state.conversations.filter((c) => c.id !== conversationId),
-        activeConversation:
-          state.activeConversation?.id === conversationId ? null : state.activeConversation,
-      }));
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Failed to delete conversation';
-      set({ error: message });
-    }
-  },
+        const optimisticMessage: Message = {
+          id: tempId,
+          role: 'user',
+          content,
+          sources: [],
+          token_usage: null,
+          created_at: new Date().toISOString(),
+        };
 
-  clearActiveConversation: (): void => {
-    set({ activeConversation: null });
-  },
+        const tempAssistantMessage: Message = {
+          id: tempAssistantId,
+          role: 'assistant',
+          content: '',
+          sources: [],
+          token_usage: null,
+          created_at: new Date().toISOString(),
+        };
 
-  clearError: (): void => {
-    set({ error: null });
-  },
-}));
+        set((state) => ({
+          isSendingMessage: true,
+          streamingContent: '',
+          thinkingStatus: null,
+          thinkingReasoning: null,
+          error: null,
+          activeConversation: state.activeConversation
+            ? {
+                ...state.activeConversation,
+                messages: [...state.activeConversation.messages, optimisticMessage, tempAssistantMessage],
+              }
+            : null,
+        }));
+
+        return new Promise<void>((resolve, reject) => {
+          apiSendMessageStream(
+            conversationId,
+            content,
+            // onToken
+            (token: string) => {
+              set((state) => {
+                const newStreamingContent = state.streamingContent + token;
+                return {
+                  streamingContent: newStreamingContent,
+                  activeConversation: state.activeConversation
+                    ? {
+                        ...state.activeConversation,
+                        messages: state.activeConversation.messages.map((msg) =>
+                          msg.id === tempAssistantId
+                            ? { ...msg, content: newStreamingContent }
+                            : msg,
+                        ),
+                      }
+                    : null,
+                };
+              });
+            },
+            // onDone
+            (data: { message_id: string; sources: MessageSource[]; token_usage: TokenUsage }) => {
+              set((state) => ({
+                isSendingMessage: false,
+                streamingContent: '',
+                thinkingStatus: null,
+                thinkingReasoning: null,
+                activeConversation: state.activeConversation
+                  ? {
+                      ...state.activeConversation,
+                      messages: state.activeConversation.messages.map((msg) =>
+                        msg.id === tempAssistantId
+                          ? {
+                              ...msg,
+                              id: data.message_id,
+                              sources: data.sources,
+                              token_usage: data.token_usage,
+                            }
+                          : msg,
+                      ),
+                    }
+                  : null,
+              }));
+
+              // ── Auto-rename untitled conversations after first message ──
+              if (needsTitle) {
+                const st = useConversationStore.getState();
+                const conv = st.activeConversation;
+                if (conv && (!conv.title || conv.title.trim() === '')) {
+                  st.renameConversation(conversationId, needsTitle);
+                }
+              }
+
+              resolve();
+            },
+            // onError
+            (error: Error) => {
+              set((state) => ({
+                isSendingMessage: false,
+                streamingContent: '',
+                thinkingStatus: null,
+                thinkingReasoning: null,
+                error: error.message,
+                activeConversation: state.activeConversation
+                  ? {
+                      ...state.activeConversation,
+                      messages: state.activeConversation.messages.filter(
+                        (m) => m.id !== tempAssistantId && m.id !== tempId,
+                      ),
+                    }
+                  : null,
+              }));
+              reject(error);
+            },
+            mode,
+            // onProgress
+            (status: string, reasoning?: string) => {
+              set({ thinkingStatus: status, thinkingReasoning: reasoning ?? null });
+            },
+          );
+        });
+      },
+
+      renameConversation: async (conversationId: string, title: string): Promise<void> => {
+        try {
+          const updated = await apiRenameConversation(conversationId, title);
+          set((state) => ({
+            conversations: state.conversations.map((c) =>
+              c.id === conversationId ? { ...c, title: updated.title } : c,
+            ),
+            activeConversation:
+              state.activeConversation?.id === conversationId
+                ? { ...state.activeConversation, title: updated.title }
+                : state.activeConversation,
+          }));
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : 'Failed to rename conversation';
+          set({ error: message });
+        }
+      },
+
+      deleteConversation: async (conversationId: string): Promise<void> => {
+        try {
+          await apiDeleteConversation(conversationId);
+          set((state) => ({
+            conversations: state.conversations.filter((c) => c.id !== conversationId),
+            activeConversation:
+              state.activeConversation?.id === conversationId ? null : state.activeConversation,
+          }));
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : 'Failed to delete conversation';
+          set({ error: message });
+        }
+      },
+
+      clearActiveConversation: (): void => {
+        set({ activeConversation: null });
+      },
+
+      clearError: (): void => {
+        set({ error: null });
+      },
+    }),
+    {
+      name: 'docuchat-conversations',
+      // Only persist data fields — never persist loading/streaming/error state
+      partialize: (state): PersistedConversationState => ({
+        conversations: state.conversations,
+        activeConversation: state.activeConversation,
+      }),
+    },
+  ),
+);
