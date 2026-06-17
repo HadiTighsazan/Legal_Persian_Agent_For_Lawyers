@@ -3,9 +3,12 @@ Celery tasks for the document processing pipeline.
 
 Provides two Celery tasks:
 - ``extract_text_from_pdf`` — opens a PDF with PyMuPDF (RTL-aware), extracts text
-  page-by-page with ``[PAGE N]`` markers, with automatic fallback to pdfplumber
-  and Tesseract OCR for garbled Persian text. For scanned PDFs (no selectable
-  text), routes to the EasyOCR pipeline with layout-aware assembly.
+  **per-page** with ``[PAGE N]`` markers. For garbled pages (broken /ToUnicode
+  CMap in Persian PDFs), falls back to a Vision-Language Model (Qwen3 VL) via
+  OpenRouter for page-level image-to-text extraction.
+
+  This replaces the old multi-stage fallback chain (pdfplumber → Tesseract →
+  EasyOCR) with a single, page-level, VLM-based fallback path.
 - ``chunk_document`` — receives the extracted text, delegates to
   :class:`~documents.services.anchor_chunking_service.AnchorChunkingService`,
   and persists the resulting chunks via bulk create.
@@ -49,8 +52,10 @@ from documents.services.error_handler import (
 )
 from documents.services.non_text_filter import NonTextChunkFilter
 from documents.services.persian_normalizer import PersianNormalizer
+from documents.services.vision_extraction_service import (
+    VisionExtractionService,
+)
 from documents.storage import get_storage_backend
-from documents.utils.scanned_pdf_detector import is_scanned_pdf
 from tasks.models import ProcessingTask
 
 logger = logging.getLogger(__name__)
@@ -154,6 +159,112 @@ _VALID_PERSIAN_BIGRAMS: set = {
 # Arabic/Persian Unicode block
 _PERSIAN_UNICODE_RANGE = range(0x0600, 0x06FF + 1)
 
+# ---------------------------------------------------------------------------
+# Persian legal lexicon — used by _compute_lexicon_validity() as the 5th
+# quality signal.  Combines general Persian high-frequency words + legal
+# domain terms + common verbs/prepositions.
+#
+# This is the MOST reliable signal for CMap corruption: garbled glyph
+# indices produce tokens that simply don't exist in any Persian dictionary.
+# ---------------------------------------------------------------------------
+_PERSIAN_LEGAL_LEXICON: set = {
+    # --- General Persian function words ---
+    "از", "به", "در", "با", "برای", "و", "که", "این", "آن", "را",
+    "تا", "یا", "اما", "اگر", "البته", "باید", "شاید", "ممکن",
+    "بعد", "قبل", "زیر", "روی", "بین", "درباره", "مثل", "مانند",
+    "چون", "زیرا", "بنابراین", "پس", "خواهد", "می", "است", "شد",
+    "شود", "شده", "دارد", "داشت", "کرد", "کند", "گفت", "دهد",
+    "بود", "باشند", "باشد", "نیز", "هم", "حدود", "سایر", "غیر",
+    "هر", "تمام", "کل", "برخی", "بعضی", "چند", "چه", "چگونه",
+    "کجا", "کی", "چرا", "هیچ", "نه", "بله", "آری", "خیر",
+    "بر", "بدون", "جز", "جزء", "جزئی", "علت", "بابت", "جهت",
+    "نسبت", "مربوط", "مرتبط", "طی", "ضمن", "هنگام", "موقع",
+    "زمان", "مدت", "طرف", "سمت", "کنار", "داخل", "خارج", "بالا",
+    "پایین", "اول", "آخر", "ابتدای", "انتها", "وسط", "میان",
+    "قبل", "بعد", "فوق", "تحت", "پیش", "بیش", "کم", "زیاد",
+    "خیلی", "بسیار", "اندک", "تقریبا", "حداکثر", "حداقل",
+    "معادل", "مساوی", "مختلف", "متعدد", "عدیده",
+    "همین", "همان", "چنین", "چنان", "مانند", "مثل",
+    "تواند", "توانند", "می‌تواند", "می‌توانند",
+    "نمی‌تواند", "نمی‌توانند", "بایستی", "می‌بایست",
+    "هستند", "هستم", "هستی", "هستیم", "هستید",
+    # --- Legal domain terms ---
+    "دادگاه", "شعبه", "خواهان", "خوانده", "دادنامه", "پرونده",
+    "کلاسه", "رأی", "رای", "حکم", "قانون", "ماده", "تبصره",
+    "مصوب", "الزام", "محکوم", "مستند", "مستندات", "دلایل",
+    "ادعا", "دعوی", "دعوا", "درخواست", "اعتراض", "تجدیدنظر",
+    "فرجام", "وکالت", "وکیل", "مدعی", "منع", "قبول", "رد",
+    "ابطال", "تنفیذ", "استرداد", "تامین", "خسارت", "هزینه",
+    "دادرسی", "کارشناسی", "کارشناس", "شرح", "گردش", "کار",
+    "مندرج", "ذیل", "صدر", "مبنی", "مبنی‌بر", "نظریه",
+    "دادخواست", "شکایت", "متهم", "شاکی", "مشتکی‌عنه",
+    "محکوم‌علیه", "محکوم‌له", "منتقل‌علیه", "منتقل‌له",
+    "اجرت", "مثل", "وجه", "بهای", "ارزش", "مقدار", "مبلغ",
+    "ریال", "تومان", "میلیون", "میلیارد", "هزار", "صد",
+    "قرارداد", "توافق", "پیمان", "عهد", "ضمانت", "تضمین",
+    "اجاره", "فروش", "خرید", "بیع", "معامله", "صلح", "هبه",
+    "وقف", "وصیت", "ارث", "سهم", "حصه", "مال", "دارایی",
+    "منقول", "غیرمنقول", "منافع", "عین", "دین", "طلب",
+    "بدهی", "مطالبه", "وصول", "پرداخت", "تادیه", "ایفا",
+    "تعهد", "التزام", "ضمان", "مسئولیت", "مسئول", "مسوولیت",
+    "جبران", "غرامت", "جریمه", "مجازات", "کیفر", "حبس",
+    "زندان", "جزای", "نقدی", "شلاق", "اعدام", "قصاص",
+    "دیه", "ارش", "حکومت", "دولت", "جمهوری", "اسلامی",
+    "ایران", "تهران", "مرکز", "استان", "شهرستان", "بخش",
+    "اداره", "سازمان", "نهاد", "موسسه", "شرکت", "بنیاد",
+    # --- Common Persian verbs (past and present stems) ---
+    "است", "شد", "شود", "شده", "باشد", "بود", "باشند",
+    "دارد", "داشت", "دارند", "داشتند",
+    "کرد", "کند", "کنند", "کردند", "کنم", "کنی", "کند",
+    "گفت", "گوید", "گویند", "گفتند",
+    "داد", "دهد", "دهند", "دادند", "دهم", "دهی",
+    "رفت", "رود", "روند", "رفتند", "روم", "روی",
+    "آمد", "آید", "آیند", "آمدند", "آیم", "آیی",
+    "نوشت", "نویسد", "نویسند", "نوشتند",
+    "خواند", "خواند", "خوانند", "خواندند",
+    "خواست", "خواهد", "خواهند", "خواستند",
+    "دانست", "داند", "دانند", "دانستند",
+    "توانست", "تواند", "توانند", "توانستند",
+    "بست", "بندد", "بندند", "بستند",
+    "گرفته", "گرفت", "گیرد", "گیرند", "گرفتند",
+    "گذاشت", "گذارد", "گذارند", "گذاشتند",
+    "آورد", "آورد", "آورند", "آوردند",
+    "انداخت", "اندازد", "اندازند", "انداختند",
+    "افزود", "افزاید", "افزایند", "افزودند",
+    "کاست", "کاهد", "کاهند", "کاستند",
+    # --- Common Persian nouns ---
+    "انسان", "مردم", "شخص", "فرد", "نفر", "تن",
+    "نام", "نشان", "عنوان", "اسم", "لقب", "کنیه",
+    "زمین", "زمان", "مکان", "جا", "محل", "موضع",
+    "روز", "ماه", "سال", "هفته", "دقیقه", "ساعت",
+    "امروز", "دیروز", "فردا", "امسال", "پارسال",
+    "کتاب", "نوشته", "متن", "سند", "مدرک", "برگه",
+    "صفحه", "خط", "سطر", "کلمه", "واژه", "حرف",
+    "عدد", "رقم", "شماره", "شماره", "نمره", "کد",
+    "قسمت", "بخش", "فصل", "باب", "جزء",
+    "نوع", "گونه", "قسم", "صنف", "دسته", "رده",
+    "علت", "سبب", "دلیل", "جهت", "منظور", "هدف",
+    "قدرت", "اختیار", "اجازه", "اذن", "مجوز",
+    "حق", "تکلیف", "وظیفه", "مسئولیت", "بار",
+    "نفع", "ضرر", "زیان", "خسارت", "صدمه",
+    "امنیت", "آرامش", "نظم", "عدالت", "انصاف",
+    "اثبات", "نفی", "اثر", "نتیجه", "حاصل",
+    "شرط", "قید", "محدودیت", "استثنا",
+    "اصل", "قاعده", "ضابطه", "معیار", "ملاک",
+    "نماینده", "وکیل", "کارمند", "مستخدم", "کارگر",
+    "رئیس", "رییس", "مدیر", "مسئول", "مسوول", "سرپرست",
+    "عضو", "اعضا", "هیئت", "هیات", "مجمع", "شورا",
+    "گواهی", "شهادت", "گواه", "شاهد", "مطلع",
+    "سوگند", "قسامه", "یمین",
+    "اظهارنامه", "اظهار", "اظهارات",
+    "تصمیم", "قطعیت", "قطعی",
+    "تخلف", "انجام", "صدور", "ابلاغ", "اجرا",
+    "مهلت", "فرصت", "تاخیر", "تعویق", "تمدید",
+    "فسخ", "انحلال", "بطلان", "لغو",
+    "تفسیر", "تشریح", "تبیین", "توضیح",
+    "استعلام", "استعلام", "پاسخ", "جواب",
+}
+
 
 def _compute_stopword_ratio(text: str) -> float:
     """Compute the ratio of Persian stopwords in the text.
@@ -216,6 +327,51 @@ def _compute_bigram_plausibility(text: str) -> float:
         return 1.0
 
     return valid_count / total_bigrams
+
+
+def _compute_lexicon_validity(text: str) -> float:
+    """Compute the fraction of extracted Persian tokens that are valid words.
+
+    This is the **most reliable signal** for CMap corruption. When PyMuPDF
+    mis-extracts glyphs due to a broken /ToUnicode CMap, the resulting tokens
+    are random byte sequences that almost never match real Persian words.
+    By contrast, valid Persian text (even with some noise) has a high
+    proportion of dictionary-matching tokens.
+
+    Uses :data:`_PERSIAN_LEGAL_LEXICON` — a curated set of ~500 high-frequency
+    Persian words and legal domain terms.
+
+    Args:
+        text: The extracted text to evaluate.
+
+    Returns:
+        A float (0.0–1.0) representing the proportion of Persian tokens
+        that appear in the lexicon. Returns 0.0 if no Persian tokens found.
+    """
+    tokens = text.split()
+    if not tokens:
+        return 0.0
+
+    # Only consider tokens that contain at least one Persian character
+    persian_tokens: list[str] = []
+    for t in tokens:
+        if any(ord(c) in _PERSIAN_UNICODE_RANGE for c in t):
+            persian_tokens.append(t)
+
+    if not persian_tokens:
+        return 0.0
+
+    # Also strip common punctuation from each token before matching
+    import string  # noqa: PLC0415
+    _punctuation = string.punctuation + "،؛؟«»""''()[]{}"
+
+    valid_count = 0
+    for token in persian_tokens:
+        clean = token.strip(_punctuation)
+        if clean in _PERSIAN_LEGAL_LEXICON:
+            valid_count += 1
+
+    return valid_count / len(persian_tokens)
 
 
 def _compute_rtl_consistency(text: str) -> float:
@@ -394,19 +550,18 @@ def _fix_bidi_brackets(text: str) -> str:
 def _compute_persian_quality_score(text: str) -> float:
     """Compute a quality score (0.0 = garbage, 1.0 = perfect) for Persian text.
 
-    Combines multiple signals:
-    1. **Stopword ratio** (weight 0.50) — Most reliable signal. Valid Persian
-       text has frequent stopwords like ``از``, ``به``, ``در``, ``و``, ``که``.
-       Garbled/RTL-reversed text loses these stopwords because the character
-       sequence is reversed, making stopwords unrecognizable.
-    2. **Bigram plausibility** (weight 0.10) — Statistical bigram frequency.
-       NOTE: This signal is NOT reliable for RTL-reversed text (reversing
-       preserves bigrams), but helps detect other types of corruption like
-       random character substitution.
-    3. **RTL consistency** (weight 0.25) — Measures if Persian characters appear
-       in contiguous runs (words) vs isolated. Helps detect shattered text
-       (spaces between characters).
-    4. **Character entropy** (weight 0.15) — Garbled text often has higher
+    Combines **five** signals for robust garbled-text detection:
+
+    1. **Stopword ratio** (weight 0.30) — Most reliable for RTL-reversed text.
+       Persian stopwords like ``از``, ``به``, ``در`` disappear when reversed.
+    2. **Lexicon validity** (weight 0.25) — Most reliable for CMap corruption.
+       Garbled glyph indices produce tokens that don't exist in the Persian
+       legal lexicon. (NEW in v2 refactoring)
+    3. **Bigram plausibility** (weight 0.15) — Statistical bigram frequency.
+       Helps detect random character substitution.
+    4. **RTL consistency** (weight 0.20) — Detects shattered text where Persian
+       chars are isolated by spaces.
+    5. **Character entropy** (weight 0.10) — Garbled text often has higher
        entropy (more random character distribution).
 
     Args:
@@ -422,29 +577,29 @@ def _compute_persian_quality_score(text: str) -> float:
     signals = []
 
     # Signal 1: Stopword ratio (0.0–1.0)
-    # Most powerful signal for RTL-reversed text detection.
-    # In reversed text, stopwords like از, به, در become unrecognizable.
     stopword_ratio = _compute_stopword_ratio(text)
     signals.append(stopword_ratio)
 
-    # Signal 2: Bigram plausibility (0.0–1.0)
-    # Less reliable for RTL reversal, but helps with other corruption types.
+    # Signal 2: Lexicon validity (0.0–1.0)
+    # NEW — strongest signal for CMap corruption
+    lexicon_score = _compute_lexicon_validity(text)
+    signals.append(lexicon_score)
+
+    # Signal 3: Bigram plausibility (0.0–1.0)
     bigram_score = _compute_bigram_plausibility(text)
     signals.append(bigram_score)
 
-    # Signal 3: RTL consistency (0.0–1.0)
-    # Detects shattered text where Persian chars are isolated by spaces.
+    # Signal 4: RTL consistency (0.0–1.0)
     rtl_score = _compute_rtl_consistency(text)
     signals.append(rtl_score)
 
-    # Signal 4: Character entropy (0.0–1.0, inverted)
-    # High entropy indicates random character distribution.
+    # Signal 5: Character entropy (0.0–1.0, inverted)
     entropy = _compute_character_entropy(text)
     entropy_score = 1.0 - min(entropy / 5.0, 1.0)
     signals.append(entropy_score)
 
-    # Weighted combination — stopwords most reliable for RTL reversal
-    weights = [0.50, 0.10, 0.25, 0.15]
+    # Weighted combination (updated for 5 signals)
+    weights = [0.30, 0.25, 0.15, 0.20, 0.10]
     return sum(s * w for s, w in zip(signals, weights))
 
 
@@ -645,78 +800,8 @@ def _extract_with_pymupdf_rtl(pdf_document: fitz.Document) -> str:
     return "\n".join(page_texts)
 
 
-def _extract_with_pdfplumber(pdf_content: bytes) -> str:
-    """Fallback extraction using pdfplumber with RTL reshaping.
-
-    pdfplumber often preserves paragraph structure better for Persian PDFs
-    than PyMuPDF, especially for documents with complex RTL layouts.
-
-    Additionally uses ``arabic_reshaper`` and ``python-bidi`` to properly
-    reconstruct Persian/Arabic text from pdfplumber's output, which handles
-    RTL layout better than PyMuPDF for complex legal PDFs.
-
-    Args:
-        pdf_content: Raw PDF file bytes.
-
-    Returns:
-        Extracted text with ``[PAGE N]`` markers, with Persian/Arabic
-        text reshaped for proper RTL rendering.
-    """
-    import pdfplumber  # noqa: PLC0415
-
-    # Optional RTL reshaping — gracefully degrade if libraries not installed
-    try:
-        import arabic_reshaper  # noqa: PLC0415
-        from bidi.algorithm import get_display  # noqa: PLC0415
-        _reshaping_available = True
-    except ImportError:
-        _reshaping_available = False
-
-    with pdfplumber.open(io.BytesIO(pdf_content)) as pdf:
-        page_texts: list[str] = []
-        for i, page in enumerate(pdf.pages):
-            text = page.extract_text() or ""
-            # Reshape Persian/Arabic text for proper RTL rendering
-            if text.strip() and _reshaping_available:
-                try:
-                    reshaped = arabic_reshaper.reshape(text)
-                    text = get_display(reshaped)
-                except Exception:
-                    pass  # Fall back to raw text if reshaping fails
-            page_texts.append(f"[PAGE {i + 1}]\n{text}")
-    return "\n".join(page_texts)
-
-
-def _extract_with_tesseract(pdf_content: bytes) -> str:
-    """Fallback OCR extraction using Tesseract with Persian language pack.
-
-    Used as the last resort when both PyMuPDF and pdfplumber produce garbled
-    text (e.g., scanned PDFs or image-based documents).
-
-    Requires:
-    - ``pytesseract`` package
-    - Tesseract OCR installed on the system with Persian (fas) and Arabic (ara) language packs
-
-    Args:
-        pdf_content: Raw PDF file bytes.
-
-    Returns:
-        OCR-extracted text with ``[PAGE N]`` markers.
-    """
-    import pytesseract  # noqa: PLC0415
-    from pdf2image import convert_from_bytes  # noqa: PLC0415
-
-    images = convert_from_bytes(pdf_content)
-    page_texts: list[str] = []
-    for i, img in enumerate(images):
-        # Use both Persian and Arabic language packs for better coverage
-        text = pytesseract.image_to_string(img, lang="fas+ara")
-        page_texts.append(f"[PAGE {i + 1}]\n{text}")
-    return "\n".join(page_texts)
-
-
 # ---------------------------------------------------------------------------
-# Subtask 4a — Extract text from PDF
+# Subtask 4a — Extract text from PDF (page-level, VLM fallback)
 # ---------------------------------------------------------------------------
 
 
@@ -729,26 +814,26 @@ def _extract_with_tesseract(pdf_content: bytes) -> str:
     retry_jitter=True,
 )
 def extract_text_from_pdf(self, document_id: str) -> str:
-    """Open a PDF, extract text page-by-page, and return text with page markers.
+    """Open a PDF, extract text **per-page** with PyMuPDF + VLM fallback.
 
-    Uses a three-layer extraction strategy for Persian legal documents:
+    **Page-level extraction pipeline:**
 
-    1. **Primary: PyMuPDF with RTL flags** — Uses ``TEXT_PRESERVE_LIGATURES``
-       and ``TEXT_PRESERVE_WHITESPACE`` flags for better RTL support.
-    2. **Fallback 1: pdfplumber** — If PyMuPDF output has >30% isolated
-       Persian characters (heuristic), re-extract with pdfplumber.
-    3. **Fallback 2: Tesseract OCR** — If both PyMuPDF and pdfplumber fail,
-       fall back to OCR with Persian language pack.
+    1. **Primary: PyMuPDF with RTL flags** — Each page is extracted
+       individually using ``TEXT_PRESERVE_LIGATURES``,
+       ``TEXT_PRESERVE_WHITESPACE``, and ``TEXT_DEHYPHENATE`` flags.
+    2. **Quality check (5 signals)** — Each page's text is evaluated using
+       a multi-signal Persian quality score (stopwords, lexicon validity,
+       bigram plausibility, RTL consistency, character entropy).
+    3. **VLM fallback** — If a page's quality score is below threshold,
+       the page is rendered to a PNG image via PyMuPDF's
+       :meth:`~fitz.Page.get_pixmap` and sent to Qwen3 VL via OpenRouter
+       for vision-based text extraction. Only garbled pages are sent.
 
-    After extraction, the text is passed through :class:`PersianNormalizer` to
-    fix Tatweel, character variants, half-spaces, and control characters.
+    This replaces the old multi-stage fallback chain (pdfplumber →
+    Tesseract → EasyOCR) with a single, page-level, VLM-based path.
 
-    The returned string uses ``[PAGE N]`` markers so that downstream tasks
-    (chunking) can track which pages each chunk spans.
-
-    Transient database/storage errors are automatically retried up to 3 times
-    with exponential backoff. Permanent PDF errors (corrupted, password-protected)
-    are caught and marked as failed without retry.
+    After extraction, per-page normalization is applied, followed by
+    table extraction (PyMuPDF), bidi bracket fixes, and metadata storage.
 
     Args:
         document_id: The UUID (as a string) of the :class:`Document` to process.
@@ -756,10 +841,6 @@ def extract_text_from_pdf(self, document_id: str) -> str:
     Returns:
         The full extracted text with ``[PAGE N]`` markers inserted between pages.
         Returns an empty string for empty PDFs (0 pages).
-
-    Raises:
-        The task is marked as failed on error; exceptions are **not** re-raised
-        so the Celery worker does not retry indefinitely.
     """
     log_milestone(logger, document_id, "Starting extraction")
 
@@ -788,16 +869,14 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         processing_task.celery_task_id = self.request.id
         processing_task.status = "running"
         processing_task.started_at = timezone.now()
-        processing_task.save(update_fields=["celery_task_id", "status", "started_at"])
+        processing_task.save(
+            update_fields=["celery_task_id", "status", "started_at"]
+        )
 
     # Mark the document as processing.
     document.processing_status = "processing"
     document.status = "processing"
     document.save(update_fields=["processing_status", "status"])
-
-    # Initialize auto_fallback before any conditional branches to prevent
-    # NameError in exception fallback paths.
-    auto_fallback = True
 
     try:
         # Resolve the PDF content using the storage backend.
@@ -839,7 +918,8 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         num_pages = pdf_document.page_count
         if num_pages == 0:
             logger.info(
-                "extract_text_from_pdf: Document %s has 0 pages — returning empty string",
+                "extract_text_from_pdf: Document %s has 0 pages — "
+                "returning empty string",
                 document_id,
             )
             document.extracted_text_length = 0
@@ -850,9 +930,7 @@ def extract_text_from_pdf(self, document_id: str) -> str:
             return ""
 
         # ------------------------------------------------------------------
-        # Read PDF bytes early — before any conditional branches — to prevent
-        # stream consumption issues. Once read, use the saved bytes consistently
-        # throughout the function instead of calling pdf_content.read() again.
+        # Read PDF bytes early for table extraction
         # ------------------------------------------------------------------
         pdf_bytes = (
             pdf_content.read()
@@ -861,184 +939,164 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         )
 
         # ------------------------------------------------------------------
-        # Scanned PDF detection — route to EasyOCR pipeline
+        # PAGE-LEVEL EXTRACTION LOOP (replaces old whole-document approach)
         # ------------------------------------------------------------------
-        # Before attempting PyMuPDF extraction, check if the PDF is scanned
-        # (image-based with no selectable text). If so, skip directly to the
-        # EasyOCR pipeline with layout-aware assembly.
-        easyocr_enabled = getattr(settings, "OCR_EASYOCR_ENABLED", True)
+        # Each page is extracted independently with PyMuPDF, checked for
+        # quality, and only problematic pages are routed to the VLM.
+        # This avoids both false positives (sending entire document to VLM
+        # for just a few bad pages) and false negatives (missing garbled
+        # pages because the average is OK).
+        # ------------------------------------------------------------------
+        vision_service: VisionExtractionService | None = None
+        vision_enabled = getattr(settings, "VISION_EXTRACTION_ENABLED", True)
+        page_results: list[str] = []
+        garbled_page_indices: list[int] = []  # Collect garbled pages for batch VLM
+        vl_page_count = 0
+        unverified_pages: list[dict] = []
 
-        if easyocr_enabled:
-            try:
-                with tempfile.NamedTemporaryFile(
-                    suffix=".pdf", delete=False
-                ) as tmp:
-                    tmp.write(pdf_bytes)
-                    tmp_path = tmp.name
+        # ------------------------------------------------------------------
+        # PASS 1: Extract all pages with PyMuPDF, check quality, collect
+        # garbled page indices for batch VLM processing.
+        # ------------------------------------------------------------------
+        for page_num in range(num_pages):
+            page = pdf_document.load_page(page_num)
 
+            # Stage 1: Extract with PyMuPDF RTL flags
+            text = page.get_text(
+                "text",
+                flags=(
+                    fitz.TEXT_PRESERVE_LIGATURES
+                    | fitz.TEXT_PRESERVE_WHITESPACE
+                    | fitz.TEXT_PRESERVE_IMAGES
+                    | fitz.TEXT_DEHYPHENATE
+                ),
+            )
+
+            text = text or ""
+
+            # Stage 2: Page-level quality check (5 signals)
+            is_garbled = _is_persian_text_garbled(
+                text,
+                threshold=getattr(settings, "EXTRACTION_GARBLED_THRESHOLD", 0.3),
+            ) or _has_shattered_persian_words(text)
+
+            # If PyMuPDF produced very little text, consider it garbled
+            has_selectable_text = len(text.strip()) > 50
+            if not has_selectable_text:
+                is_garbled = True
+
+            if is_garbled:
+                garbled_page_indices.append(page_num)
+
+            # Stage 3: Per-page Persian normalization (preliminary)
+            if getattr(settings, "PERSIAN_NORMALIZATION_ENABLED", True):
                 try:
-                    scanned = is_scanned_pdf(tmp_path)
-                finally:
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        logger.warning(
-                            "Failed to clean up temp file %s", tmp_path,
-                        )
-
-                if scanned:
-                    logger.info(
-                        "Document %s is scanned — using EasyOCR pipeline",
-                        document_id,
-                    )
-                    try:
-                        from documents.services.ocr_service import (
-                            OcrService,
-                        )
-
-                        ocr = OcrService()
-                        extracted_text, _ = ocr.extract_text(
-                            pdf_bytes
-                        )
-                        extraction_method = "easyocr"
-
-                        # Skip directly to normalization (skip PyMuPDF chain)
-                        auto_fallback = False  # No need for fallback chain
-
-                        logger.info(
-                            "EasyOCR extraction complete for document %s "
-                            "(%d chars)",
-                            document_id,
-                            len(extracted_text),
-                        )
-                    except Exception as e:
-                        logger.error(
-                            "EasyOCR failed for document %s: %s — "
-                            "falling back to standard extraction chain",
-                            document_id,
-                            e,
-                        )
-                        # Fall through to standard extraction chain
-                        pdf_document_for_extraction = fitz.open(
-                            stream=pdf_bytes, filetype="pdf"
-                        )
-                        extracted_text = _extract_with_pymupdf_rtl(
-                            pdf_document_for_extraction
-                        )
-                        pdf_document_for_extraction.close()
-                        extraction_method = "pymupdf"
-                else:
-                    # Not scanned — use standard PyMuPDF extraction
-                    pdf_document_for_extraction = fitz.open(
-                        stream=pdf_bytes, filetype="pdf"
-                    )
-                    extracted_text = _extract_with_pymupdf_rtl(
-                        pdf_document_for_extraction
-                    )
-                    pdf_document_for_extraction.close()
-                    extraction_method = "pymupdf"
-            except Exception as e:
-                logger.warning(
-                    "Scanned PDF detection failed for document %s: %s — "
-                    "falling back to standard extraction",
-                    document_id,
-                    e,
-                )
-                # Fall through to standard extraction
-                pdf_document_for_extraction = fitz.open(
-                    stream=pdf_bytes, filetype="pdf"
-                )
-                extracted_text = _extract_with_pymupdf_rtl(
-                    pdf_document_for_extraction
-                )
-                pdf_document_for_extraction.close()
-                extraction_method = "pymupdf"
-        else:
-            # EasyOCR disabled — use standard extraction chain
-            pdf_document_for_extraction = fitz.open(
-                stream=pdf_bytes, filetype="pdf"
-            )
-
-            # Stage 1: Primary extraction with PyMuPDF + RTL flags
-            extracted_text = _extract_with_pymupdf_rtl(
-                pdf_document_for_extraction
-            )
-            pdf_document_for_extraction.close()
-
-            auto_fallback = getattr(settings, "EXTRACTION_AUTO_FALLBACK", True)
-            extraction_method = "pymupdf"
-
-        # ------------------------------------------------------------------
-        # Extraction strategy with auto-fallback (for typed PDFs)
-        # ------------------------------------------------------------------
-        # auto_fallback is already initialized at function start, so it's
-        # always defined even in exception fallback paths.
-
-        # Helper: check both quality score and shattered-word heuristic.
-        # Uses the multi-signal Persian quality score by default, with the
-        # stricter Persian legal threshold for legal-domain documents.
-        def _is_garbled(t: str) -> bool:
-            # Use the quality score with the Persian-legal-specific threshold
-            # if configured, otherwise fall back to the general threshold.
-            legal_threshold = getattr(
-                settings, "EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL", None
-            )
-            if legal_threshold is not None:
-                return (
-                    _is_persian_text_garbled(t, threshold=legal_threshold)
-                    or _has_shattered_persian_words(t)
-                )
-            return (
-                _is_persian_text_garbled(t)
-                or _has_shattered_persian_words(t)
-            )
-
-        # Stage 2: Check quality and fall back to pdfplumber if garbled
-        if auto_fallback and _is_garbled(extracted_text):
-            logger.warning(
-                "extract_text_from_pdf: PyMuPDF output garbled for Persian text "
-                "(document %s) — trying pdfplumber...",
-                document_id,
-            )
-            try:
-                extracted_text = _extract_with_pdfplumber(pdf_bytes)
-                extraction_method = "pdfplumber"
-            except Exception as e:
-                logger.warning(
-                    "extract_text_from_pdf: pdfplumber extraction failed for "
-                    "document %s: %s",
-                    document_id,
-                    e,
-                )
-
-            # Stage 3: Check again and fall back to Tesseract OCR
-            if _is_garbled(extracted_text):
-                logger.warning(
-                    "extract_text_from_pdf: pdfplumber also garbled for document "
-                    "%s — falling back to Tesseract OCR...",
-                    document_id,
-                )
-                try:
-                    extracted_text = _extract_with_tesseract(pdf_bytes)
-                    extraction_method = "tesseract"
+                    normalizer = PersianNormalizer()
+                    text = normalizer.normalize(text)
                 except Exception as e:
                     logger.warning(
-                        "extract_text_from_pdf: Tesseract OCR also failed for "
-                        "document %s: %s",
+                        "extract_text_from_pdf: Persian normalization failed "
+                        "for page %d of document %s: %s",
+                        page_num + 1,
                         document_id,
                         e,
                     )
 
+            # Store placeholder text (will be replaced if VLM succeeds)
+            page_results.append(f"[PAGE {page_num + 1}]\n{text}")
+
         # ------------------------------------------------------------------
-        # Table extraction — detect tables using pdfplumber
+        # PASS 2: Batch-process all garbled pages via VLM (single API call
+        # per batch of 4 pages — much faster than sequential per-page calls).
         # ------------------------------------------------------------------
-        # Tables are extracted from the PDF and stored as metadata on the
-        # Document model. During chunking, they are attached to the relevant
-        # chunks as metadata (not injected into content).
-        #
-        # Table extraction is only performed when pdfplumber is available
-        # (it is already imported for text fallback extraction). We use the
-        # pdf_bytes that were already read earlier.
+        if garbled_page_indices and vision_enabled:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            try:
+                if vision_service is None:
+                    vision_service = VisionExtractionService()
+
+                logger.info(
+                    "extract_text_from_pdf: Parallel VLM extraction for %d "
+                    "garbled pages of document %s (max_workers=4)",
+                    len(garbled_page_indices),
+                    document_id,
+                )
+
+                # Process garbled pages in parallel using ThreadPoolExecutor.
+                # VLM API calls are I/O-bound (HTTP requests), so threading
+                # provides near-linear speedup: 16 pages / 4 workers = 4 rounds.
+                with ThreadPoolExecutor(max_workers=4) as executor:
+                    futures = {
+                        executor.submit(
+                            vision_service.extract_page,
+                            pdf_document,
+                            page_idx,  # 0-based
+                        ): page_idx
+                        for page_idx in garbled_page_indices
+                    }
+
+                    for future in as_completed(futures):
+                        page_idx = futures[future]
+                        vl_result = future.result()
+                        page_num_1based = page_idx + 1
+
+                        if vl_result.text and len(vl_result.text.strip()) > 10:
+                            vl_text = vl_result.text
+                            # Apply Persian normalization to VLM output
+                            if getattr(settings, "PERSIAN_NORMALIZATION_ENABLED", True):
+                                try:
+                                    normalizer = PersianNormalizer()
+                                    vl_text = normalizer.normalize(vl_text)
+                                except Exception:
+                                    pass
+
+                            page_results[page_idx] = (
+                                f"[PAGE {page_num_1based}]\n{vl_text}"
+                            )
+                            vl_page_count += 1
+
+                        if not vl_result.verified:
+                            unverified_pages.append({
+                                "page": page_num_1based,
+                                "flags": vl_result.verification_flags,
+                            })
+
+            except Exception as e:
+                logger.warning(
+                    "extract_text_from_pdf: Parallel VLM extraction failed for "
+                    "document %s: %s — keeping PyMuPDF output for garbled pages",
+                    document_id,
+                    e,
+                )
+
+        # Assemble all pages
+        extracted_text = "\n".join(page_results)
+
+        # Determine extraction method for metadata
+        # NOTE: extraction_method is VARCHAR(20) in the Document model.
+        # Keep values short to avoid database truncation errors.
+        if vl_page_count > 0:
+            if vl_page_count == num_pages:
+                extraction_method = "vision_only"
+            else:
+                extraction_method = "pymupdf_mixed"
+        else:
+            extraction_method = "pymupdf"
+
+        # Log VLM usage
+        if vl_page_count > 0:
+            logger.info(
+                "extract_text_from_pdf: VLM used for %d/%d pages of "
+                "document %s (%d unverified)",
+                vl_page_count,
+                num_pages,
+                document_id,
+                len(unverified_pages),
+            )
+
+        # ------------------------------------------------------------------
+        # Table extraction — detect tables using PyMuPDF
         # ------------------------------------------------------------------
         table_extraction_enabled = getattr(
             settings, "TABLE_EXTRACTION_ENABLED", True
@@ -1077,30 +1135,9 @@ def extract_text_from_pdf(self, document_id: str) -> str:
                 )
 
         # ------------------------------------------------------------------
-        # Apply Persian normalization
+        # Apply bidi bracket fix (safe local repairs)
         # ------------------------------------------------------------------
-        persian_normalization_enabled = getattr(
-            settings, "PERSIAN_NORMALIZATION_ENABLED", True
-        )
-        if persian_normalization_enabled:
-            try:
-                normalizer = PersianNormalizer()
-                extracted_text = normalizer.normalize(extracted_text)
-            except Exception as e:
-                logger.warning(
-                    "extract_text_from_pdf: Persian normalization failed for "
-                    "document %s: %s — continuing with unnormalized text",
-                    document_id,
-                    e,
-                )
-
-        # ------------------------------------------------------------------
-        # Apply bidi bracket fix (safe local repairs, NOT get_display())
-        # ------------------------------------------------------------------
-        bidi_bracket_fix_enabled = getattr(
-            settings, "BIDI_BRACKET_FIX_ENABLED", True
-        )
-        if bidi_bracket_fix_enabled:
+        if getattr(settings, "BIDI_BRACKET_FIX_ENABLED", True):
             try:
                 extracted_text = _fix_bidi_brackets(extracted_text)
             except Exception as e:
@@ -1111,17 +1148,20 @@ def extract_text_from_pdf(self, document_id: str) -> str:
                     e,
                 )
 
-        # Compute quality score on the final extracted text.
-        # Uses the multi-signal Persian quality score (0.0 = garbage, 1.0 = perfect).
-        # The quality score is stored as `garbled_score` for backward compatibility
-        # with the Document model field name, but now represents a quality metric
-        # rather than a garbled ratio.
+        # ------------------------------------------------------------------
+        # Compute quality scores and store metadata
+        # ------------------------------------------------------------------
         quality_score = _compute_persian_quality_score(extracted_text)
-        # For backward compatibility, also compute the legacy garbled ratio
-        # so existing monitoring dashboards continue to work.
         garbled_score = _compute_garbled_ratio(extracted_text)
 
-        # Update document metadata including extraction monitoring fields.
+        # Build vision verification metadata
+        vision_verification: dict[str, Any] = {
+            "vl_pages": vl_page_count,
+            "total_pages": num_pages,
+            "unverified_pages": unverified_pages,
+        }
+
+        # Update document metadata
         document.extracted_text = extracted_text
         document.extraction_method = extraction_method
         document.garbled_score = garbled_score
@@ -1161,9 +1201,9 @@ def extract_text_from_pdf(self, document_id: str) -> str:
         )
 
         return extracted_text
+
     finally:
         # Ensure pdf_document is always closed, even if an exception occurs
-        # in any of the extraction branches above. This prevents resource leaks.
         pdf_document.close()
 
 

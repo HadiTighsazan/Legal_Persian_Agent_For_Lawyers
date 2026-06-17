@@ -335,20 +335,16 @@ LEGAL_CHUNK_OVERLAP_CLAUSES = env.int('LEGAL_CHUNK_OVERLAP_CLAUSES', default=1)
 NON_TEXT_CHUNK_FILTERING_ENABLED = env.bool('NON_TEXT_CHUNK_FILTERING_ENABLED', default=True)
 
 # Extraction Strategy
-EXTRACTION_BACKEND = env('EXTRACTION_BACKEND', default='pymupdf')  # pymupdf | pdfplumber | tesseract
-EXTRACTION_AUTO_FALLBACK = env.bool('EXTRACTION_AUTO_FALLBACK', default=True)
+# The page-level quality check uses a 5-signal score (stopwords, lexicon
+# validity, bigram plausibility, RTL consistency, character entropy).
+# Quality < threshold → routed to VLM extraction (Qwen3 VL via OpenRouter).
 EXTRACTION_GARBLED_THRESHOLD = env.float('EXTRACTION_GARBLED_THRESHOLD', default=0.3)
 
-# Persian Legal Text Garbled Detection
-# Stricter threshold (0.15) for documents detected as Persian legal text.
-# The multi-signal quality score (0.0 = garbage, 1.0 = perfect) is compared
-# against this threshold: quality < threshold → garbled.
-# A lower value means MORE strict (requires higher quality to pass).
-# Set to None or remove to fall back to EXTRACTION_GARBLED_THRESHOLD.
-EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL = env.float(
-    'EXTRACTION_GARBLED_THRESHOLD_PERSIAN_LEGAL',
-    default=0.15,
-)
+# Vision Extraction (VLM) — replaces old EasyOCR/Tesseract/pdfplumber fallbacks
+VISION_EXTRACTION_ENABLED = env.bool('VISION_EXTRACTION_ENABLED', default=True)
+VISION_EXTRACTION_MODEL = env('VISION_EXTRACTION_MODEL', default='qwen/qwen3-vl-235b-a22b-instruct')
+VISION_EXTRACTION_DPI = env.int('VISION_EXTRACTION_DPI', default=150)
+VISION_EXTRACTION_MAX_RETRIES = env.int('VISION_EXTRACTION_MAX_RETRIES', default=3)
 
 # Storage Configuration
 STORAGE_TYPE = env('STORAGE_TYPE', default='local')
@@ -444,10 +440,9 @@ MAX_CHUNK_TOKENS = 400  # Same as ANCHOR_CHUNK_TOKENS
 OVERLAP_SENTENCES = 1
 
 # ---------------------------------------------------------------------------
-# OCR settings (EasyOCR + Tesseract)
+# Vision Extraction settings (Qwen3 VL via OpenRouter)
 # ---------------------------------------------------------------------------
-OCR_EASYOCR_ENABLED = True
-OCR_EASYOCR_USE_GPU = False
-OCR_CONFIDENCE_THRESHOLD = 0.5
-OCR_CONTRAST_ENABLED = True
-OCR_DESKEW_ENABLED = True
+# Replaces the old EasyOCR + Tesseract + pdfplumber fallback chain.
+# See VisionExtractionService for usage.
+# VISION_EXTRACTION_ENABLED, VISION_EXTRACTION_MODEL, VISION_EXTRACTION_DPI,
+# and VISION_EXTRACTION_MAX_RETRIES are defined in the Extraction Strategy section above.

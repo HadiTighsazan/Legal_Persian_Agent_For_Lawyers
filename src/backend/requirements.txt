@@ -28,22 +28,19 @@ boto3>=1.34.0
 python-magic>=0.4.27
 
 # Document Processing
+# PyMuPDF: Primary PDF extractor + page rendering (get_pixmap) + table detection (find_tables)
+# All other OCR/PDF dependencies (easyocr, opencv, pdf2image, pytesseract, pdfplumber,
+# arabic_reshaper, python-bidi, hazm) have been REMOVED in Phase 1 refactoring.
+# VLM fallback uses Qwen3 VL via OpenRouter API (via the openai library).
 PyMuPDF>=1.23.0
 tiktoken>=0.5.0
-easyocr>=1.7.0
-opencv-python-headless>=4.8.0
-pdf2image>=1.16.0
 
 # AI & Embeddings
 openai>=1.0.0
 pgvector>=0.2.0
 
 # Persian Legal Text Processing
-hazm>=0.10.0
-pdfplumber>=0.11.0
-pytesseract>=0.3.10
-arabic_reshaper>=3.0.0
-python-bidi>=0.4.2
+# hazm has been replaced by custom pure-Python implementation in PersianNormalizer
 
 # Testing
 pytest>=9.0.0

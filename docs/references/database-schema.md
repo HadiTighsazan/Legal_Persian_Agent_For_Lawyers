@@ -41,7 +41,7 @@
 | **document_type** | **VARCHAR(20)** | **DEFAULT 'user_upload', INDEXED** | **Document type: 'user_upload' for regular files, 'reference_law' for system reference legal texts. Used by RAG service to determine whether to apply legal_status filters. (added in migration 0007)** |
 | **hub_type** | **VARCHAR(50)** | **NULL, INDEXED** | **Legal knowledge hub type: 'legislation', 'judicial_precedent', 'advisory_opinion'. Only set for reference_law documents. Used by Global RAG (Phase 2a) to route queries to the correct hub. (added in migration 0015)** |
 | **extracted_text** | **TEXT** | **BLANK, DEFAULT ''** | **Full extracted PDF text for monitoring/debug (added in migration 0012)** |
-| **extraction_method** | **VARCHAR(20)** | **NULL** | **Which extractor succeeded: pymupdf, pdfplumber, tesseract (added in migration 0012)** |
+| **extraction_method** | **VARCHAR(20)** | **NULL** | **Which extractor succeeded: ``pymupdf`` or ``pymupdf+vision(N/M pages)`` (refactored in Phase 1 — old values ``pdfplumber``, ``tesseract``, ``easyocr`` are no longer produced). (added in migration 0012)** |
 | **garbled_score** | **FLOAT** | **NULL** | **Garbled detection ratio (0.0–1.0) from `_compute_garbled_ratio()` (added in migration 0012)** |
 | **tables_data** | **JSONB** | **DEFAULT '[]', BLANK** | **Extracted table data as a list of dicts with keys: 'page', 'bbox', 'markdown', 'semantic_text'. Populated during `extract_text_from_pdf` when `TABLE_EXTRACTION_ENABLED=True`. Used by `chunk_document` to attach tables as metadata on chunks. (added in migration 0016)** |
 | created_at | TIMESTAMP | DEFAULT NOW() | Upload timestamp |
@@ -346,10 +346,11 @@ CREATE EXTENSION IF NOT EXISTS "vector";
   - `documents/services/persian_normalizer.py` — Persian text normalization (Tatweel stripping, character normalization, half-space fixes)
   - `documents/services/legal_structure_detector.py` — Legal document structure parsing (مواد, تبصره, بند, فصل)
   - `documents/services/chunking_service.py` — Refactored with legal structural chunking and clause-boundary-aware overlap
-- **New dependencies** (added to `requirements.txt`):
-  - `hazm>=0.10.0` — Persian NLP library for character normalization
-  - `pdfplumber>=0.11.0` — Fallback PDF extraction for RTL text
-  - `pytesseract>=0.3.10` — OCR fallback for scanned Persian PDFs
+- **Dependencies (Phase 1 Refactoring — removed):**
+  - `hazm` — Removed in Phase 1 refactoring. PersianNormalizer now uses pure Python (unicodedata + regex + character translation tables).
+  - `pdfplumber` — Removed in Phase 1. Replaced by PyMuPDF's `find_tables()` for table extraction and Qwen3 VL for garbled text fallback.
+  - `pytesseract` — Removed in Phase 1. OCR replaced by Qwen3 VL via OpenRouter.
+  - `easyocr`, `opencv-python-headless`, `pdf2image`, `arabic_reshaper`, `python-bidi` — All removed in Phase 1.
 
 ---
 

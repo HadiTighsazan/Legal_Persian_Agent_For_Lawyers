@@ -1,12 +1,20 @@
 """
 Table extraction utility for Persian legal PDFs.
 
-Provides the :class:`TableExtractor` class that uses ``pdfplumber`` to detect
-tables on PDF pages and produce a **dual representation**:
+Provides the :class:`TableExtractor` class that uses **PyMuPDF** (``fitz``)
+built-in :meth:`~fitz.Page.find_tables` to detect tables on PDF pages and
+produce a **dual representation**:
 
 1. **Markdown format** — For human readability and LLM context.
 2. **Normalized semantic text** — For embedding (key-value pairs), avoiding
    the token noise that raw Markdown tables create in vector representations.
+
+.. note::
+
+   This module previously used ``pdfplumber`` for table detection. It was
+   migrated to PyMuPDF's native :meth:`~fitz.Page.find_tables` in the Phase 1
+   refactoring to eliminate the ``pdfplumber`` dependency. The output format
+   (the :class:`ExtractedTable` dataclass) is identical to the old version.
 
 Usage::
 
@@ -23,10 +31,11 @@ Usage::
 
 from __future__ import annotations
 
-import io
 import logging
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Tuple
+
+import fitz  # PyMuPDF
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +73,7 @@ class ExtractedTable:
 
 
 def _table_to_markdown(table: list[list[str | None]]) -> str:
-    """Convert a pdfplumber table (list of rows) to Markdown format.
+    """Convert a table (list of rows) to Markdown format.
 
     Produces a GitHub-flavoured Markdown table with a header separator row.
     Empty cells are represented as empty strings.
@@ -182,15 +191,21 @@ def _table_to_semantic_text(table: list[list[str | None]]) -> str:
 
 
 class TableExtractor:
-    """Extract tables from PDF bytes using pdfplumber.
+    """Extract tables from PDF bytes using **PyMuPDF** ``page.find_tables()``.
 
     Provides dual representation (Markdown + semantic text) for each detected
     table, enabling clean storage and LLM-friendly display while avoiding
     embedding pollution from Markdown syntax tokens.
 
-    The extractor uses ``pdfplumber.page.find_tables()`` which provides
-    bounding-box-level table detection. Each detected table is converted to
-    both representations.
+    The extractor uses PyMuPDF's built-in :meth:`~fitz.Page.find_tables` which
+    provides bounding-box-level table detection. Each detected table is
+    converted to both representations.
+
+    .. note::
+
+       This class previously used ``pdfplumber``. It was migrated to PyMuPDF
+       in the Phase 1 refactoring. The :class:`ExtractedTable` output format
+       is unchanged.
 
     Usage::
 
@@ -202,7 +217,7 @@ class TableExtractor:
     """
 
     # Minimum number of rows for a detected table to be considered valid.
-    # pdfplumber can sometimes detect text blocks as 1-row "tables".
+    # PyMuPDF can sometimes detect text blocks as 1-row "tables".
     _MIN_TABLE_ROWS: int = 2
 
     # Minimum number of columns for a detected table.
@@ -216,7 +231,7 @@ class TableExtractor:
     ) -> list[ExtractedTable]:
         """Extract all tables from a PDF.
 
-        Iterates over every page, runs ``pdfplumber.page.find_tables()``,
+        Iterates over every page, runs PyMuPDF's :meth:`~fitz.Page.find_tables`,
         and converts each detected table to dual representation.
 
         Args:
@@ -229,31 +244,32 @@ class TableExtractor:
         Returns:
             A list of :class:`ExtractedTable` instances, one per detected
             table across all pages. Returns an empty list if no tables are
-            found or if pdfplumber fails to open the PDF.
+            found or if the PDF cannot be opened.
         """
         min_rows = min_rows or self._MIN_TABLE_ROWS
         min_cols = min_cols or self._MIN_TABLE_COLS
 
-        try:
-            import pdfplumber  # noqa: PLC0415
-        except ImportError:
-            logger.warning(
-                "pdfplumber is not installed — cannot extract tables"
-            )
-            return []
-
         extracted: list[ExtractedTable] = []
 
         try:
-            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-                for page_num, page in enumerate(pdf.pages, start=1):
-                    page_tables = self._extract_tables_from_page(
-                        page=page,
-                        page_num=page_num,
-                        min_rows=min_rows,
-                        min_cols=min_cols,
-                    )
-                    extracted.extend(page_tables)
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        except Exception as e:
+            logger.warning(
+                "TableExtractor: Failed to open PDF: %s",
+                e,
+            )
+            return []
+
+        try:
+            for page_num in range(doc.page_count):
+                page = doc.load_page(page_num)
+                page_tables = self._extract_tables_from_page(
+                    page=page,
+                    page_num=page_num + 1,  # 1-based
+                    min_rows=min_rows,
+                    min_cols=min_cols,
+                )
+                extracted.extend(page_tables)
         except Exception as e:
             logger.warning(
                 "Failed to extract tables from PDF: %s",
@@ -261,6 +277,8 @@ class TableExtractor:
                 exc_info=True,
             )
             return []
+        finally:
+            doc.close()
 
         logger.debug(
             "TableExtractor: extracted %d table(s) from PDF",
@@ -270,15 +288,15 @@ class TableExtractor:
 
     def _extract_tables_from_page(
         self,
-        page: Any,  # pdfplumber.page.Page
+        page: fitz.Page,
         page_num: int,
         min_rows: int,
         min_cols: int,
     ) -> list[ExtractedTable]:
-        """Extract tables from a single pdfplumber page.
+        """Extract tables from a single PyMuPDF page.
 
         Args:
-            page: A ``pdfplumber.page.Page`` instance.
+            page: A ``fitz.Page`` instance.
             page_num: The 1-based page number.
             min_rows: Minimum rows for a valid table.
             min_cols: Minimum columns for a valid table.
@@ -292,14 +310,14 @@ class TableExtractor:
             found = page.find_tables()
         except Exception as e:
             logger.warning(
-                "pdfplumber.find_tables() failed on page %d: %s",
+                "PyMuPDF find_tables() failed on page %d: %s",
                 page_num,
                 e,
             )
             return []
 
-        for pdfplumber_table in found:
-            raw_data = pdfplumber_table.extract()
+        for pymupdf_table in found:
+            raw_data = pymupdf_table.extract()
 
             # Filter out tables that are too small (likely false positives)
             if not raw_data or len(raw_data) < min_rows:
@@ -309,8 +327,8 @@ class TableExtractor:
             if not raw_data[0] or len(raw_data[0]) < min_cols:
                 continue
 
-            # Get bounding box
-            bbox = pdfplumber_table.bbox  # (x0, y0, x1, y1)
+            # Get bounding box — PyMuPDF returns Rect (x0, y0, x1, y1)
+            bbox = pymupdf_table.bbox
 
             # Generate dual representation
             markdown = _table_to_markdown(raw_data)

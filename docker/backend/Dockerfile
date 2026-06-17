@@ -1,12 +1,14 @@
 # Django Backend Dockerfile
-# Using V2Ray proxy for all package downloads
-# Pass HOST_IP as build arg (e.g., --build-arg HOST_IP=192.168.1.112)
-
-ARG HOST_IP=host.docker.internal
+# Uses Liara internal PyPI mirror for package downloads
+#
+# NOTE: Heavy OCR dependencies (easyocr, opencv, pdf2image, pytesseract,
+# pdfplumber, arabic_reshaper, python-bidi, hazm) and their system-level
+# dependencies (libgl, libglib, poppler-utils) have been REMOVED in the
+# Phase 1 refactoring. PDF text extraction now uses:
+#   - PyMuPDF (primary, lightweight)
+#   - Qwen3 VL via OpenRouter API (fallback for garbled CMap fonts)
 
 FROM python:3.11-slim-bookworm
-
-ARG HOST_IP
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -14,36 +16,20 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_DEFAULT_TIMEOUT=100
 ENV PIP_NO_CACHE_DIR=1
 
-# Proxy environment variables for apt-get and pip
-# Uses HOST_IP build arg (defaults to host.docker.internal for runtime)
-ENV HTTP_PROXY=http://${HOST_IP}:10808
-ENV HTTPS_PROXY=http://${HOST_IP}:10808
-ENV http_proxy=http://${HOST_IP}:10808
-ENV https_proxy=http://${HOST_IP}:10808
-
-# Install system dependencies for EasyOCR, OpenCV, and pdf2image
-# Proxy is used via the HTTP_PROXY env vars above
-RUN apt-get update -o Acquire::Check-Valid-Until=false && \
-    apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    poppler-utils \
-    && rm -rf /var/lib/apt/lists/*
-
 # Set working directory
 WORKDIR /app
 
 # Copy requirements file
 COPY src/backend/requirements.txt /app/requirements.txt
 
-# Install Python dependencies (skip pip upgrade to avoid 402 errors)
-# Proxy is used via the HTTP_PROXY env vars set above
-RUN pip install -r requirements.txt && \
-    rm -rf /root/.cache/pip
+# Install Python dependencies via Liara internal mirror
+# Using --extra-index-url to prefer Liara internal mirror while falling
+# back to the default PyPI index for packages not cached on the mirror.
+RUN pip install \
+--extra-index-url https://package-mirror.liara.ir/repository/pypi \
+--trusted-host package-mirror.liara.ir \
+-r requirements.txt \
+&& rm -rf /root/.cache/pip
 
 # Copy Django project
 COPY src/backend /app/

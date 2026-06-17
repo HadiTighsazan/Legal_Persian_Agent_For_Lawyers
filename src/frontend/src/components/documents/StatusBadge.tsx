@@ -18,6 +18,10 @@ const STATUS_MAP: Record<string, StatusConfig> = {
     label: "Pending",
     className: "bg-gray-100 text-gray-800",
   },
+  running: {
+    label: "Running",
+    className: "bg-blue-100 text-blue-800 animate-pulse",
+  },
   processing: {
     label: "Processing",
     className: "bg-blue-100 text-blue-800 animate-pulse",
@@ -29,6 +33,10 @@ const STATUS_MAP: Record<string, StatusConfig> = {
   failed: {
     label: "Failed",
     className: "bg-red-100 text-red-800",
+  },
+  cancelled: {
+    label: "Cancelled",
+    className: "bg-yellow-100 text-yellow-800",
   },
 };
 

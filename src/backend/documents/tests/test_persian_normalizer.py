@@ -74,11 +74,17 @@ class TestNormalizeArabicChars:
         assert "ك" not in result
 
     def test_arabic_teh_marbuta(self, normalizer: PersianNormalizer) -> None:
-        """Arabic ة (U+0629) — hazm does not convert this to ه in v0.10+"""
+        """Arabic ة (U+0629) — now converted to ه (custom impl, not hazm).
+
+        Phase 1 refactoring: hazm is removed. Our custom implementation
+        converts ة (teh marbuta) to ه (heh) via _ARABIC_TO_PERSIAN table.
+        """
         result = normalizer.normalize_arabic_chars("مكة")
-        # Note: hazm >=0.10 does NOT convert ة → ه.
-        # The original character is preserved.
-        assert "ة" in result or "ه" in result
+        # Our custom implementation converts ة → ه.
+        # So "مكة" becomes "مکه" with heh instead of teh marbuta.
+        assert "ه" in result
+        # Teh marbuta should no longer be present (unlike hazm which preserved it)
+        assert "ة" not in result
 
     def test_mixed_arabic_persian_text(self, normalizer: PersianNormalizer) -> None:
         """Mixed Arabic/Persian characters are all normalized"""
@@ -87,7 +93,7 @@ class TestNormalizeArabicChars:
         result = normalizer.normalize_arabic_chars("يقول الكتاب في مكة")
         assert "ی" in result
         assert "ک" in result
-        # The original Arabic chars should not remain (except ة which hazm preserves)
+        # All original Arabic chars should be converted
         assert "ي" not in result
         assert "ك" not in result
 
@@ -408,17 +414,18 @@ class TestNormalizeForFts:
 
 
 class TestRtlReversalLimitation:
-    def test_hazm_does_not_fix_reversal(self, normalizer: PersianNormalizer) -> None:
-        """Verify that Hazm does NOT fix structural RTL reversal.
+    def test_normalizer_does_not_fix_reversal(
+        self, normalizer: PersianNormalizer
+    ) -> None:
+        """Verify that the normalizer does NOT fix structural RTL reversal.
 
-        This is a documented limitation. If PyMuPDF outputs «قانون» as
-        «نوناق» (reversed), Hazm has no way to know the correct order.
-        RTL reversal must be prevented at the extraction layer.
+        This is a documented limitation (and unaffected by the hazm removal
+        in Phase 1 refactoring). The normalizer handles character-level
+        issues only. Structural RTL reversal must be prevented at the
+        extraction layer.
         """
-        # Simulate garbled RTL reversal
-        reversed_text = "نوناق"  # قانون reversed
+        reversed_text = "نوناق"  # قانون reversed character-by-character
         result = normalizer.normalize(reversed_text)
-        # Hazm should NOT magically fix the reversal
         assert result == "نوناق"  # Still reversed
 
 
