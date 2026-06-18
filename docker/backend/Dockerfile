@@ -1,5 +1,4 @@
 # Django Backend Dockerfile
-# Uses Liara internal PyPI mirror for package downloads
 #
 # NOTE: Heavy OCR dependencies (easyocr, opencv, pdf2image, pytesseract,
 # pdfplumber, arabic_reshaper, python-bidi, hazm) and their system-level
@@ -22,12 +21,8 @@ WORKDIR /app
 # Copy requirements file
 COPY src/backend/requirements.txt /app/requirements.txt
 
-# Install Python dependencies via Liara internal mirror
-# Using --extra-index-url to prefer Liara internal mirror while falling
-# back to the default PyPI index for packages not cached on the mirror.
+# Install Python dependencies from official PyPI index
 RUN pip install \
---extra-index-url https://package-mirror.liara.ir/repository/pypi \
---trusted-host package-mirror.liara.ir \
 -r requirements.txt \
 && rm -rf /root/.cache/pip
 

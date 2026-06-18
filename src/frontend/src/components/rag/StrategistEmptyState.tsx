@@ -1,4 +1,4 @@
-import { Scale, MessageSquare, Lightbulb, AlertTriangle, Gavel, Sparkles } from 'lucide-react';
+import { Scale, MessageSquare, Lightbulb, AlertTriangle, Gavel } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 
 interface StrategistEmptyStateProps {

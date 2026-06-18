@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useConversationStore } from '@/stores/conversationStore';
 import { cn } from '@/lib/utils';
-import { MessageSquare, AlertCircle, X, Loader2, Sparkles } from 'lucide-react';
+import { AlertCircle, X, Sparkles } from 'lucide-react';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import MessageBubble from '@/components/chat/MessageBubble';
