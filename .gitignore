@@ -195,3 +195,45 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# =============================================================================
+# Project-Specific: Secrets & Credentials (DO NOT COMMIT)
+# =============================================================================
+.env
+src/frontend/.env.development
+src/frontend/.env.production
+
+# =============================================================================
+# Project-Specific: Agentic Methodology (do not expose dev process)
+# =============================================================================
+.clinerules
+.roomodes
+docs/active-task/
+plans/
+
+# =============================================================================
+# Project-Specific: CodeGraph MCP Cache
+# =============================================================================
+.codegraph/
+
+# =============================================================================
+# Project-Specific: Build & Diagnostic Artifacts
+# =============================================================================
+build_log.txt
+src/backend/diag_output*.txt
+src/backend/diag_verify_fix.txt
+
+# =============================================================================
+# Project-Specific: Ad-hoc Test Files (root level only)
+# =============================================================================
+/test_cors.html
+/test_final.py
+/test_frontend_api*.js
+/test_logout_integration.py
+/test_logout_integration.sh
+
+# =============================================================================
+# Project-Specific: Deleted artifact directories (prevent re-addition)
+# =============================================================================
+docs/archive/
+scripts/
